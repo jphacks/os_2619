@@ -15,6 +15,7 @@ const v3 = a => V(a[0], a[1], a[2]);
 const params = new URLSearchParams(location.search);
 // ---- sound (audio.js): loaded lazily so a missing / failing module never stops the picture ----
 let sfx = null;
+const soundTest = { charge: 0, bgm: 0 }; // admin test buttons: hold these sounds on until the given time
 import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); }).catch(e => console.warn('audio', e));
 const panOf = v => { // world x across the field -> stereo pan -1..1 (the camera looks along -z, so +x is screen right)
   const xs = W.FIELD.poly.map(q => q[0]), a = Math.min(...xs), b = Math.max(...xs);
@@ -700,8 +701,9 @@ function command(c) {
     case 'mute': return sfx?.setMuted(!sfx.muted);
     case 'sound': { // admin test buttons
       const T = { shotFire: () => sfx.shot('fire', 0, .6), shotThunder: () => sfx.shot('thunder', 0, .6), hitFire: () => sfx.hit('fire', 0, .7), hitThunder: () => sfx.hit('thunder', 0, .7),
-        specialFire: () => sfx.special('fire', 0), specialThunder: () => sfx.special('thunder', 0), charge: () => { sfx.charge('A', true, 0, 0); setTimeout(() => sfx.charge('A', false), 1500); },
-        bgm: () => { sfx.bgm(true); setTimeout(() => match.phase !== 'demo' && match.phase !== 'fight' && sfx.bgm(false), 4000); } };
+        specialFire: () => sfx.special('fire', 0), specialThunder: () => sfx.special('thunder', 0),
+        // charge / bgm follow the game state every frame, so a test holds them on for a while instead of starting them once
+        charge: () => { soundTest.charge = now() + 2.5; }, bgm: () => { soundTest.bgm = now() + 6; } };
       return sfx && T[c.name]?.();
     }
     default: return;
@@ -773,8 +775,12 @@ function frame(ts = 0) {
   if (cfg.fpv) { placePhoneCamera(cfg.fpv); if (cfg.anchors) tagAnchors(); }
   stepCharge(dt); stepShots(dt); fx.step(dt); updateSkels(); updatePhoneSkels();
   if (sfx) { // sound follows the state every frame (cheap: audio.js only touches parameters on change)
-    for (const p of Object.values(players)) sfx.charge(p.slot, p.charging && canAct(), p.charge, panOf(p.tip));
-    sfx.bgm(['demo', 'countdown', 'fight'].includes(match.phase) && !match.paused);
+    const tc = Math.max(0, soundTest.charge - now()); // admin test: a 2.5 s charge rising to full on A
+    for (const p of Object.values(players)) {
+      const test = p.slot === 'A' && tc > 0;
+      sfx.charge(p.slot, (p.charging && canAct()) || test, test ? 1 - tc / 2.5 : p.charge, test ? 0 : panOf(p.tip));
+    }
+    sfx.bgm((['demo', 'countdown', 'fight'].includes(match.phase) && !match.paused) || now() < soundTest.bgm);
   }
   const yawOf = b => Math.atan2(-b.R[6], b.R[0]); // body x axis = forward
   drone.update(dt, Object.fromEntries(Object.values(players).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
