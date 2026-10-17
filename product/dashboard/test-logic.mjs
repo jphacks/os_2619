@@ -26,6 +26,21 @@ import { STICK } from './public/world.js';
   console.log('actions ok (a sudden stop fires, a slow wind-down does not)');
 }
 
+// charge start: a held stick's tremor (±45°/s, flipping) does not start one; a real shake does, and a smaller shake keeps it
+{
+  const A = createActions(), ev = [];
+  let t = 500;
+  const run = (dur, f) => { for (let i = 0; i < dur * 100; i++, t += 0.01) ev.push(...A.ingest({ type: 'imu', slot: 'A', t, ...f(i) }, [1, 0, 0])); };
+  run(3, i => ({ euler: [0, -50, 0], gyro: [i % 7 < 3 ? 45 : -45, i % 5 < 2 ? 40 : -40, 0] }));
+  assert.equal(ev.filter(e => e.name === 'Charge').length, 0, 'tremor started a charge');
+  run(1, i => ({ euler: [0, -50, 0], gyro: [0, i % 16 < 8 ? 200 : -200, 0] }));
+  assert.ok(ev.some(e => e.name === 'Charge'), 'a shake did not start a charge');
+  ev.length = 0;
+  run(1, i => ({ euler: [0, -50, 0], gyro: [0, i % 16 < 8 ? 45 : -45, 0] }));
+  assert.ok(ev.filter(e => e.name === 'Charge').length >= 3, 'a smaller shake did not keep the charge');
+  console.log('charge ok: tremor does not start it, a shake does, a smaller shake keeps it');
+}
+
 // phonealign: 20 s of the fake world (raw ARCore frames with their own yaw / origin) -> chest positions in the field world
 {
   const sim = createSim({ seed: 3, noise: 1 }), PA = createPhoneAlign(), t0 = 1000;

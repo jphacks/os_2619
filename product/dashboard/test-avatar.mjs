@@ -5,7 +5,8 @@ register('data:text/javascript,' + encodeURIComponent(`export async function res
 const ctx = new Proxy(function () {}, { get: (t, k) => k === 'canvas' ? {} : k === 'width' ? 10 : k === 'measureText' ? () => ({ width: 10 }) : ctx, apply: () => ctx, set: () => true });
 globalThis.document = { createElement: () => ({ width: 0, height: 0, getContext: () => ctx, style: {} }) };
 globalThis.window = globalThis; globalThis.location = { search: '' };
-const THREE = await import('three'), { createField } = await import('./public/field3d.js'), W = await import('./public/world.js');
+const THREE = await import('three'), { createField, POSE } = await import('./public/field3d.js'), W = await import('./public/world.js');
+POSE.show = true; // the pose code is tested even while the dashboard has it switched off
 const scene = new THREE.Scene(), field = createField(scene);
 const joints = Array.from({ length: 33 }, () => [0, 1, 0]), vis = Array(33).fill(1);
 const put = (i, x, y, z) => { joints[i] = [x, y, z]; };
@@ -22,7 +23,18 @@ scene.updateMatrixWorld(true);
 const avatar = scene.children.find(o => o.isGroup).children.filter(o => o.matrixAutoUpdate === false)[0]; // avatar A's root
 const hand = avatar.children.find(o => o.isMesh && o.geometry.type === 'IcosahedronGeometry' && Math.abs(o.scale.x - .05) < 1e-6 && o.material.color.getHex() === 0x252a36 && o.position.z > 0);
 const wp = new THREE.Vector3(); hand.getWorldPosition(wp);
-assert.ok(Math.hypot(wp.x - (O[0] + .5), wp.y - 1.45 - 0, wp.z - (O[2] + .2)) < .12, 'stick hand reaches the raised right wrist: ' + wp.toArray().map(v => v.toFixed(2)));
+// the camera pose shapes the body but never places it: the stick hand is at the sensors' stick base (not the camera's wrist)
+assert.ok(wp.distanceTo(player.base) < .05, 'stick hand on the sensors\' stick base: ' + wp.toArray().map(v => v.toFixed(2)));
+const where = () => { scene.updateMatrixWorld(true); return new THREE.Vector3().setFromMatrixPosition(avatar.matrixWorld); };
+const at0 = where();
+assert.ok(Math.hypot(at0.x, at0.z) < .25, 'the avatar stands where the sensors say (0, 0), not where the camera saw the person (1, 0.5)');
+for (const j of joints) { j[0] += 2; j[2] -= 1; } // the camera sees the person 2 m off: the avatar does not move
+for (let i = 0; i < 30; i++) field.update(.016, { A: player });
+assert.ok(where().distanceTo(at0) < .01, 'a camera-pose shift does not move the avatar');
+player.body = W.bodyPose([1, 1.3, -1], 0, 1.3); player.base.add(new THREE.Vector3(1, 0, -1)); player.tip.add(new THREE.Vector3(1, 0, -1));
+for (let i = 0; i < 4; i++) field.update(.016, { A: player });
+const at1 = where();
+assert.ok(Math.abs(at1.x - at0.x - 1) < .01 && Math.abs(at1.z - at0.z + 1) < .01, 'the sensors move it');
 // no skeleton: back to the avatar's own pose without throwing
 player.skel = null; field.update(.016, { A: player });
-console.log('avatar ok: right hand on the right wrist, falls back without a pose');
+console.log('avatar ok: placed by the sensors only (the camera pose never moves it), stick hand on the stick, falls back without a pose');

@@ -14,7 +14,8 @@ globalThis.window = globalThis; globalThis.location = { search: '' };
 const glb = readFileSync(new URL('./public/assets/models/Xbot.glb', import.meta.url));
 globalThis.fetch = async () => new Response(glb); // GLTFLoader reads the model through fetch
 globalThis.ProgressEvent = class extends Event { constructor(t, o) { super(t); Object.assign(this, o); } };
-const THREE = await import('three'), { createField } = await import('./public/field3d.js'), W = await import('./public/world.js');
+const THREE = await import('three'), { createField, POSE } = await import('./public/field3d.js'), W = await import('./public/world.js');
+POSE.show = true; // the pose code is tested even while the dashboard has it switched off
 const scene = new THREE.Scene(), field = createField(scene);
 const joints = Array.from({ length: 33 }, () => [0, 1, 0]), vis = Array(33).fill(1);
 const put = (i, x, y, z) => { joints[i] = [x, y, z]; };
@@ -33,10 +34,36 @@ const at = n => scene.getObjectByName('mixamorig' + n).getWorldPosition(new THRE
 const rh = at('RightHand'), lh = at('LeftHand'), rf = at('RightFoot'), lf = at('LeftFoot'), hd = at('Head');
 const show = v => v.toArray().map(x => x.toFixed(2)).join(',');
 console.log('right hand', show(rh), 'left hand', show(lh), 'right foot', show(rf), 'left foot', show(lf), 'head', show(hd));
-assert.ok(rh.z > O[2] && lh.z < O[2], 'hands on their own sides');
-assert.ok(rh.x > O[0] + .35 && Math.abs(rh.y - 1.45) < .15, 'right arm points forward');
-assert.ok(lh.y < 1.1 && Math.abs(lh.x - O[0]) < .15, 'left arm hangs down');
+const C = [0, 0, 0]; // the sensors' place: the figure stands there whatever the camera saw
+assert.ok(rh.z > C[2] && lh.z < C[2], 'hands on their own sides');
+assert.ok(rh.distanceTo(player.base) < .2, 'the stick hand holds the sensors\' stick base');
+assert.ok(lh.y < 1.1 && Math.abs(lh.x - C[0]) < .2, 'left arm hangs down');
 assert.ok(rf.x > lf.x + .15 && rf.y > lf.y + .05, 'right knee raised forward');
 assert.ok(hd.y > 1.4 && hd.y < 1.8, 'head above the shoulders');
 player.skel = null; field.update(.016, { A: player }); // the sensors-only pose drives it too
-console.log('figure ok: limbs follow the skeleton, sides right, falls back without a pose');
+// sensors only, the chest lowered: a crouch bends the knees and leans the back; the body keeps its size and its feet on the floor
+const bendDeg = () => { const k = at('LeftLeg'); return 180 - at('LeftUpLeg').sub(k).angleTo(at('LeftFoot').sub(k)) * 180 / Math.PI; }; // knee bend, 0 = straight
+const stand = () => { scene.updateMatrixWorld(true); return { thigh: at('LeftUpLeg').distanceTo(at('LeftLeg')), head: at('Head').y, foot: Math.min(at('LeftFoot').y, at('RightFoot').y), knee: at('LeftLeg').x - at('LeftUpLeg').x, bend: bendDeg() }; };
+const pose = h => { player.body = W.bodyPose([0, h, 0], 0, h); player.base = new THREE.Vector3(.3, h + .1, .2); player.tip = new THREE.Vector3(1.3, h + .1, .2); for (let i = 0; i < 30; i++) field.update(.016, { A: player }); return stand(); };
+const fmt = o => JSON.stringify(o, (k, v) => typeof v === 'number' ? +v.toFixed(2) : v);
+const up = pose(1.35), low = pose(.9);
+console.log('standing', fmt(up), 'crouched', fmt(low));
+assert.ok(Math.abs(low.thigh - up.thigh) < .005, 'a crouch keeps the body its size');
+assert.ok(low.head < up.head - .3, 'the head comes down');
+assert.ok(Math.abs(low.foot - up.foot) < .08, 'the feet stay on the floor');
+assert.ok(low.knee > up.knee + .1, 'the knees bend forward');
+// standing is whatever height the player starts at: a shorter player standing is drawn standing (straight knees), not half-crouched
+player.body = null; field.update(.016, { A: player }); // gone: the next one seen is measured afresh
+const short = pose(1.15);
+console.log('short player standing', fmt(short));
+assert.ok(short.bend < 12 && up.bend < 12 && low.bend > 60, 'standing knees straight (both players), bent in the crouch');
+assert.ok(short.thigh < up.thigh - .02, 'and a smaller body');
+// a one-frame jump of the AR height does not turn standing into a crouch
+player.body = W.bodyPose([0, 1.6, 0], 0, 1.6); field.update(.016, { A: player });
+const after = pose(1.15);
+assert.ok(after.bend < 12, 'a one-frame AR jump leaves the stance alone');
+// switched off (the dashboard's default for now): upright whatever the camera pose or the chest height says
+POSE.show = false; player.skel = { joints, vis };
+const off = pose(.9);
+assert.ok(off.bend < 12 && Math.abs(off.head - after.head) < .05, 'POSE.show off: always standing');
+console.log('figure ok: limbs follow the skeleton, sides right, falls back without a pose, crouches without shrinking, standing height per player, upright when switched off');

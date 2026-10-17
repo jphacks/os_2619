@@ -29,10 +29,15 @@ function setup({ rules = {}, matchSec = 60, test = false, dummy = false } = {}) 
     g.ingest({ type: 'truth', slot, chest: [x, 1.3, z], yaw: slot === 'A' ? 0 : Math.PI, base: [x + .2 * s, 1.2, z], dir: [s, 0, 0] });
   };
   put('A', ...pos.A); put('B', ...pos.B);
-  const run = sec => { for (let i = 0; i < Math.round(sec / DT); i++) { t += DT; g.step(DT, DT, null); } };
+  // a still stick guards (game.js stepGuard), so B's stick bobs up and down ±20° at 1.5 Hz unless a scenario holds it still
+  // (wob[slot] = false); up and down, so it adds nothing sideways to a shot's aim
+  const wob = { A: false, B: true }; // A scripts its own stick (sweeps, charges); B is the target
+  const bob = slot => { const [x, z] = pos[slot], s = slot === 'A' ? 1 : -1, a = .35 * Math.sin(2 * Math.PI * 1.5 * t);
+    g.ingest({ type: 'truth', slot, chest: [x, 1.3, z], yaw: slot === 'A' ? 0 : Math.PI, base: [x + .2 * s, 1.2, z], dir: [s * Math.cos(a), Math.sin(a), 0] }); };
+  const run = sec => { for (let i = 0; i < Math.round(sec / DT); i++) { t += DT; for (const sl of ['A', 'B']) if (wob[sl]) bob(sl); g.step(DT, DT, null); } };
   g.command({ cmd: 'matchSec', value: matchSec });
   const S = {
-    g, cfg, run, put,
+    g, cfg, run, put, wob,
     get A() { return g.players.A; }, get B() { return g.players.B; },
     fight() { g.command({ cmd: 'phase', phase: 'fight' }); run(3.05); },
     swing: slot => g.onSensed({ slot, name: 'Swing', power: .7 }),
@@ -45,11 +50,11 @@ function setup({ rules = {}, matchSec = 60, test = false, dummy = false } = {}) 
       for (let i = 1; i <= n; i++) { put(slot, x0 + dx * i / n, z0 + dz * i / n); run(DT); }
     },
     /** move A's stick over `sec`: base(u) and dir(u) for u 0..1 (field coords), then a Swing as the stick stops */
-    sweep(slot, sec, base, dir) {
+    sweep(slot, sec, base, dir, { keep = false } = {}) { // keep: stop right after the Swing (the shot still in flight)
       const n = Math.round(sec / DT), x = pos[slot];
       g.ingest({ type: 'truth', slot, chest: [x[0], 1.3, x[1]], yaw: slot === 'A' ? 0 : Math.PI, base: base(0), dir: dir(0) }); run(.6); // wind up, still
       for (let i = 0; i <= n; i++) { const u = i / n; g.ingest({ type: 'truth', slot, chest: [x[0], 1.3, x[1]], yaw: slot === 'A' ? 0 : Math.PI, base: base(u), dir: dir(u) }); run(DT); }
-      S.swing(slot); run(1.5);
+      S.swing(slot); if (!keep) run(1.5);
     },
     log: () => g.events.map(e => `${e.slot ?? '-'} ${e.text}`).reverse(),
   };
@@ -153,13 +158,21 @@ scenario('同じ払い方でも、狙いを「止めたときの棒の向き」�
   S.sweep('A', .2, () => [-1.0, 1.2, 0], u => { const a = -Math.PI / 2 * (1 - u); return [Math.cos(a), 0, Math.sin(a)]; });
   eq(S.B.hp, 95, 'B の HP');
 });
-scenario('振り下ろして止めると、下向きに飛んで床で消える', () => {
+scenario('振り下ろして止めると、小は止めた棒の先の高さで、体の向きに水平に飛んで当たる', () => {
   const S = setup(); S.fight();
   // stick from straight up down to level forward: at the stop the tip is moving straight down
-  S.sweep('A', .2, () => [-1.0, 1.2, 0], u => { const a = Math.PI / 2 * (1 - u); return [Math.cos(a), Math.sin(a), 0]; });
-  eq(S.B.hp, 100, 'B の HP'); eq(S.g.shots.length, 0, '残っている弾');
+  S.sweep('A', .2, () => [-1.0, 1.2, 0], u => { const a = Math.PI / 2 * (1 - u); return [Math.cos(a), Math.sin(a), 0]; }, { keep: true });
+  const sh = S.g.shots[0]; expect(sh, '弾がない');
+  expect(Math.abs(sh.vel.y) < 1e-9, `弾の上下の速さ ${sh.vel.y}`); expect(Math.abs(sh.pos.y - S.A.tip.y) < .05, `弾の高さ ${sh.pos.y.toFixed(2)}、棒の先 ${S.A.tip.y.toFixed(2)}`);
+  S.run(1.5); eq(S.B.hp, 95, 'B の HP');
 });
-scenario('ボタンで撃つとき（棒が動いていない）は、棒の向きに飛ぶ', () => {
+scenario('横に払うと、小は体の向きと払った向きの間（最大 45°）に飛ぶ', () => {
+  const S = setup(); S.fight();
+  S.sweep('A', .2, () => [-1.0, 1.2, 0], u => { const a = -Math.PI / 2 * (1 - u); return [Math.cos(a), 0, Math.sin(a)]; }, { keep: true });
+  const v = S.g.shots[0].vel, deg = Math.atan2(v.z, v.x) * 180 / Math.PI;
+  expect(deg > 20 && deg <= 45.5, `水平の向き ${deg.toFixed(0)}°`);
+});
+scenario('ボタンで撃つとき（棒が動いていない）は、小は体の向きに飛ぶ', () => {
   const S = setup(); S.fight(); S.g.command({ cmd: 'shoot', slot: 'A' }); S.run(1);
   eq(S.B.hp, 95, 'B の HP');
 });
@@ -225,7 +238,7 @@ scenario('回避とガードのセンサー判定だけでは何も起きない�
   eq(S.B.hp, 95, 'B の HP（無敵なし）');
 });
 // B holds the stick level across the body (真一文字): pointing along z, square to the facing (-x)
-const guardB = S => S.g.ingest({ type: 'truth', slot: 'B', chest: [1.2, 1.3, 0], yaw: Math.PI, base: [1, 1.2, -.4], dir: [0, 0, 1] });
+const guardB = S => (S.wob.B = false, S.g.ingest)({ type: 'truth', slot: 'B', chest: [1.2, 1.3, 0], yaw: Math.PI, base: [1, 1.2, -.4], dir: [0, 0, 1] });
 scenario('真一文字に構えると、小は跳ね返って撃った A に当たる', () => {
   const S = setup(); S.fight(); guardB(S); S.run(.4);
   eq(S.B.guarding, true, 'B のガード');
@@ -235,6 +248,37 @@ scenario('真一文字に構えると、小は跳ね返って撃った A に当�
 scenario('構えてすぐ（0.3 秒未満）はまだガードにならない', () => {
   const S = setup(); S.fight(); guardB(S); S.run(.1);
   eq(S.B.guarding, false, 'B のガード');
+});
+const stickB = (S, dir) => (S.wob.B = false, S.g.ingest)({ type: 'truth', slot: 'B', chest: [1.2, 1.3, 0], yaw: Math.PI, base: [1, 1.2, -.4], dir });
+scenario('振って真一文字の位置で止めると、止めたときに小を撃ち、ガードにはならない', () => {
+  const S = setup(); S.fight();
+  stickB(S, [0, 1, 0]); S.run(.5);
+  for (let i = 1; i <= 9; i++) { const a = i / 9 * Math.PI / 2; stickB(S, [0, Math.cos(a), Math.sin(a)]); S.run(DT); } // 90° in .15 s
+  S.swing('B'); eq(S.B.shots, 1, '止めた瞬間の B の発射数');
+  let guarded = false; for (let i = 0; i < 40; i++) { S.run(DT); guarded ||= S.B.guarding; }
+  eq(guarded, false, '止めた直後 0.66 秒のガード');
+});
+scenario('真一文字でも棒を揺らし続けている間はガードにならない', () => {
+  const S = setup(); S.fight();
+  let guarded = false;
+  for (let i = 0; i < 90; i++) { const a = .3 * Math.sin(i * DT * 2 * Math.PI * 1.5); stickB(S, [-Math.sin(a), 0, Math.cos(a)]); S.run(DT); guarded ||= S.B.guarding; } // ±17° at 1.5 Hz
+  eq(guarded, false, '揺らしている間の B のガード');
+  S.run(.4); eq(S.B.guarding, true, '止めて 0.4 秒後の B のガード');
+});
+scenario('止めた棒の向きが 1.5° ほど揺れ、センサーの更新がフレームとずれていてもガードになる', () => {
+  const S = setup(); S.fight();
+  let r = 7; const rnd = () => (r = (r * 16807) % 2147483647) / 2147483647 - .5;
+  for (let i = 0; i < 40; i++) { // a packet every ~2 frames, each with up to ±1.5° of noise
+    if (i % 2 === 0 || i % 7 === 0) { const a = 3 * rnd() * Math.PI / 180, b = 3 * rnd() * Math.PI / 180; stickB(S, [Math.sin(a), Math.sin(b), Math.cos(a)]); }
+    S.run(DT);
+  }
+  eq(S.B.guarding, true, '止めて 0.66 秒後の B のガード');
+});
+scenario('棒をどの向きで止めていても（相手に向けたままでも）ガードになり、小は跳ね返る', () => {
+  const S = setup(); S.fight(); stickB(S, [-1, .3, 0]); S.run(.4);
+  eq(S.B.guarding, true, 'B のガード');
+  S.swing('A'); S.run(1.5);
+  eq(S.B.hp, 100, 'B の HP'); eq(S.A.hp, 95, '跳ね返った小を受けた A の HP');
 });
 scenario('中と大はガードを貫通する', () => {
   const S = setup(); S.fight(); guardB(S);

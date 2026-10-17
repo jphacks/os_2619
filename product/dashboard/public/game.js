@@ -6,10 +6,11 @@
 //   Charge (circle the stick) → charging; Swing releases it: under t1 s 小, t1..t2 s 中, t2 s and more 大 (special move)
 //   moving the chest more than `moveFail` m while charging drops the charge
 //   every tier is a projectile along the aim: dodging is just moving out of its way (no invulnerable dodge)
-//   guard (10/18): the stick held level across the body (真一文字・とおせんぼ) for guardHold s, or the guard button: a 小 that
+//   guard (10/18): the stick held still in any pose for guardHold s (not while charging, not right after a swing), or the guard button: a 小 that
 //   reaches the guard bounces back at its shooter; 中 and 大 go through it (full damage)
 //   aim 'motion' (default): where the stick tip was travelling just before it stopped (GAME_DESIGN.md); 'stick': where the
 //   stick points; 'eye': from the eyes through the tip. Buttons / keys (no swing) fall back to 'stick'.
+//   10/18: in 'motion', 小 flies level at the tip's height, heading between the chest phone's facing and the tip's motion (levelAim)
 // Hits are 3D: shot sphere vs the opponent's vertical body segment. Effects go to effects.js (fx), sound to audio.js (sfx).
 import * as THREE from 'three';
 import * as W from './world.js';
@@ -53,7 +54,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   };
 
   function makePlayer(slot) {
-    return { slot, element: ELEMENT[slot], hp: cfg.rules?.hp ?? RULES.hp, hpMax: cfg.rules?.hp ?? RULES.hp, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, chargeFrom: null, tier: null, act: null, guarding: false, guardSince: null, guardBtn: false,
+    return { slot, element: ELEMENT[slot], hp: cfg.rules?.hp ?? RULES.hp, hpMax: cfg.rules?.hp ?? RULES.hp, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, chargeFrom: null, tier: null, act: null, guarding: false, guardBtn: false,
       body: W.bodyPose(W.START[slot].pos, W.START[slot].yaw), chest: V(), base: V(), tip: V(), dir: V(1, 0, 0), trail: [], lastShot: -9, src: 'start', stickSrc: '-',
       shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 };
   }
@@ -117,16 +118,18 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     } else s?.aura(p.slot, p.element, 0, 0);
     if (p.guarding) { const f = W.app3(p.body.R, [1, 0, 0]); fx.guard(p.element, p.base.clone().lerp(p.tip, .5), 1, undefined, V(f[0], 0, f[2]).normalize()); } // facing: the shield stands square to it
   }
-  /** Guard pose: the stick within 25° of level and within 30° of square to the body's facing (held across the body). */
-  function guardPose(p) {
-    const f = W.app3(p.body.R, [1, 0, 0]);
-    return Math.abs(p.dir.y) < Math.sin(25 * Math.PI / 180) && Math.abs(p.dir.x * f[0] + p.dir.z * f[2]) < Math.sin(30 * Math.PI / 180);
-  }
+  // 10/18: a guard is the stick held still, in any pose: it stays within GUARD_STILL of where it is now for the last
+  // guardHold s; not while charging, not right after a swing (the stop is the swing's shot). Not frame to frame: sensor packets and frames tick at different rates, so a still stick's dir moves
+  // in 1-2° steps that read as tens of °/s over one frame (a held stick failed to guard). 7° / 0.3 s: above a still
+  // stick's jitter, below a ±17° 1.5 Hz wobble even at its turning point (9.7°)
+  const GUARD_STILL = 7 * Math.PI / 180, AFTER_SWING = .8;
   function stepGuard() {
     for (const p of Object.values(players)) {
-      const pose = canAct() && !p.charging && (p.guardBtn || guardPose(p));
-      p.guardSince = pose ? p.guardSince ?? now() : null;
-      const on = pose && (p.guardBtn || now() - p.guardSince >= rules().guardHold);
+      const t = now(), win = rules().guardHold, h = p.guardHist ??= [];
+      h.push({ t, dir: p.dir.clone() }); while (h.length > 2 && h[1].t <= t - win) h.shift();
+      const dev = Math.max(...h.map(x => p.dir.angleTo(x.dir))); // the furthest any sample in the window is from now: a wobble's turning point is not still
+      const still = t - h[0].t >= win - 1e-6 && dev < GUARD_STILL && t - (p.swingAt ?? -9) > AFTER_SWING; // held still for the whole hold
+      const on = canAct() && !p.charging && (p.guardBtn || still);
       if (on && !p.guarding) { showAct(p, 'ガード'); log(p.slot, 'guard', 'ガード'); sfx()?.guard('up', panOf(p.chest)); }
       p.guarding = on;
     }
@@ -141,7 +144,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     const dummyTarget = !!getDummyFrame(), homing = dummyTarget || match.mode === 'demo';
     const aim = homing ? other(p).chest.clone().sub(p.tip).normalize()
       : cfg.aim === 'eye' ? p.tip.clone().sub(p.chest.clone().add(V(0, .35, 0))).normalize()
-        : (cfg.aim ?? 'motion') === 'motion' ? motionAim(p) ?? p.dir.clone() : p.dir.clone();
+        : (cfg.aim ?? 'motion') === 'motion' ? (tier === 's' ? levelAim(p) : motionAim(p) ?? p.dir.clone()) : p.dir.clone();
     p.shots++; if (tier === 'l') p.specials++;
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
     if (tier === 'l') { s?.special(p.element, panOf(p.tip)); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
@@ -172,6 +175,16 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     let j = end; while (j > 0 && tr[end].t - tr[j].t < .08 && tr[j].p.distanceTo(tr[j - 1].p) / Math.max(1e-3, tr[j].t - tr[j - 1].t) < 25) j--;
     const d = tr[end].p.clone().sub(tr[j].p);
     return d.lengthSq() > 1e-6 ? d.normalize() : null;
+  }
+  /** 小's aim: level (it keeps the tip's height), heading halfway-ish between the body's facing (chest phone) and the
+   *  tip's horizontal motion. A chop straight down flies along the facing; a sideways swipe veers up to 45° toward it;
+   *  motion backwards is dropped. Without a swing (button), the facing. */
+  function levelAim(p) {
+    const f = W.app3(p.body.R, [1, 0, 0]), fh = V(f[0], 0, f[2]).normalize(), m = motionAim(p);
+    if (!m) return fh;
+    const mh = V(m.x, 0, m.z), back = mh.dot(fh);
+    if (back < 0) mh.addScaledVector(fh, -back);
+    return fh.add(mh).normalize();
   }
   const sizeOf = tier => Math.max(.2, Math.min(4, +(rules().size?.[tier] ?? 1) || 1));
   function fxShot(p, tier) { // try-out: aimed at the other player's chest so it always shows the hit too
@@ -253,7 +266,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       if (p.dir.y < 0) { if (now() - (p.lowLogged ?? -9) > 1) { p.lowLogged = now(); log(p.slot, 'charge', '棒が水平より下なので溜めない'); } return; }
       p.chargeSeen = now(); startCharge(p);
     }
-    else if (ev.name === 'Swing') { if (inFront(p)) attack(p); else log(p.slot, 'shot', '背中側で止めたので撃たない'); }
+    else if (ev.name === 'Swing') { p.swingAt = now(); if (inFront(p)) attack(p); else log(p.slot, 'shot', '背中側で止めたので撃たない'); }
   }
   /** A swing only fires when the stick stops in front of the body: tip ahead of the chest along the body's facing
    *  (horizontal). A stick that comes to rest behind the back (wind-up, putting it down) is not a shot. */
@@ -286,7 +299,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
 
   // ---- match flow: setup -> countdown -> fight -> result ----
   function reset() {
-    for (const p of Object.values(players)) Object.assign(p, { guarding: false, guardSince: null, hp: rules().hp ?? RULES.hp, hpMax: rules().hp ?? RULES.hp, charge: 0, chargeT: 0, charging: false, tier: null, autoRelease: null, act: null, lastShot: -9, shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 });
+    for (const p of Object.values(players)) Object.assign(p, { guarding: false, guardHist: [], hp: rules().hp ?? RULES.hp, hpMax: rules().hp ?? RULES.hp, charge: 0, chargeT: 0, charging: false, tier: null, autoRelease: null, act: null, lastShot: -9, shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 });
     for (const s of shots) fx.endShot(s.id); shots.length = 0; winner = null;
     for (const p of Object.values(players)) p.preview = null;
   }
@@ -359,7 +372,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       const p = players[k.slot]; if (!p) return;
       if (k.type === 'imu') p.imu = k;
       else if (k.type === 'truth') p.truth = k;
-      else if (k.type === 'calib') p.imu = null;
+      else if (k.type === 'calib') { p.imu = null; p.calibAt = performance.now(); } // the avatar re-reads its standing height too
     },
     setOnline(list) { for (const p of Object.values(players)) p.online = list.some(q => q.slot === p.slot); },
     bannerText() {

@@ -249,7 +249,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     if (needArena) {
       drone.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
       field.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot,
-        { body: p.body, base: p.base, tip: p.tip, hp: p.hp, hpMax: p.hpMax, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, skel: p.skel }])));
+        { body: p.body, base: p.base, tip: p.tip, hp: p.hp, hpMax: p.hpMax, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, skel: p.skel, calibAt: p.calibAt }])));
     }
     fx.step(dt);
     if (minimap) { const on = S.mode === 'game' && cfg.minimap && !setup; minimap.canvas.style.display = on ? '' : 'none'; if (on) minimap.draw(P, game.shots); }

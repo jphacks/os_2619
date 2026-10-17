@@ -11,6 +11,7 @@ import { createMap } from './map.js';
 import { createActions } from './actions.js';
 import { createVideoSource } from './video.js';
 import { createStage, DRONE_JA } from './stage.js';
+import { POSE } from './field3d.js';
 import { createGame, PHASE_JA, POS_JA, ELEMENT_JA, RULES, TIER_JA } from './game.js';
 import { createSmashStyle } from './fx-smash.js';
 import { createSpace } from './space3d.js';
@@ -222,7 +223,7 @@ drawer.innerHTML = `
     <div class="row"><button id="forgetFov">覚えた画角を消す</button><button id="clearScan">スキャン結果を消す</button></div>
     <p class="note">人がいない状態で、フィールドの角に置いたタグがスマホ C の映像に全部入るようにしてからスキャンする。床のタグなら 2 枚のとき左が A 側。</p></section>
   <section><h3>ゲーム</h3>
-    <label class="f"><span>狙い</span><select id="aimSel"><option value="motion">止める直前の棒の先の動き</option><option value="stick">止めたときの棒の向き</option><option value="eye">目から棒先へ</option></select><span></span></label>
+    <label class="f"><span>狙い</span><select id="aimSel"><option value="motion">止める直前の棒の先の動き（小は胸の向きと合わせて水平、高さは棒の先）</option><option value="stick">止めたときの棒の向き</option><option value="eye">目から棒先へ</option></select><span></span></label>
     <div class="row"><button data-tog="test">テスト（HP が減らない）</button><button data-tog="useTruth">正解位置（シミュレーター）</button></div></section>
   <section><h3>音</h3>
     ${['master:全体', 'bgm:BGM', 'sfx:効果音', 'amb:環境音'].map(x => { const [k, n] = x.split(':'); return `<label class="f"><span>${n}</span><input type="range" min="0" max="1" step="0.01" data-vol="${k}"><output data-volout="${k}"></output></label>`; }).join('')}
@@ -360,7 +361,7 @@ const skelCache = {};
 function applyMimic(on) {
   const w = video.__dummy?.canvas.width ?? video.videoWidth, h = video.__dummy?.canvas.height ?? video.videoHeight;
   for (const s of ['A', 'B']) {
-    const p = game.players[s], person = on ? vision.persons[s] : null;
+    const p = game.players[s], person = on && (p.online || p.imu) ? vision.persons[s] : null; // offline (no phone, no stick): stands still, never copies whoever the camera sees
     if (!person || performance.now() / 1000 - person.t > .7 || !w) { p.skel = null; continue; }
     if (skelCache[s]?.person !== person) { // a new result (~15 Hz): convert once, the avatar smooths it between results
       const cam = stage.phoneCam(w / h);
@@ -385,7 +386,7 @@ function frame(ts) {
   if (screen === 'final') finalControls.step(t);
   // MediaPipe runs for the avatars (pose only) and/or the final screen's layers (also the masks and the stick search)
   const live = !!(video.videoWidth || video.__dummy);
-  const mimicOn = !!cfg.mimic && live && (screen === 'game' || screen === 'final' && !!cfg.pip);
+  const mimicOn = POSE.show && !!cfg.mimic && live && (screen === 'game' || screen === 'final' && !!cfg.pip);
   const layersOn = !!cfg.visOn && screen === 'final' && !cfg.fpv && VIS_KEYS.some(k => cfg[k]);
   vision.want(mimicOn || layersOn, layersOn);
   if (mimicOn || layersOn) vision.setHints(visionHints());

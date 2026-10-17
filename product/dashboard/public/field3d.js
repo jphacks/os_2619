@@ -232,6 +232,14 @@ const between = (m, a, b) => { // unit-height y-axis mesh from a to b
 const CYL = new THREE.CylinderGeometry(1, 1, 1, 6); // scaled per limb
 const JOINT = new THREE.IcosahedronGeometry(1, 0);
 const UPPER = .3, FORE = .3, SHOULDER = [-.1, .07, .21], HIP = [-.1, -.5, .1];
+// Standing chest height (m, the phone's mount) sets the body's size; a lower chest is a crouch, never a smaller body.
+// People differ, so it is read off the player: the chest height in the first CAPTURE s it is seen (they start standing),
+// again after the phone's calibrate. Later only a chest held higher raises it (slowly: a one-frame AR jump does not).
+const TALL_MIN = .95, TALL_MAX = 1.7, CAPTURE = .4, TORSO = -HIP[1];
+// POSE.show false: the avatars stand upright and follow only the sensors' position and heading (no camera pose, no crouch),
+// to check the position on its own. True: the camera pose shapes the body (it never moves it: see poseUpdate).
+export const POSE = { show: true };
+const legLen = tall => (tall + HIP[1] - .04) * .97; // hip to sole, standing: a little short, so a standing knee stays straight through the breathing bob (3 % longer bent it ~28°, which read as half-crouched)
 
 // The body that is drawn: a wireframe human (three.js's Xbot, a Mixamo rig), loaded once and cloned per avatar. Its bones aim
 // at the points the avatar code below computes (those primitive meshes stay hidden and only serve as the rig).
@@ -261,11 +269,21 @@ function makeFig(obj, mat, root) {
     bone.quaternion.copy(pq.invert().multiply(dq.multiply(wq)));
     bone.updateMatrixWorld(true);
   }
+  const spineBind = b.Spine.quaternion.clone(), lq = new THREE.Quaternion(), rq = new THREE.Quaternion();
   return function pose(r) { // r: root-frame points of the rig, headQ the head's turn in the body frame
-    // legs as long as the rig's (so the feet stand on the floor), hips on the rig's hips
-    const sc = r.legs.reduce((a, l) => a + l.hip.distanceTo(l.knee) + l.knee.distanceTo(l.foot), 0) / 2 / leg;
-    obj.scale.setScalar(sc); obj.position.set(HIP[0], HIP[1], 0).sub(tgt.copy(hipM).multiplyScalar(sc).applyQuaternion(obj.quaternion));
+    // size: r.leg (the standing leg, fixed per player: a crouch bends the knees instead of shrinking the body), else the rig's
+    // own leg bones (the camera pose: the person's measured bones, which a crouch does not shorten either)
+    const sc = (r.leg ?? r.legs.reduce((a, l) => a + l.hip.distanceTo(l.knee) + l.knee.distanceTo(l.foot), 0) / 2) / leg, hip = r.hip ?? V(HIP[0], HIP[1], 0);
+    obj.scale.setScalar(sc); obj.position.set(hip.x, hip.y, 0).sub(tgt.copy(hipM).multiplyScalar(sc).applyQuaternion(obj.quaternion));
     root.updateWorldMatrix(true, true);
+    b.Spine.quaternion.copy(spineBind);
+    if (r.lean) { // bend forward at the waist: turn the spine about the body's right axis (+z), in world terms
+      b.Spine.parent.getWorldQuaternion(pq); root.getWorldQuaternion(rq);
+      lq.setFromAxisAngle(V(0, 0, 1), -r.lean).premultiply(rq).multiply(rq.clone().invert()); // the turn, in the world frame
+      wq.multiplyQuaternions(pq, spineBind); // the spine's bind turn, in the world frame
+      b.Spine.quaternion.copy(pq.invert().multiply(lq.multiply(wq)));
+      b.Spine.updateMatrixWorld(true);
+    }
     aim('RightArm', r.sR, r.eR); aim('RightForeArm', r.eR, r.hR); aim('LeftArm', r.sL, r.eL); aim('LeftForeArm', r.eL, r.hL);
     for (const [side, l] of [['Right', r.legs[1]], ['Left', r.legs[0]]]) {
       aim(side + 'UpLeg', l.hip, l.knee); aim(side + 'Leg', l.knee, l.foot); aim(side + 'Foot', l.foot, l.toe);
@@ -333,7 +351,7 @@ function makeAvatar(slot) {
     hpTex.needsUpdate = true;
   }
 
-  const st = { phase: 0, last: null, speed: 0, time: Math.random() * 10, ko: 0 };
+  const st = { phase: 0, last: null, speed: 0, time: Math.random() * 10, ko: 0, tall: null, cap: [], calibAt: undefined };
   const L = a => v3(a); // body-frame point
   const offColor = new THREE.Color(0x6a6f7a), onColor = new THREE.Color(color);
   let wasOnline = null;
@@ -358,26 +376,46 @@ function makeAvatar(slot) {
     drawHp(100 * (p.hp ?? 100) / (p.hpMax || 100), online, p.charging ? (p.charge ?? 0) : 0);
   }
 
-  // The pose from phone C's picture (p.skel = { joints, vis }, world joints from avatarpose.js): every bone is put where the
-  // person's is, relative to the shoulders / hips of this avatar (so its own proportions stay), smoothed between the ~15 Hz poses.
-  const sm = Array.from({ length: 33 }, () => V()), tmp = V(), X = V(1, 0, 0), bodyM = new THREE.Matrix4(), bodyInv = new THREE.Matrix4();
+  // The pose from phone C's picture (p.skel = { joints, vis }, world joints from avatarpose.js) gives the body its shape only:
+  // the limbs, the head and the trunk's lean, relative to the person's own trunk, smoothed between the ~15 Hz poses. Where the
+  // body stands and which way it faces stay the sensors' (as without the camera), so the pose never moves the player; the
+  // height comes from the pose itself (hips over the lowest foot), and the stick and the hand holding it are the sensors'.
+  const sm = Array.from({ length: 33 }, () => V()), tmp = V(), X = V(1, 0, 0), Y = V(0, 1, 0);
+  const camM = new THREE.Matrix4(), camInv = new THREE.Matrix4(), bodyM = new THREE.Matrix4(), bodyInv = new THREE.Matrix4();
+  const headingM = (f, out) => { const fh = V(f.x, 0, f.z).normalize(); return out.makeBasis(fh, Y, V().crossVectors(fh, Y)); }; // x forward, y up, z right
   let smSeen = false;
   function poseUpdate(dt, p) {
     const sk = p.skel, k = smSeen ? 1 - Math.exp(-dt * 20) : 1;
     for (let i = 0; i < 33; i++) if (!smSeen || sk.vis[i] > .3) sm[i].lerp(tmp.fromArray(sk.joints[i]), k);
     smSeen = true; st.time += dt;
+    // the person's trunk as the camera sees it
     const shM = V().addVectors(sm[11], sm[12]).multiplyScalar(.5), hpM = V().addVectors(sm[23], sm[24]).multiplyScalar(.5);
     const upv = shM.clone().sub(hpM).normalize();
     const rv = V().subVectors(sm[12], sm[11]); rv.addScaledVector(upv, -rv.dot(upv)).normalize(); // the person's right
     const fv = V().crossVectors(upv, rv).normalize();
-    bodyM.makeBasis(fv, upv, rv).setPosition(shM.clone().addScaledVector(upv, -SHOULDER[1]).addScaledVector(fv, -SHOULDER[0]));
+    camM.makeBasis(fv, upv, rv).setPosition(shM.clone().addScaledVector(upv, -SHOULDER[1]).addScaledVector(fv, -SHOULDER[0]));
+    camInv.copy(camM).invert();
+    const loc = i => sm[i].clone().applyMatrix4(camInv); // trunk frame: no position, no heading left in it
+    // the avatar: the trunk's lean (its turn off the camera-seen heading) on the sensors' heading, at the sensors' place
+    const lean = headingM(fv, new THREE.Matrix4()).transpose().multiply(new THREE.Matrix4().extractRotation(camM));
+    const f = [p.body.R[0], p.body.R[3], p.body.R[6]], fs = V(f[0], 0, f[2]).normalize();
+    bodyM.multiplyMatrices(headingM(fs, new THREE.Matrix4()), lean);
+    let foot = Infinity; for (const i of [27, 28, 29, 30, 31, 32]) foot = Math.min(foot, sm[i].y);
+    const hipUp = Math.max(.3, Math.min(1.2, hpM.y - foot)); // hips over the lowest foot point (heel / toe: the floor)
+    const hipOff = loc(23).add(loc(24)).multiplyScalar(.5).applyMatrix4(new THREE.Matrix4().extractRotation(bodyM));
+    bodyM.setPosition(p.body.t[0], hipUp - hipOff.y, p.body.t[2]);
     bodyInv.copy(bodyM).invert();
     root.matrix.copy(bodyM); root.matrixWorldNeedsUpdate = true;
     torso.scale.y = 1;
-    const loc = i => sm[i].clone().applyMatrix4(bodyInv);
     const anchor = (a, ai, i) => a.clone().add(loc(i)).sub(loc(ai)); // avatar anchor a (for landmark ai) + the person's offset to landmark i
     const sR = L(SHOULDER), sL = L([SHOULDER[0], SHOULDER[1], -SHOULDER[2]]);
-    const eR = anchor(sR, 12, 14), hR = anchor(sR, 12, 16), eL = anchor(sL, 11, 13), hL = anchor(sL, 11, 15);
+    let eR = anchor(sR, 12, 14), hR = anchor(sR, 12, 16), eL = anchor(sL, 11, 13), hL = anchor(sL, 11, 15);
+    // the stick hand: the camera's hand nearer the sensors' stick base reaches it (the stick is the sensors', in the world)
+    if (p.base) {
+      const b = p.base.clone().applyMatrix4(bodyInv);
+      if (hR.distanceTo(b) <= hL.distanceTo(b)) { hR = b; eR = elbowFor(sR, b, V(-.2, -1, .6)); }
+      else { hL = b; eL = elbowFor(sL, b, V(-.2, -1, -.6)); }
+    }
     setLimb(armU, sR, eR); setLimb(armF, eR, hR); elbow.position.copy(eR); hand.position.copy(hR);
     setLimb(offU, sL, eL); setLimb(offF, eL, hL); offE.position.copy(eL); offH.position.copy(hL);
     for (const lg of legs) {
@@ -393,30 +431,35 @@ function makeAvatar(slot) {
     const hf = loc(0).sub(loc(7).add(loc(8)).multiplyScalar(.5));
     headG.rotation.set(0, Math.max(-1.3, Math.min(1.3, Math.atan2(-hf.z, hf.x))), Math.max(-.9, Math.min(.9, Math.atan2(hf.y, Math.hypot(hf.x, hf.z)))), 'YZX');
     fig?.({ sR, eR, hR, sL, eL, hL, legs: legs.map(l => l.p), headQ: headG.quaternion });
-    // the stick follows the hand that is nearest to where the sensors put its base (same length and direction as the sensors say)
-    let base = null, tipP = null;
-    if (p.base && p.tip) {
-      const wR = sm[16], wL = sm[15], w = wR.distanceTo(p.base) <= wL.distanceTo(p.base) ? wR : wL;
-      base = w.clone(); tipP = base.clone().add(p.tip.clone().sub(p.base));
-    }
-    finish(p, base, tipP);
-    facing.set(fv.x, 0, fv.z).normalize();
-    hpSprite.position.set(sm[0].x, Math.max(sm[0].y + .38, 1.2), sm[0].z);
-    return { x: hpM.x, z: hpM.z, hp: (p.hp ?? 100) / (p.hpMax || 100), vis: p.online !== false ? 1 : .5 };
+    finish(p, p.base, p.tip);
+    facing.copy(fs);
+    const head = loc(0).applyMatrix4(bodyM);
+    hpSprite.position.set(p.body.t[0], Math.max(head.y + .38, 1.2), p.body.t[2]);
+    return { x: p.body.t[0], z: p.body.t[2], hp: (p.hp ?? 100) / (p.hpMax || 100), vis: p.online !== false ? 1 : .5 };
   }
+
 
   return {
     root, world, slot,
     update(dt, p) {
       const vis = !!p?.body;
       root.visible = vis && !p.hideBody; world.visible = vis; // hideBody: the real skeleton from the camera is drawn instead
-      if (!vis) { smSeen = false; return null; }
-      if (p.skel) return poseUpdate(dt, p);
+      if (!vis) { smSeen = false; st.tall = null; st.cap = []; return null; } // the next one seen starts standing
+      if (p.skel && POSE.show) return poseUpdate(dt, p);
       smSeen = false;
-      st.time += dt;
+      if (p.online !== false) st.time += dt; // offline: no idle breathing / sway, it stands still
       // upright body frame from the forward direction (ignore pitch / roll), feet on the floor
       const f = [p.body.R[0], p.body.R[3], p.body.R[6]], yaw = Math.atan2(-f[2], f[0]);
-      const ch = Math.max(.9, Math.min(1.7, p.body.t[1]));
+      let ch = Math.max(.6, Math.min(1.7, p.body.t[1]));
+      if (p.calibAt !== st.calibAt) { st.calibAt = p.calibAt; st.tall = null; st.cap = []; }
+      if (st.tall == null) { // capturing the standing height: drawn standing meanwhile
+        st.cap.push([ch, dt]);
+        if (st.cap.reduce((a, c) => a + c[1], 0) >= CAPTURE) { const h = st.cap.map(c => c[0]).sort((a, b) => a - b); st.tall = Math.max(TALL_MIN, Math.min(TALL_MAX, h[h.length >> 1])); st.cap = []; }
+      } else if (ch > st.tall) st.tall += (ch - st.tall) * Math.min(1, dt * .5);
+      const tall = st.tall ?? Math.max(TALL_MIN, Math.min(TALL_MAX, ch));
+      if (!POSE.show) ch = tall; // always standing
+      const crouch = Math.max(0, Math.min(1, (tall - ch - .05) / (tall * .4))), lean = .6 * crouch; // rad at the waist
+      const hip0 = V(HIP[0] - TORSO * Math.sin(lean), -TORSO * Math.cos(lean), 0); // the hips go back as the chest leans forward
       const bp = W.bodyPose([p.body.t[0], 0, p.body.t[2]], yaw, ch), inv = W.invert(bp);
       const pos = [bp.t[0], bp.t[2]];
       if (st.last) {
@@ -428,6 +471,7 @@ function makeAvatar(slot) {
       const walk = Math.min(1, st.speed / .6);
       st.ko += ((p.hp ?? 100) <= 0 ? 1 : -1) * dt * 2; st.ko = Math.max(0, Math.min(1, st.ko));
       const bob = .012 * Math.sin(st.time * 2.1) + .02 * walk * Math.abs(Math.sin(st.phase));
+      hip0.y = Math.min(hip0.y, -ch + .04 - bob + legLen(tall) * .999); // legs a little short standing: the hips sit that much lower, the feet stay down
       const koTilt = st.ko * 1.2;
       const M = m4(bp).multiply(new THREE.Matrix4().makeTranslation(0, bob - st.ko * .35, 0)).multiply(new THREE.Matrix4().makeRotationZ(-koTilt * .4));
       root.matrix.copy(M); root.matrixWorldNeedsUpdate = true;
@@ -447,14 +491,14 @@ function makeAvatar(slot) {
       setLimb(offU, so, Eo); setLimb(offF, Eo, ho); offE.position.copy(Eo); offH.position.copy(ho);
       // legs: stride with the walk phase, knees forward
       for (const lg of legs) {
-        const hip = V(HIP[0], HIP[1], HIP[2] * lg.s), a = Math.sin(st.phase + (lg.s > 0 ? 0 : Math.PI));
+        const hip = V(hip0.x, hip0.y, HIP[2] * lg.s), a = Math.sin(st.phase + (lg.s > 0 ? 0 : Math.PI));
         const foot = V(HIP[0] + .2 * walk * a, -ch + .04 - bob + .05 * walk * Math.max(0, -Math.cos(st.phase + (lg.s > 0 ? 0 : Math.PI))), .12 * lg.s);
-        const leg = (ch + HIP[1] - .04) * .515, knee = elbowFor(hip, foot, V(1, 0, 0), leg, leg); // nearly straight when standing
+        const leg = legLen(tall) / 2, knee = elbowFor(hip, foot, V(1, 0, 0), leg, leg); // fixed bones: nearly straight standing, bent in a crouch
         setLimb(lg.thigh, hip, knee); setLimb(lg.shin, knee, foot); lg.knee.position.copy(knee);
         lg.boot.position.copy(foot).add(V(.04, -.01, 0)); lg.boot.quaternion.identity();
         lg.p = { hip, knee, foot, toe: foot.clone().add(V(.16, -.03, 0)) };
       }
-      fig?.({ sR: S, eR: E, hR: Hn, sL: so, eL: Eo, hL: ho, legs: legs.map(l => l.p), headQ: headG.quaternion });
+      fig?.({ sR: S, eR: E, hR: Hn, sL: so, eL: Eo, hL: ho, legs: legs.map(l => l.p), headQ: headG.quaternion, leg: legLen(tall), hip: hip0, lean });
       finish(p, p.base, p.tip);
       facing.set(f[0], 0, f[2]).normalize();
       hpSprite.position.set(bp.t[0], ch + .5 + .02 * Math.sin(st.time * 1.7) - st.ko * .3, bp.t[2]);
