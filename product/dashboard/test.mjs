@@ -104,6 +104,7 @@ for (const file of ['aura-wisp.png','plasma-flow.png','electric-filament.png','g
 await import('./test-fire.mjs');
 await import('./test-thunder.mjs');
 await import('./test-dummy.mjs');
+await import('./test-final-controls.mjs');
 
 for (const x of [dash, a, c, v, a2, d, disp, cam]) x.ws.terminate();
 server.close();

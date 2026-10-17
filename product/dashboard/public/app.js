@@ -236,7 +236,7 @@ addEventListener('keydown', e => {
   if (e.altKey) { const n = { Digit1: 'connect', Digit2: 'space', Digit3: 'game', Digit4: 'final' }[e.code]; if (n) { e.preventDefault(); show(n); } return; }
   if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (held[k]) return game.command({ cmd: 'charge', slot: held[k], on: true });
+  if (held[k] && screen !== 'final') return game.command({ cmd: 'charge', slot: held[k], on: true });
   if (KEYS[k]) return game.command(KEYS[k]);
   if (k === 'k') scan();
   else if (k === 'd') { stage.drone.next(); cfg.drone = stage.drone.mode; save(); }
@@ -245,7 +245,7 @@ addEventListener('keydown', e => {
   else if (k === 's') drawer.classList.toggle('open');
   else if (k === 'Escape') drawer.classList.remove('open');
 });
-addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k]) game.command({ cmd: 'charge', slot: held[k], on: false }); });
+addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k] && screen !== 'final') game.command({ cmd: 'charge', slot: held[k], on: false }); });
 
 // ---- per-frame UI ----
 function pill(id, state) { const p = $(id); p.classList.toggle('on', state === true); p.classList.toggle('half', state === 'half'); }
