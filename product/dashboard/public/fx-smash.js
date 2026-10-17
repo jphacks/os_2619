@@ -18,9 +18,12 @@
 //                          (draw the stick glow too, or call kit.classic.aura(a, dt) for it)
 //     charge(c, dt)        every frame while charging: c { el, tip, v = level 0..1, opt: { tier, chargeT } }
 //   }
+//   createGuardMoves(kit) -> { guard(g, dt) every frame while guarding, block(el, pos) a shot met the guard }  (fx-smash-guard.js)
 import * as fireMod from './fx-smash-fire.js';
 import * as thunderMod from './fx-smash-thunder.js';
 import * as chargeMod from './fx-smash-charge.js';
+import * as guardMod from './fx-smash-guard.js';
+import * as circleMod from './fx-smash-circle.js';
 
 // Projectile size (the dashboard's 玉の大きさ, s.scale): the move modules draw at fixed sizes, so while a projectile is being
 // drawn the primitives they call are wrapped to scale every position about the projectile's centre, every size and every
@@ -55,6 +58,8 @@ export function createSmashStyle(kit0) {
   const make = (mod, name) => { try { return mod[name]?.(kit) ?? {}; } catch (e) { console.warn('fx-smash', name, e); return {}; } };
   const by = { fire: make(fireMod, 'createFireMoves'), thunder: make(thunderMod, 'createThunderMoves') };
   const ch = make(chargeMod, 'createChargeMoves'), C = kit0.classic;
+  // the guard gets the plain kit: the scaled one is a copy, whose getters (time, view) would be frozen at creation
+  let gd = {}, mc = {}; try { gd = guardMod.createGuardMoves(kit0) ?? {}; mc = circleMod.createMagicCircle(kit0) ?? {}; } catch (e) { console.warn('fx-smash', 'guard / circle', e); }
   const tierPower = { s: .25, m: .6, l: 1 };
   return {
     shot(s, dt) {
@@ -66,6 +71,8 @@ export function createSmashStyle(kit0) {
     // no tier: not a projectile (a charge that fizzled): the small classic burst
     hit(el, pos, power, opt = {}) { const m = by[el]; if (m.hit && opt.tier) m.hit(pos, opt.tier, power); else C.hit(el, pos, opt.tier ? tierPower[opt.tier] : power); },
     charge(c, dt) { if (ch.charge) ch.charge(c, dt); else C.charge(c, dt); },
-    aura(a, dt) { if (ch.aura) ch.aura(a, dt); else C.aura(a, dt); },
+    aura(a, dt) { if (ch.aura) ch.aura(a, dt); else C.aura(a, dt); mc.draw?.(a, dt); }, // + the magic circle under a charging player (fx-smash-circle.js)
+    guard(g, dt) { (gd.guard ?? C.guard)(g, dt); },
+    block(el, pos) { (gd.block ?? C.block)(el, pos); },
   };
 }

@@ -641,6 +641,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
       emit(p.x + Math.cos(a) * .3, p.y + Math.sin(a) * .3, p.z, RS(.2), RS(.2), RS(.2), .25 + .2 * R(), .012, .006, 2, 0, g.el === 'fire' ? COL.ember : COL.spark, K.SPARK, 1.6, 0, .05, 0);
     }
   }
+  function classicBlock(element, pos) { sparkBurst(pos, .3, 80, .8); add({ update: blockFx, el: element, pos: pos.clone() }); shake(.15); }
   function blockFx(e) {
     const a = e.age, k = sc(a, 0, .3), col = e.el === 'fire' ? COL.hot : COL.white;
     spr(S.RING, e.pos, .5 + 1.2 * k, .5 + 1.2 * k, 0, e.seed, col, 2 * (1 - k) ** 2, .05);
@@ -737,7 +738,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
   // A style is make(kit) -> { shot?(s, dt), end?(s, reason), hit?(el, pos, power, opt), charge?(c, dt), aura?(a, dt) };
   // a missing handler falls back to the classic one. Shots keep the style they were fired with.
   const classic = { shot: updateShot, end: classicEnd, hit: classicHit, charge: (c, dt) => (c.el === 'fire' ? fireCharge : thunderCharge)(c, dt),
-    aura: (a, dt) => (a.el === 'fire' ? fireAura : thunderAura)(a, dt) };
+    aura: (a, dt) => (a.el === 'fire' ? fireAura : thunderAura)(a, dt), guard: guardFx, block: classicBlock };
   const kit = {
     THREE, K, S, COL, TAU, Q, R, RS, V, emit, spr, sprFloor, seg, segV, Bolt, gen, drawBolt, runit, u3, take, flick, sc, shake,
     fireBurst, sparkBurst, trailFire, headFire, add, classic, get time() { return time; },
@@ -871,9 +872,11 @@ export function createFx(renderer, scene, camera, opts = {}) {
       add({ update: dodgeFx, el: element, pos: pos.clone(), dir: d, bolts: [new Bolt(96)] });
     },
     /** Shield held this frame (call every frame like aura); level 0..1. */
-    guard(element, centre, level = 1, key = 'guard-' + element) { const st = request(guards, key, element); st.tip.copy(centre); st.v = Math.min(1, Math.max(0, level)); },
+    /** facing (optional): the guarding body's forward (world, horizontal), kept on st.base for styles that orient the shield */
+    guard(element, centre, level = 1, key = 'guard-' + element, facing = null) { const st = request(guards, key, element); st.tip.copy(centre); st.v = Math.min(1, Math.max(0, level)); if (facing) st.base.copy(facing); st.facing = !!facing; },
     /** A hit stopped by the shield. */
-    block(element, pos) { sparkBurst(pos, .3, 80, .8); add({ update: blockFx, el: element, pos: pos.clone() }); shake(.15); },
+    /** A shot met a raised guard at pos (it bounces back if 小, goes through otherwise). */
+    block(element, pos) { (style.block ?? classicBlock)(element, pos); },
     special(element, from, to) {
       if (styleName === 'textured') { texMod(element).special(from, to); return; }
       add({ update: element === 'fire' ? specialFire : specialThunder, el: element, from: from.clone(), to: to.clone(), bolts: Array.from({ length: 8 }, () => new Bolt(200)) });
@@ -888,7 +891,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
       dt = Math.min(Math.max(dt, 0), .1); time += dt;
       nS = 0; nG = 0;
       for (const [k, a] of auras) { if (time - a.seen > .15) { auras.delete(k); continue; } (style.aura ?? classic.aura)(a, dt); }
-      for (const [k, g] of guards) { if (time - g.seen > .15) { guards.delete(k); continue; } guardFx(g, dt); }
+      for (const [k, g] of guards) { if (time - g.seen > .15) { guards.delete(k); continue; } (style.guard ?? guardFx)(g, dt); }
       for (const [k, c] of charges) { if (time - c.seen > .15) { charges.delete(k); continue; } if (c.v > 0) (style.charge ?? classic.charge)(c, dt); }
       for (const s of shots.values()) { s.regen ??= 0; (s.st.shot ?? updateShot)(s, dt); s.age += dt; }
       for (let i = live.length - 1; i >= 0; i--) {

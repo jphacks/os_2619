@@ -11,10 +11,10 @@
 // Autoplay: Chrome keeps the context suspended until a user gesture ON THIS PAGE. BroadcastChannel messages from
 // admin.html are not gestures. unlock() is idempotent; the first pointerdown / keydown / touchend on the page calls it.
 
-const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3'];
+const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3', 'guard'];
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
-const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2 }; // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
+const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2, guard: -18.0 }; // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
 // fire3 is also the 大 hit: its 0-6 s faded from 3 s measures differently from the 3 s bed, so that use is corrected by this
 const BIG_LUFS = { fire3: -11.8, lightning3: -7.2 };
 const REF_LUFS = -16;
@@ -245,8 +245,8 @@ export function createAudio({ base = 'audio/' } = {}) {
     const L = FIRE_BIG.launchTo;
     voice(key('special', element), EL.fire[3], { pan, gain: db(MIX.shot + LUFS.fire3 - FIRE_BIG.launchLufs), vary: false, fade: [L - .04, L] }); // 40 ms fade at the cut: no click
   }
-  // guard sounds have no file: made here once (peak ~.5, played through voice() like the rest)
-  // up = a short rising ring, reflect = a bright metal ping (inharmonic partials), break = a crunch with a low thud
+  // guard: up = guard.mp3 (10/18; the synthesized ring below until the file has loaded); reflect / break are made here once
+  // (peak ~.5, played through voice() like the rest). up (synth) = a short rising ring, reflect = a bright metal ping (inharmonic partials), break = a crunch with a low thud
   const synth = (dur, f) => { const b = ctx.createBuffer(1, Math.round(dur * ctx.sampleRate), ctx.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = f(i / ctx.sampleRate); return b; };
   const sin = (f, t) => Math.sin(2 * Math.PI * f * t), ping = (f0, t, k) => [1, 2.76, 5.4].reduce((a, m, i) => a + sin(f0 * m, t) * Math.exp(-t * k * (1 + i)) / (1 + i), 0);
   const GUARD = {
@@ -257,7 +257,7 @@ export function createAudio({ base = 'audio/' } = {}) {
   for (const [n, b] of Object.entries(GUARD)) { buf[n] = b; norm[n] = 1; }
   /** kind 'up' (guard raised) | 'reflect' (小 bounced back) | 'break' (中 / 大 went through). */
   function guard(kind, pan = 0) {
-    const name = { up: 'guardUp', reflect: 'guardReflect', break: 'guardBreak' }[kind]; if (!name) return;
+    const name = { up: buf.guard ? 'guard' : 'guardUp', reflect: 'guardReflect', break: 'guardBreak' }[kind]; if (!name) return;
     voice(key('guard', kind), name, { pan, gain: db(kind === 'up' ? MIX.shot - 4 : MIX.hit - 2) });
     if (kind === 'break') duck(DUCK.hit);
   }
