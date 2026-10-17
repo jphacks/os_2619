@@ -16,6 +16,7 @@ import { createSmashStyle } from './fx-smash.js';
 import { createSpace } from './space3d.js';
 import { createConnect } from './connect.js';
 import { createFinalControls } from './final-controls.js';
+import { createPlayable } from './playable.js';
 
 const $ = s => document.querySelector(s);
 const nowS = () => Date.now() / 1000;
@@ -54,14 +55,18 @@ const hudFlash = { el: null };
 const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), getDummyFrame: () => vsrc.dummy?.frame });
 stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: プログラム版 (smash, default) / 画像素材版 (textured) / いつもの (classic)
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
+// keyboard player (screens 3 / 4, dummy room only): drives one slot through the dummy's truth input and game.command
+const playable = createPlayable({ vsrc, game, cfg, save, isActive: () => screen === 'game' || screen === 'final' });
+let phones = [];
+playable.onChange(() => game.setOnline(playable.withSelf(phones)));
 
 hub.on(k => {
   PA.ingest(k); smap.ingest(k);
-  if (k.type === 'phones') { game.setOnline(k.list); return; }
+  if (k.type === 'phones') { phones = k.list; game.setOnline(playable.withSelf(k.list)); return; }
   connect.ingest(k); game.ingest(k);
-  if (k.type === 'truth') vsrc.dummy?.setTruth(k.slot, k); // fake-world.mjs: the dummy room shows the simulated players
+  if (k.type === 'truth' && !playable.owns(k.slot)) vsrc.dummy?.setTruth(k.slot, k); // fake-world.mjs: the dummy room shows the simulated players
   if (k.type === 'imu' || k.type === 'ar' || k.type === 'calib')
-    for (const ev of detectors.ingest(k, axis[k.slot])) { connect.logAction(ev); game.onSensed(ev); }
+    for (const ev of detectors.ingest(k, axis[k.slot])) { connect.logAction(ev); if (!playable.owns(ev.slot)) game.onSensed(ev); }
 });
 
 // ---- screens ----
@@ -111,6 +116,8 @@ gameCtrl.innerHTML = `
       <div class="facts"></div>
       <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
   </div>
+  <h3>キーボードで操作（ダミー映像）</h3>
+  <div id="playGame" class="row"></div>
   <h3>ゲームの数値（試遊で調整）</h3>
   <div class="rules">
     <label>中になる溜め時間 <input data-rule="t1" type="number" min="0.1" max="20" step="0.1"> 秒</label>
@@ -174,7 +181,8 @@ for (const b of document.querySelectorAll('[data-tog]')) b.onclick = () => toggl
 
 // ---- final screen toolbar ----
 const finalBar = $('#finalBar');
-const finalControls = createFinalControls({ bar: finalBar, stage, game, vsrc, cfg, save, scan, fullscreen });
+playable.mountControl($('#playGame'));
+const finalControls = createFinalControls({ bar: finalBar, stage, game, vsrc, cfg, save, scan, fullscreen, playable });
 function fullscreen() { const box = $('#finalBox'); document.fullscreenElement ? document.exitFullscreen() : box.requestFullscreen?.().then(() => setTimeout(stage.resize, 100)); }
 document.addEventListener('fullscreenchange', () => setTimeout(stage.resize, 50));
 async function scan() { game.command({ cmd: 'phase', phase: 'setup' }); vsrc.dummy?.showPlayers(false); await stage.scan(); vsrc.dummy?.showPlayers(true); }
@@ -315,6 +323,7 @@ function frame(ts) {
   const t = performance.now() / 1000, raw = t - last, dt = Math.min(.05, raw); last = t;
   fps = .95 * fps + .05 / Math.max(raw, 1e-3);
   try { est = PA.estimate(nowS()); } catch (e) { console.warn('phonealign', e); }
+  playable.step(dt, t);
   vsrc.dummy?.render(t); // the picture and game placement consume this exact same pose snapshot
   game.step(dt, raw, est, { sensorOnly: screen === 'final' });
   if (screen === 'final') finalControls.step(t);
