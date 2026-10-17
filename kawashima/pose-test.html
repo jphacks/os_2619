@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>姿勢トラッキング テスト</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #eee; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #stage { position: absolute; inset: 0; }
+  video, #ov { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  #bar { position: absolute; left: 8px; top: 8px; display: flex; gap: 6px; align-items: center; z-index: 2; }
+  #hud { position: absolute; left: 10px; top: 40px; text-shadow: 0 0 4px #000; white-space: pre; font-variant-numeric: tabular-nums; z-index: 2; }
+  #plot { position: absolute; right: 8px; bottom: 8px; width: 260px; height: 260px; background: rgba(0,0,0,.55); border: 1px solid #555; z-index: 2; }
+  select, button { font: inherit; }
+</style>
+</head>
+<body>
+<div id="stage"><video id="video" muted playsinline autoplay></video><canvas id="ov"></canvas></div>
+<div id="bar"><select id="dev"></select><button id="swap">A/B入れ替え</button><label><input type="checkbox" id="wk" checked> worker</label></div>
+<div id="hud"></div>
+<canvas id="plot" width="520" height="520"></canvas>
+<script type="module">
+// Pose tracker check: camera -> createPoseTracker -> 2D skeletons with A/B labels + top-down floor plot (calibration from
+// the main page's localStorage 'fx-cfg2'.tagCam). For comparisons: ?worker=0 (main thread), ?delegate=CPU, ?poses=1, ?hz=, ?nocal=1 (ignore
+// the saved calibration: image-space identities only; needed with ?sim=1, whose picture has nothing to do with the room).
+import { createPoseTracker } from './posetrack.js';
+import { FIELD, START } from './world.js';
+
+const P = new URLSearchParams(location.search);
+const video = document.getElementById('video'), ov = document.getElementById('ov'), g = ov.getContext('2d');
+const plot = document.getElementById('plot'), pg = plot.getContext('2d'), hud = document.getElementById('hud'), sel = document.getElementById('dev');
+const cam = P.get('nocal') ? null : (() => { try { return JSON.parse(localStorage.getItem('fx-cfg2'))?.tagCam ?? null; } catch { return null; } })();
+const COL = { A: '#ff5a4a', B: '#4aa8ff' };
+const BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [27, 29], [29, 31], [24, 26], [26, 28], [28, 30], [30, 32], [0, 11], [0, 12]];
+
+// ---- camera ----
+async function open(id) {
+  video.srcObject?.getTracks().forEach(t => t.stop());
+  const s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: id ? { exact: id } : undefined, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+  video.srcObject = s; await video.play();
+}
+async function listDevices() {
+  const ds = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  const cur = video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId;
+  sel.innerHTML = ds.map(d => `<option value="${d.deviceId}" ${d.deviceId === cur ? 'selected' : ''}>${d.label || d.deviceId.slice(0, 8)}</option>`).join('');
+  return ds;
+}
+sel.onchange = () => { try { localStorage.setItem('pose-test-dev', sel.value); } catch {} open(sel.value); }; // only a hand pick is remembered
+// ?sim=1: no camera; two copies of MediaPipe's sample photo slide toward each other and cross (B passes behind A)
+// every 10 s, for checking detection, identities and timing when nobody is in front of the camera
+async function sim() {
+  const img = new Image(); img.crossOrigin = 'anonymous'; img.src = 'https://storage.googleapis.com/mediapipe-assets/pose.jpg'; await img.decode();
+  const c = Object.assign(document.createElement('canvas'), { width: 1920, height: 1080 }), x = c.getContext('2d'), t0 = performance.now();
+  setInterval(() => {
+    const p = ((performance.now() - t0) / 1000 % 10) / 10, s = Math.sin(Math.PI * p), h = 800, w = 500 * h / 667;
+    x.fillStyle = '#777'; x.fillRect(0, 0, 1920, 1080);
+    x.drawImage(img, 250, 0, 500, 667, 1200 - 1100 * s, 200, w, h); x.drawImage(img, 250, 0, 500, 667, 100 + 1100 * s, 240, w, h);
+  }, 33);
+  video.srcObject = c.captureStream(30); await video.play(); sel.innerHTML = '<option>sim</option>';
+}
+if (P.get('sim')) await sim();
+else {
+  await open(null); // permission first, then labels are readable
+  const ds = await listDevices(), want = (() => { try { return localStorage.getItem('pose-test-dev'); } catch {} })(), iph = ds.find(d => /ワタルのカメラ|iPhone/.test(d.label));
+  const pick = ds.find(d => d.deviceId === want) ?? iph;
+  if (pick && pick.deviceId !== video.srcObject.getVideoTracks()[0].getSettings().deviceId) { await open(pick.deviceId); await listDevices(); }
+}
+
+// ---- tracker ----
+const useWorker = P.get('worker') !== '0';
+document.getElementById('wk').checked = useWorker;
+document.getElementById('wk').onchange = e => { P.set('worker', e.target.checked ? '1' : '0'); location.search = P; };
+const tr = createPoseTracker({ video, getCamera: () => cam, hz: +(P.get('hz') ?? 15), worker: useWorker, delegate: P.get('delegate') ?? 'GPU', numPoses: +(P.get('poses') ?? 2) });
+window.tr = tr; // console poking / measurements
+document.getElementById('swap').onclick = () => tr.setSwap();
+tr.start();
+
+// ---- yaw stability: circular std of each source over the last 2 s ----
+const hist = { A: [], B: [] };
+const cstd = a => { if (a.length < 3) return null; const c = a.reduce((s, y) => s + Math.cos(y), 0) / a.length, s = a.reduce((s, y) => s + Math.sin(y), 0) / a.length; return Math.sqrt(-2 * Math.log(Math.min(1, Math.max(1e-9, Math.hypot(c, s))))) * 180 / Math.PI; };
+
+// main-thread health: longest rAF gap over the last second
+let gaps = [], lastF = performance.now();
+const deg = r => r == null ? '  -  ' : (r * 180 / Math.PI).toFixed(0).padStart(4);
+function frame() {
+  const now = performance.now(); gaps.push([now, now - lastF]); lastF = now; gaps = gaps.filter(q => q[0] > now - 1000);
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (vw && (ov.width !== vw || ov.height !== vh)) { ov.width = vw; ov.height = vh; }
+  g.clearRect(0, 0, ov.width, ov.height);
+  const lines = [];
+  for (const s of ['A', 'B']) {
+    const o = tr.get(s);
+    if (o.seen && o.img) {
+      const a = o.img.all, lw = Math.max(2, vh / 300);
+      g.globalAlpha = o.age > 0 ? .4 : 1; g.strokeStyle = g.fillStyle = COL[s]; g.lineWidth = lw;
+      g.beginPath(); for (const [i, j] of BONES) if (a[i][2] > .3 && a[j][2] > .3) { g.moveTo(a[i][0], a[i][1]); g.lineTo(a[j][0], a[j][1]); } g.stroke();
+      for (const q of a) if (q[2] > .3) g.fillRect(q[0] - lw, q[1] - lw, 2 * lw, 2 * lw);
+      g.font = `bold ${Math.round(vh / 14)}px system-ui`; g.fillText(s, o.img.sh[0] - vh / 40, o.img.sh[1] - vh / 6);
+      g.globalAlpha = 1;
+      if (o.t !== hist[s].at(-1)?.t) hist[s].push({ t: o.t, y2: o.yaw2, y3: o.yaw3 });
+    }
+    hist[s] = hist[s].filter(h => h.t > performance.now() / 1000 - 2);
+    const sd = k => { const v = cstd(hist[s].map(h => h[k]).filter(y => y != null)); return v == null ? ' - ' : v.toFixed(1); };
+    const f = o.foot;
+    lines.push(`${s}: ${o.seen ? (o.age > 0 ? `保持中 ${o.age.toFixed(2)}s` : '検出') : '見えない'}  conf ${o.conf.toFixed(2)}` +
+      (f ? `  足 (${f[0].toFixed(2)}, ${f[2].toFixed(2)})[${o.footFrom}]  胸 y ${o.chest[1].toFixed(2)}  向き3D ${deg(o.yaw3)}° 2D ${deg(o.yaw2)}°  ばらつき(2s) 3D ${sd('y3')}° 2D ${sd('y2')}°` : ''));
+  }
+  const maxGap = Math.max(...gaps.map(q => q[1]));
+  hud.textContent = `${tr.ready ? `準備OK (${tr.worker ? 'worker' : 'main'} / ${tr.delegate})` : tr.error ? 'エラー: ' + tr.error : 'モデル読み込み中…'}  映像 ${vw}x${vh}` + (tr.ready && tr.error ? '  エラー: ' + tr.error : '') + '\n' +
+    `推論 ${tr.ms.toFixed(1)} ms  実効 ${tr.hz.toFixed(1)} Hz  メインスレッド ${tr.mainMs.toFixed(2)} ms/回 + 後処理 ${tr.postMs.toFixed(2)} ms` + (tr.worker ? `  遅れ ${tr.latMs.toFixed(0)} ms` : '') +
+    `  描画の最大間隔 ${maxGap.toFixed(0)} ms\n` + (cam ? `校正: fov ${cam.fovY.toFixed(1)}° ${cam.width}x${cam.height}` : '校正なし（メイン画面でタグをスキャンすると床の位置が出る）') + '\n' + lines.join('\n');
+  drawPlot();
+  requestAnimationFrame(frame);
+}
+
+// ---- top-down floor plot: +x right (A -> B), +z down (toward the camera side in the usual setup) ----
+function drawPlot() {
+  const W = plot.width, ext = Math.max(3, ...FIELD.poly.flat().map(Math.abs)) * 1.3, sc = W / 2 / ext, X = x => W / 2 + x * sc, Z = z => W / 2 + z * sc;
+  pg.clearRect(0, 0, W, W);
+  pg.strokeStyle = '#888'; pg.lineWidth = 2; pg.beginPath(); FIELD.poly.forEach(([x, z], i) => i ? pg.lineTo(X(x), Z(z)) : pg.moveTo(X(x), Z(z))); pg.closePath(); pg.stroke();
+  pg.fillStyle = '#555'; for (const s of ['A', 'B']) { const p = START[s].pos; pg.fillRect(X(p[0]) - 4, Z(p[2]) - 4, 8, 8); }
+  if (cam) { const t = cam.pose.t; pg.fillStyle = '#ccc'; pg.beginPath(); pg.arc(X(t[0]), Z(t[2]), 6, 0, 7); pg.fill(); }
+  pg.font = 'bold 22px system-ui';
+  for (const s of ['A', 'B']) {
+    const o = tr.get(s); if (!o.seen || !o.foot) continue;
+    const [x, , z] = o.foot; pg.fillStyle = pg.strokeStyle = COL[s]; pg.globalAlpha = o.age > 0 ? .4 : 1;
+    pg.beginPath(); pg.arc(X(x), Z(z), 9, 0, 7); pg.fill();
+    for (const [y, w] of [[o.yaw3, 3], [o.yaw2, 1]]) if (y != null) { pg.lineWidth = w; pg.beginPath(); pg.moveTo(X(x), Z(z)); pg.lineTo(X(x + .6 * Math.cos(y)), Z(z - .6 * Math.sin(y))); pg.stroke(); }
+    for (const k of ['L', 'R']) { const q = o.wrist[k]; pg.fillRect(X(q[0]) - 3, Z(q[2]) - 3, 6, 6); }
+    pg.fillText(s, X(x) + 10, Z(z) - 10); pg.globalAlpha = 1;
+  }
+  pg.fillStyle = '#aaa'; pg.font = '16px system-ui'; pg.fillText('上から見た床（太線: 3D向き / 細線: 2D向き）', 8, W - 10);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

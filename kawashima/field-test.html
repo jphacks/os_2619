@@ -19,11 +19,26 @@
 <script type="module">
 // Field display + effects with two synthetic players (walk, swing, fire, charge a special).
 // ?t=<s> simulate to t and freeze  ?cam=high|top|side|drone (or &campos=x,y,z&look=x,y,z)  ?layout=full  ?debug=1 axes  ?bench=N field cost  ?mini=0
+// ?field=square|thin|small|<seed> (setField as if scanned; <seed> = dummycam randomMap4)  ?change=<s> switch to the next
+// preset at t (checks the live rebuild)  F: next preset
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as W from './world.js';
 import { createFx } from './effects.js';
 import { createField, createMinimap } from './field3d.js';
+import { fieldPreset } from './dummycam.js';
+
+const PRESETS = ['square', 'thin', 'small', '1', '2', '3'];
+let preset = new URLSearchParams(location.search).get('field') ?? 'square';
+const SQUARE = { poly: W.FIELD.poly.map(p => [...p]), tags: Object.fromEntries(W.CORNER_IDS.map(id => [id, { pos: [...W.TAGS[id].pos], yaw: W.TAGS[id].yaw ?? 0 }])) };
+function useField(name) { // square: world.js's own default (tags only reset for floor layouts, setField marks them floor)
+  preset = name; const f = fieldPreset(name);
+  if (f && W.LAYOUT === 'map4') W.setField(f);
+  else if (f) W.setField({ poly: f.poly });
+  else W.setField(W.LAYOUT === 'map4' ? SQUARE : { poly: SQUARE.poly });
+}
+if (preset !== 'square') useField(preset);
+addEventListener('keydown', e => { if (e.key === 'f' || e.key === 'F') useField(PRESETS[(PRESETS.indexOf(preset) + 1) % PRESETS.length]); });
 
 const P = new URLSearchParams(location.search), FREEZE = P.has('t') ? +P.get('t') : null;
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -57,10 +72,11 @@ let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 21474836
 const mk = (slot, element) => ({ slot, element, hp: 100, online: true, charging: false, charge: 0, body: null, base: V(), tip: V(), dir: V(), chest: V(), next: slot === 'A' ? .8 : 1.5 });
 const players = { A: mk('A', 'fire'), B: mk('B', 'thunder') };
 const other = p => p === players.A ? players.B : players.A;
-function move(p, T) {
-  const s = p.slot === 'A' ? -1 : 1, ph = p.slot === 'A' ? 0 : 2.1;
-  const x = s * (1.15 + .45 * Math.sin(.42 * T + ph)), z = 1.1 * Math.sin(.31 * T + ph * 1.3);
-  const o = other(p), ox = -s * (1.15 + .45 * Math.sin(.42 * T + (p.slot === 'A' ? 2.1 : 0))), oz = 1.1 * Math.sin(.31 * T + (p.slot === 'A' ? 2.73 : 0));
+function move(p, T) { // around the start marks, sideways within the field's depth
+  const s = p.slot === 'A' ? -1 : 1, ph = p.slot === 'A' ? 0 : 2.1, zs = W.FIELD.poly.map(q => q[1]);
+  const zA = Math.min(1.1, (Math.max(...zs) - Math.min(...zs)) * .25), xA = Math.min(.45, (W.START.B.pos[0] - W.START.A.pos[0]) * .2);
+  const x = W.START[p.slot].pos[0] + s * xA * Math.sin(.42 * T + ph), z = zA * Math.sin(.31 * T + ph * 1.3);
+  const os = p.slot === 'A' ? 'B' : 'A', ox = W.START[os].pos[0] - s * xA * Math.sin(.42 * T + (p.slot === 'A' ? 2.1 : 0)), oz = zA * Math.sin(.31 * T + (p.slot === 'A' ? 2.73 : 0));
   const yaw = Math.atan2(-(oz - z), ox - x);
   p.body = W.bodyPose([x, 0, z], yaw, W.CHEST_H + .015 * Math.sin(3 * T + ph));
   p.chest.copy(v3(p.body.t));
@@ -107,7 +123,8 @@ function step(T, dt) {
 // ---- loop ----
 const hud = document.getElementById('hud'), DT = 1 / 60;
 let T = 0, last = performance.now(), frames = 0, fpsT = last, fps = 0, benchText = '';
-function advance(dt) { T += dt; step(T, dt); }
+const CHANGE = P.has('change') ? +P.get('change') : null;
+function advance(dt) { if (CHANGE !== null && T < CHANGE && T + dt >= CHANGE) useField(PRESETS[(PRESETS.indexOf(preset) + 1) % PRESETS.length]); T += dt; step(T, dt); }
 if (FREEZE !== null) while (T < FREEZE - 1e-6) advance(DT);
 // ?bench=N: ms/frame for full frame (field + fx), fx only (field hidden), field only (no fx passes), synced by readPixels
 if (P.has('bench')) {
@@ -134,7 +151,7 @@ function frame(now) {
   mini.draw(players, shots);
   frames++;
   if (now - fpsT > 500) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; }
-  hud.textContent = `${fps.toFixed(0)} fps  t=${T.toFixed(2)}  layout ${W.LAYOUT}\nA ${players.A.hp}  B ${players.B.hp}\n${benchText}`;
+  hud.textContent = `${fps.toFixed(0)} fps  t=${T.toFixed(2)}  layout ${W.LAYOUT}  field ${preset} (F: next)\nA ${players.A.hp}  B ${players.B.hp}\n${benchText}`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

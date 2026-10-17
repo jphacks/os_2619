@@ -78,7 +78,8 @@
     </section>
     <section>
       <h2>映像画面のプレビュー</h2>
-      <img id="thumb" alt="">
+      <img id="thumb" alt="" style="cursor:crosshair">
+      <div class="row" style="margin-top:8px"><button id="clickMode">フィールドの角をクリックで決める</button><span class="note" id="clickNote"></span></div>
     </section>
     <section>
       <h2>プレイヤー</h2>
@@ -98,7 +99,13 @@
       <div class="row"><button id="calibrate">タグでカメラ合わせ<kbd>K</kbd></button><button id="guideCam">ガイドを推奨位置から表示</button></div>
       <div class="msg" id="tagCheck"></div>
       <div class="msg" id="camInfo"></div>
-      <p class="note">準備中は、映像画面に設置ガイド（タグを置く枠・立ち位置・フィールドの線）が出ます。床のタグ2枚が両方OKになったら、人がいない状態で「タグでカメラ合わせ」を押します。タグ同士の間隔とカメラの画角はスキャンで測るので、ぴったりの位置でなくてもかまいません。2枚とも表を上にして、文字の行をカメラ側に向けてください。</p>
+      <p class="note">タグ4枚（ID 0〜3）を、好きな場所の床に、だいたい四角形の角になるように置きます。向きも間隔も自由で、測る必要はありません。4枚ともOKになったら、人がいない状態で「タグでカメラ合わせ」を押すと、4枚の内側がフィールドになります。形を変えたいときは、プレビューで角を4か所クリックします。</p>
+    </section>
+    <section>
+      <h2>プレイヤーの位置の取り方</h2>
+      <div class="row" id="posSrcs"><button data-pos="camera">カメラ映像（骨格）</button><button data-pos="phones">胸スマホ（ARCore＋タグ）</button><button data-pos="start">固定（立ち位置）</button></div>
+      <div class="row" style="margin-top:8px"><button id="swap">A・B を入れ替える</button><span class="note">棒を持つ手</span><button data-hand="R">右</button><button data-hand="L">左</button></div>
+      <div class="msg" id="poseInfo"></div>
     </section>
     <section>
       <h2>表示</h2>
@@ -138,6 +145,19 @@ let st = null, lastState = 0, dragging = false;
 
 $('#openDisplay').onclick = () => window.open('index.html' + location.search, 'bou-display');
 $$('[data-phase]').forEach(b => b.onclick = () => send({ cmd: 'phase', phase: b.dataset.phase }));
+$$('[data-pos]').forEach(b => b.onclick = () => send({ cmd: 'posSrc', value: b.dataset.pos }));
+$$('[data-hand]').forEach(b => b.onclick = () => send({ cmd: 'hand', value: b.dataset.hand }));
+$('#swap').onclick = () => send({ cmd: 'swap' });
+let clickMode = false, clickN = 0;
+$('#clickMode').onclick = () => { clickMode = !clickMode; clickN = 0; if (clickMode) send({ cmd: 'fieldClickReset' }); };
+$('#thumb').onclick = e => { // a corner of the field, as a fraction of the picture
+  if (!clickMode) return;
+  const r = e.target.getBoundingClientRect(), img = e.target, k = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+  const w = img.naturalWidth * k, h = img.naturalHeight * k, x = e.clientX - r.left - (r.width - w) / 2, y = e.clientY - r.top - (r.height - h) / 2;
+  if (x < 0 || y < 0 || x > w || y > h) return;
+  send({ cmd: 'fieldClick', u: x / w, v: y / h });
+  if (++clickN === 4) clickMode = false;
+};
 $('#forceReady').onclick = () => send({ cmd: 'forceReady' });
 $('#pause').onclick = () => send({ cmd: 'pause' });
 $('#reset').onclick = () => send({ cmd: 'reset' });
@@ -233,7 +253,12 @@ function render() {
     s.camMsg,
   ].filter(Boolean).map(x => `<div>${x}</div>`).join(''));
   const SIDE = { left: '左', right: '右' };
-  setHtml('#tagCheck', s.phase !== 'setup' ? '' : '<div>タグの見え方（準備中だけ確認）</div>' + s.setupTags.map(c => `<div>${dot(!c.seen ? '' : c.side !== c.want || c.px < 14 ? 'warn' : 'ok')}ID ${c.id}（${SIDE[c.want]}側）：${!c.seen ? '見えていない' : c.side !== c.want ? `画面の${SIDE[c.side]}に見えている。左右が逆かも` : c.px < 14 ? '小さい' : 'OK'}</div>`).join(''));
+  setHtml('#tagCheck', s.phase !== 'setup' ? '' : '<div>タグの見え方（準備中だけ確認）</div>' + s.setupTags.map(c => `<div>${dot(!c.seen ? '' : c.side !== c.want || c.px < 14 ? 'warn' : 'ok')}ID ${c.id}${c.want ? `（${SIDE[c.want]}側）` : ''}：${!c.seen ? '見えていない' : c.side !== c.want ? `画面の${SIDE[c.side]}に見えている。左右が逆かも` : c.px < 14 ? '小さい' : 'OK'}</div>`).join(''));
+  $$('[data-pos]').forEach(b => b.classList.toggle('on', b.dataset.pos === s.posSrc));
+  $$('[data-hand]').forEach(b => b.classList.toggle('on', b.dataset.hand === s.hand));
+  $('#clickMode').classList.toggle('on', clickMode);
+  setHtml('#clickNote', clickMode ? `プレビュー上でフィールドの角を4か所クリック（${clickN}/4）` : s.field?.scanned ? '' : 'スキャンのあとに使えます');
+  setHtml('#poseInfo', s.posSrc !== 'camera' ? '' : !s.pose ? '骨格推定を準備中' : `${dot(s.pose.A ? 'ok' : '')}A ${s.pose.A ? '見えている' : '見えていない'}　${dot(s.pose.B ? 'ok' : '')}B ${s.pose.B ? '見えている' : '見えていない'}`);
   $$('[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === s.view));
   $$('[data-drone]').forEach(b => b.classList.toggle('on', b.dataset.drone === s.drone));
   $$('[data-fpv]').forEach(b => b.classList.toggle('on', (b.dataset.fpv || null) === s.fpv));

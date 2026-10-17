@@ -20,7 +20,10 @@ export const START = { A: { pos: [-1.2, 0, 0], yaw: 0 }, B: { pos: [1.2, 0, 0], 
 export const PHONE_TAG_SIZE = 0.1;   // the size typed into the phones (m); every tags[].p is scaled by this
 export const STICK = { len: 0.8, axis: [1, 0, 0], up: [0, 0, 1], hand: { fwd: 0.3, right: 0.2, up: -0.3 } };
 
-// Tag layouts. Pick one with ?layout= (browser) or LAYOUT= (node); default 'floor'.
+// Tag layouts. Pick one with ?layout= (browser) or LAYOUT= (node); default 'map4'.
+// - map4:  four sheets (ids 0-3, any size listed here) lying anywhere on the floor, roughly the corners of the play area.
+//          Their real positions and turns are measured by the scan (fieldmap.js -> setField); the values here are only a
+//          placeholder 3 m square until then. Nothing in the room is measured by hand.
 // - full:  fixed tags on poles at chest height facing the arena centre: corners 0-3, plus 4 / 5 in the middle of the
 //          sides behind B / A so each player sees one straight ahead from the start mark. Chest tags 10 (A), 11 (B).
 // - today: what was printed on 10/17 (AprilTag Print Studio, 200 mm black square): only ids 0 and 1, behind B / A.
@@ -48,6 +51,14 @@ const LAYOUTS = {
     10: { size: 0.18, player: 'A' }, // not printed yet: kept so the dummy room and the simulator still use them
     11: { size: 0.18, player: 'B' },
   },
+  map4: {
+    0: { size: 0.2, pos: [1.5, 0, 1.5], floor: true, yaw: 0 },
+    1: { size: 0.2, pos: [-1.5, 0, 1.5], floor: true, yaw: 0 },
+    2: { size: 0.25, pos: [-1.5, 0, -1.5], floor: true, yaw: 0 },
+    3: { size: 0.25, pos: [1.5, 0, -1.5], floor: true, yaw: 0 },
+    10: { size: 0.18, player: 'A' },
+    11: { size: 0.18, player: 'B' },
+  },
   floor: {
     0: { size: 0.2, pos: [1.5, 0, 1], floor: true, flip: true },
     1: { size: 0.2, pos: [-1.5, 0, 1], floor: true, flip: true },
@@ -56,8 +67,8 @@ const LAYOUTS = {
   },
 };
 const pick = (typeof location !== 'undefined' && new URLSearchParams(location.search).get('layout'))
-  || (typeof process !== 'undefined' && process.env?.LAYOUT) || 'floor';
-export const LAYOUT = LAYOUTS[pick] ? pick : 'floor';
+  || (typeof process !== 'undefined' && process.env?.LAYOUT) || 'map4';
+export const LAYOUT = LAYOUTS[pick] ? pick : 'map4';
 export const TAGS = LAYOUTS[LAYOUT];
 export const CORNER_IDS = Object.keys(TAGS).map(Number).filter(id => TAGS[id].pos); // every fixed tag (name kept for the modules that use it)
 export const PLAYER_TAG = { A: 10, B: 11 };
@@ -65,8 +76,42 @@ export const PLAYER_TAG = { A: 10, B: 11 };
 // sheets only need to lie level and face the same way, not sit exactly 3 m apart
 export const FLOOR_IDS = CORNER_IDS.filter(id => TAGS[id].floor);
 export function setFloorSep(sep) { for (const id of FLOOR_IDS) TAGS[id].pos[0] = Math.sign(TAGS[id].pos[0]) * sep / 2; }
-if (typeof location !== 'undefined' && FLOOR_IDS.length) {
+if (typeof location !== 'undefined' && LAYOUT === 'floor') { // the two-sheet layout only; map4 is measured whole by fieldmap.js
   try { const v = +localStorage.getItem('fx-tagsep'); if (v > .2 && v < 8) setFloorSep(v); } catch {}
+}
+
+// ---- the play area (FIELD) ----
+// poly: the field outline on the floor, [x, z] corners in order around it. Starts as the ARENA square; a scan of the
+// map4 sheets replaces it (setField). START, ARENA.half (largest extent, for the old square-minded code) follow it.
+// Listeners (onFieldChange) rebuild whatever they drew from the old outline.
+export const FIELD = { // until a scan: map4's placeholder sheets, else the ARENA square
+  poly: LAYOUT === 'map4' ? FLOOR_IDS.map(id => [TAGS[id].pos[0], TAGS[id].pos[2]]).sort((a, b) => Math.atan2(a[1], a[0]) - Math.atan2(b[1], b[0])) : [[-H, -H], [H, -H], [H, H], [-H, H]],
+};
+const fieldListeners = new Set();
+export const onFieldChange = cb => { fieldListeners.add(cb); return () => fieldListeners.delete(cb); };
+/**
+ * setField({ poly, tags }) — poly: [[x, z] x N] the outline; tags: { id: { pos: [x, 0, z], yaw } } measured floor sheets.
+ * World frame convention for a scanned field: origin at the outline's centroid, y up, +x from A's side (left in the
+ * third-person picture) to B's side (right), so A starts at -x facing +x as before.
+ */
+export function setField({ poly, tags = {} }) {
+  for (const [id, t] of Object.entries(tags)) if (TAGS[id]) Object.assign(TAGS[id], { pos: [...t.pos], yaw: t.yaw ?? 0, floor: true, flip: false });
+  FIELD.poly = poly.map(p => [...p]);
+  const xs = poly.map(p => p[0]), zs = poly.map(p => p[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  ARENA.half = Math.max(maxX, -minX, ...zs.map(Math.abs));
+  const inset = Math.min(.9, (maxX - minX) * .22); // start marks a little in from the A / B ends
+  START.A.pos = [minX + inset, 0, 0]; START.B.pos = [maxX - inset, 0, 0];
+  for (const cb of fieldListeners) cb(FIELD);
+}
+/** Is the floor point (x, z) inside the field outline? */
+export function inField(x, z) {
+  let inside = false; const P = FIELD.poly;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+    const [xi, zi] = P[i], [xj, zj] = P[j];
+    if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
 }
 export const tagScale = id => (TAGS[id]?.size ?? PHONE_TAG_SIZE) / PHONE_TAG_SIZE;
 
@@ -113,7 +158,10 @@ export const arcam_T_cv = pose(CV_FROM_AR);
 export function worldTagPose(id, body) {
   const tag = TAGS[id];
   if (!tag.pos) return chestTagPose(body);
-  if (tag.floor) return pose(tag.flip ? fromCols([-1, 0, 0], [0, 0, 1], [0, 1, 0]) : fromCols([1, 0, 0], [0, 0, -1], [0, 1, 0]), tag.pos);
+  if (tag.floor) { // lying face up, turned `yaw` about world up (yaw 0: the sheet's top edge points to -z, away from the camera)
+    const a = (tag.yaw ?? 0) + (tag.flip ? Math.PI : 0), c = Math.cos(a), s = Math.sin(a);
+    return pose(fromCols([c, 0, -s], [-s, 0, -c], [0, 1, 0]), tag.pos);
+  }
   const n = Math.hypot(tag.pos[0], tag.pos[2]), z = [-tag.pos[0] / n, 0, -tag.pos[2] / n], y = [0, 1, 0];
   const x = [z[2], 0, -z[0]]; // x = y × z
   return tag.flip ? pose(fromCols(x.map(v => -v), [0, -1, 0], z), tag.pos) : pose(fromCols(x, y, z), tag.pos);

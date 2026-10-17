@@ -275,7 +275,11 @@ class Bolt {
 }
 
 export function createFx(renderer, scene, camera, opts = {}) {
-  opts = Object.assign({ onShake: null, quality: 'high', seed: 1 }, opts);
+  // fxPixels: most pixels of the effect layer; adaptive: shrink it (down to fxPixelsMin) while the effect passes take more than
+  // fxBudgetMs of GPU time (timer queries, Chrome / Edge; elsewhere the size stays at fxPixels). On an M5 at 1080p the passes
+  // take 2-5 ms and ~2 ms of that does not shrink with the layer, so the budget only bites on GPUs that really are slow.
+  // A busy frame's fill is mostly this layer, so this is the knob; the full-size scene / MSAA cost is the page's pixel ratio.
+  opts = Object.assign({ onShake: null, quality: 'high', seed: 1, fxPixels: 2.2e6, fxPixelsMin: .5e6, fxBudgetMs: 6, adaptive: true }, opts);
   const hi = opts.quality !== 'low';
   const Q = hi ? 1 : .5, CAP = hi ? 32768 : 12288, SCAP = 512, GCAP = hi ? 8192 : 4096, LEVELS = hi ? 6 : 5;
   const R = mulberry(opts.seed), RS = s => (R() * 2 - 1) * s;
@@ -309,7 +313,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
   P.g.instanceCount = CAP;
 
   // ---- particle ring buffer: written once at birth, uploaded as dirty ranges ----
-  let cursor = 0, dirtyFrom = 0, dirtyN = 0;
+  let cursor = 0, dirtyFrom = 0, dirtyN = 0, pAlive = -1; // pAlive: when the last particle dies
   function emit(x, y, z, vx, vy, vz, life, s0, s1, drag, grav, col, kind, inten, turb, extra, ageOff) {
     const o = cursor * PS, a = P.a;
     a[o] = x; a[o + 1] = y; a[o + 2] = z; a[o + 3] = time - ageOff;
@@ -318,6 +322,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
     a[o + 12] = col[0]; a[o + 13] = col[1]; a[o + 14] = col[2]; a[o + 15] = kind;
     a[o + 16] = R(); a[o + 17] = inten; a[o + 18] = turb; a[o + 19] = extra;
     cursor = (cursor + 1) % CAP; dirtyN++;
+    pAlive = Math.max(pAlive, time - ageOff + life);
   }
   function uploadParticles() {
     if (!dirtyN) return;
@@ -720,10 +725,10 @@ export function createFx(renderer, scene, camera, opts = {}) {
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2)), quadScene = new THREE.Scene(), quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   quad.frustumCulled = false; quadScene.add(quad);
   const pass = (mat, target) => { quad.material = mat; renderer.setRenderTarget(target); renderer.render(quadScene, quadCam); };
-  let W = 0, H = 0;
+  let W = 0, H = 0, px = opts.fxPixels;
   function resizeTargets(w, h) {
     W = w; H = h;
-    const s = Math.min(1, Math.sqrt(2.2e6 / (w * h))) * (hi ? 1 : .5);
+    const s = Math.min(1, Math.sqrt(px / (w * h))) * (hi ? 1 : .5);
     let lw = Math.max(1, Math.round(w * s)), lh = Math.max(1, Math.round(h * s));
     fxRT.setSize(lw, lh); SG.mesh.material.uniforms.uRes.value.set(lw, lh);
     for (let i = 0; i < LEVELS; i++) {
@@ -732,6 +737,35 @@ export function createFx(renderer, scene, camera, opts = {}) {
     }
   }
   const dbs = new THREE.Vector2(), cc = new THREE.Color();
+
+  // ---- GPU time per frame (scene = video + 3D, fx = effect layer + bloom + composite), and the adaptive layer size ----
+  // The fill of the effect layer (overlapping additive quads) is most of the GPU time of a busy frame, so its size is the knob.
+  const gl = renderer.getContext(), tq = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+  const gpu = { scene: 0, fx: 0, n: 0, at: 0 }, queries = [];
+  function timed(kind, f) {
+    // one TIME_ELAPSED query at a time: skip when the caller (a profiler) has one open, or results lag far behind
+    const q = tq && queries.length < 12 && !gl.getQuery(tq.TIME_ELAPSED_EXT, gl.CURRENT_QUERY) && gl.createQuery();
+    if (q) gl.beginQuery(tq.TIME_ELAPSED_EXT, q);
+    f();
+    if (q) { gl.endQuery(tq.TIME_ELAPSED_EXT); queries.push({ q, kind }); }
+  }
+  function readTimers() {
+    if (!tq) return;
+    const lost = gl.getParameter(tq.GPU_DISJOINT_EXT); // results across a disjoint event are garbage
+    while (queries.length && (lost || gl.getQueryParameter(queries[0].q, gl.QUERY_RESULT_AVAILABLE))) {
+      const { q, kind } = queries.shift();
+      if (!lost) { gpu[kind] += (gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6 - gpu[kind]) * .1; if (kind === 'fx') gpu.n++; }
+      gl.deleteQuery(q);
+    }
+  }
+  function adapt() {
+    const t = performance.now();
+    if (!opts.adaptive || !tq || gpu.n < 20 || t - gpu.at < 500) return;
+    gpu.at = t; gpu.n = 0;
+    const B = opts.fxBudgetMs, k = gpu.fx > B ? Math.max(.6, B / gpu.fx) : gpu.fx < .6 * B ? 1.15 : 1;
+    const np = Math.min(opts.fxPixels, Math.max(opts.fxPixelsMin, px * k));
+    if (Math.abs(np / px - 1) > .05) { px = np; resizeTargets(W, H); }
+  }
 
   return {
     opts,
@@ -792,34 +826,45 @@ export function createFx(renderer, scene, camera, opts = {}) {
     render() {
       renderer.getDrawingBufferSize(dbs);
       if (dbs.x !== W || dbs.y !== H) resizeTargets(dbs.x, dbs.y);
+      readTimers(); adapt();
       const ac = renderer.autoClear, rt0 = renderer.getRenderTarget(), ca = renderer.getClearAlpha(); renderer.getClearColor(cc);
-      renderer.setRenderTarget(null); renderer.autoClear = true; renderer.render(scene, camera);
-      renderer.autoClear = false;
-      renderer.setRenderTarget(fxRT); renderer.setClearColor(0x000000, 0); renderer.clear(true, false, false);
-      renderer.render(fxScene, camera);
-      let src = fxRT;
-      for (let i = 0; i < LEVELS; i++) {
-        const u = downMat.uniforms; u.tSrc.value = src.texture; u.uTs.value.set(1 / src.width, 1 / src.height);
-        u.uPre.value = i === 0 ? 1 : 0; u.uTh.value = bloom.threshold; u.uKnee.value = Math.max(.05, bloom.threshold * .5);
-        pass(downMat, down[i]); src = down[i];
-      }
-      for (let i = LEVELS - 2; i >= 0; i--) {
-        const u = upMat.uniforms; u.tSmall.value = src.texture; u.tCur.value = down[i].texture; u.uTs.value.set(1 / src.width, 1 / src.height); u.uRad.value = bloom.radius;
-        pass(upMat, up[i]); src = up[i];
-      }
-      let norm = 0; for (let i = 0; i < LEVELS; i++) norm += bloom.radius ** i;
-      compMat.uniforms.tBloom.value = src.texture; compMat.uniforms.uStr.value = bloom.strength * 2 / norm;
-      pass(compMat, null);
+      renderer.setRenderTarget(null); renderer.autoClear = true;
+      timed('scene', () => renderer.render(scene, camera));
+      // nothing alive: skip the effect layer, bloom and composite (setup, between moves)
+      if (!nS && !nG && time >= pAlive) { renderer.autoClear = ac; renderer.setRenderTarget(rt0); return; }
+      timed('fx', fxPasses);
       renderer.setClearColor(cc, ca); renderer.autoClear = ac; renderer.setRenderTarget(rt0);
     },
     setSize(w, h) { renderer.setSize(w, h, false); renderer.getDrawingBufferSize(dbs); resizeTargets(dbs.x, dbs.y); },
     setBloom(b) { Object.assign(bloom, b); },
-    stats() { return { sprites: nS, segments: nG, particleCap: CAP, shots: shots.size, live: live.length, auras: auras.size, charges: charges.size }; },
+    /** { fxPixels, fxPixelsMin, fxBudgetMs, adaptive }: fxPixels also resets the adaptive size to it. */
+    setQuality(q) { Object.assign(opts, q); if (q.fxPixels) { px = q.fxPixels; if (W) resizeTargets(W, H); } },
+    stats() { return { sprites: nS, segments: nG, particleCap: CAP, shots: shots.size, live: live.length, auras: auras.size, charges: charges.size,
+      fxPixels: Math.round(fxRT.width * fxRT.height), gpuSceneMs: +gpu.scene.toFixed(2), gpuFxMs: +gpu.fx.toFixed(2), timer: !!tq }; },
     dispose() {
       for (const t of [fxRT, ...down, ...up]) t.dispose();
       for (const m of [P, SP, SG]) { m.g.dispose(); m.mesh.material.dispose(); }
       for (const m of [downMat, upMat, compMat]) m.dispose();
+      for (const { q } of queries.splice(0)) gl.deleteQuery(q);
       quad.geometry.dispose(); noise.dispose();
     },
   };
+  function fxPasses() {
+    renderer.autoClear = false;
+    renderer.setRenderTarget(fxRT); renderer.setClearColor(0x000000, 0); renderer.clear(true, false, false);
+    renderer.render(fxScene, camera);
+    let src = fxRT;
+    for (let i = 0; i < LEVELS; i++) {
+      const u = downMat.uniforms; u.tSrc.value = src.texture; u.uTs.value.set(1 / src.width, 1 / src.height);
+      u.uPre.value = i === 0 ? 1 : 0; u.uTh.value = bloom.threshold; u.uKnee.value = Math.max(.05, bloom.threshold * .5);
+      pass(downMat, down[i]); src = down[i];
+    }
+    for (let i = LEVELS - 2; i >= 0; i--) {
+      const u = upMat.uniforms; u.tSmall.value = src.texture; u.tCur.value = down[i].texture; u.uTs.value.set(1 / src.width, 1 / src.height); u.uRad.value = bloom.radius;
+      pass(upMat, up[i]); src = up[i];
+    }
+    let norm = 0; for (let i = 0; i < LEVELS; i++) norm += bloom.radius ** i;
+    compMat.uniforms.tBloom.value = src.texture; compMat.uniforms.uStr.value = bloom.strength * 2 / norm;
+    pass(compMat, null);
+  }
 }

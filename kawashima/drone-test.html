@@ -21,9 +21,13 @@
 // Drone camera demo: synthetic players and events. Keys 1-7 pick a mode, N cycles.
 // ?mode=auto|orbit|chaseA|chaseB|top|side|free  &t=<s>: simulate at dt=1/60 up to t, render once, freeze.
 // ?sep=<scale> spacing.  ?cycle: press N every 3 s.  ?check: 30 s of auto with events, prints smoothness numbers.
+// ?field=square|thin|small|<seed>: the play area (setField as if scanned; thin 6 m x 2.5 m, small 2 m x 2 m, <seed> randomMap4)
 import * as THREE from 'three';
 import * as W from './world.js';
 import { createDrone } from './drone.js';
+import { fieldPreset } from './dummycam.js';
+const FP = fieldPreset(new URLSearchParams(location.search).get('field'));
+if (FP) W.setField(W.LAYOUT === 'map4' ? FP : { poly: FP.poly });
 
 const P = new URLSearchParams(location.search);
 const FREEZE = P.has('t') ? +P.get('t') : null, CHECK = P.has('check');
@@ -43,14 +47,16 @@ const sun = new THREE.DirectionalLight(0xffffff, 1.2); sun.position.set(3, 6, 2)
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), new THREE.MeshStandardMaterial({ color: 0x1a1d24 }));
 floor.rotation.x = -Math.PI / 2; scene.add(floor);
 const grid = new THREE.GridHelper(20, 40, 0x334, 0x262a33); grid.position.y = 0.002; scene.add(grid);
-const H = W.ARENA.half;
-const sq = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([V(-H, .01, -H), V(H, .01, -H), V(H, .01, H), V(-H, .01, H)]), new THREE.LineBasicMaterial({ color: 0xffcc33 }));
+const ZS = W.FIELD.poly.map(p => p[1]), Z0 = Math.min(...ZS), Z1 = Math.max(...ZS);
+const sq = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(W.FIELD.poly.map(p => V(p[0], .01, p[1]))), new THREE.LineBasicMaterial({ color: 0xffcc33 }));
 scene.add(sq);
-const mid = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V(0, .01, -H), V(0, .01, H)]), new THREE.LineBasicMaterial({ color: 0x666666 }));
+const mid = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V(0, .01, Z0), V(0, .01, Z1)]), new THREE.LineBasicMaterial({ color: 0x666666 }));
 scene.add(mid);
-for (const id of W.CORNER_IDS) { // fixed tags as small boards
-  const m = new THREE.Mesh(new THREE.BoxGeometry(.25, .25, .02), new THREE.MeshStandardMaterial({ color: 0xffffff }));
-  m.position.fromArray(W.TAGS[id].pos); m.lookAt(0, m.position.y, 0); scene.add(m);
+for (const id of W.CORNER_IDS) { // fixed tags as small boards (floor sheets lie flat, turned by their yaw)
+  const t = W.TAGS[id], m = new THREE.Mesh(new THREE.BoxGeometry(t.size, t.size, .02), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+  m.position.fromArray(t.pos);
+  if (t.floor) { m.rotation.set(-Math.PI / 2, 0, t.yaw ?? 0); m.position.y = .01; } else m.lookAt(0, m.position.y, 0);
+  scene.add(m);
 }
 
 // ---- players ----
@@ -67,9 +73,11 @@ function makePlayer(color) {
 }
 const pl = { A: makePlayer(0xe0503a), B: makePlayer(0x3a7ce0) };
 const SEP = +(P.get('sep') ?? 1); // ?sep=0.6: players closer together (stress test for event framing)
+// around the start marks (1.2 m out on the old square); wander scaled down on a small / thin field
+const XA = -W.START.A.pos[0], XB = W.START.B.pos[0], WX = Math.min(1, (XA + XB) / 2.4), ZA = Math.min(.9, (Z1 - Z0) * .25);
 const posOf = (k, t) => k === 'A'
-  ? V(-1.2 * SEP + .35 * Math.sin(.6 * t) + .4 * Math.sin(.21 * t), 0, .9 * Math.sin(.43 * t))
-  : V(1.2 * SEP + .3 * Math.sin(.5 * t + 1) - .4 * Math.sin(.17 * t), 0, .9 * Math.sin(.37 * t + 2));
+  ? V(-XA * SEP + WX * (.35 * Math.sin(.6 * t) + .4 * Math.sin(.21 * t)), 0, ZA * Math.sin(.43 * t))
+  : V(XB * SEP + WX * (.3 * Math.sin(.5 * t + 1) - .4 * Math.sin(.17 * t)), 0, ZA * Math.sin(.37 * t + 2));
 function stepPlayers(t) {
   for (const k of ['A', 'B']) {
     const p = pl[k], q = posOf(k, t), op = posOf(k === 'A' ? 'B' : 'A', t);
@@ -121,7 +129,7 @@ function stepEvents(t, dt, drone) {
       e.m.position.addScaledVector(e.vel, dt);
       const foeK = e.owner === 'A' ? 'B' : 'A';
       if (e.m.position.distanceTo(pl[foeK].chest) < .45) { boom(e.m.position.clone(), pl[e.owner].color, e.power); emit('hit', { target: foeK, pos: e.m.position.clone(), power: e.power }); e.age = 99; }
-      else if (Math.abs(e.m.position.x) > 6 || Math.abs(e.m.position.z) > 6) e.age = 99;
+      else if (Math.abs(e.m.position.x) > 9 || Math.abs(e.m.position.z) > 9) e.age = 99;
       if (e.age > 2) { scene.remove(e.m); fxs.splice(i, 1); }
     } else if (e.kind === 'charge') {
       e.m.position.copy(pl[e.owner].tip); e.m.scale.setScalar(1 + 3 * Math.min(1, e.age / 1.5));
@@ -194,7 +202,7 @@ if (CHECK) {
   }
   const pct = a => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length * .99)]; };
   const el = document.getElementById('check'); el.style.display = 'block';
-  el.textContent = `CHECK 30 s auto (dt 1/60, ${n} frames)
+  el.textContent = `CHECK 30 s auto (dt 1/60, ${n} frames)  field ${P.get('field') ?? 'square'} ${W.FIELD.poly.map(p => p.map(v => v.toFixed(1)).join(',')).join(' ')}
 max camera speed     ${maxV.toFixed(2)} m/s   (p99 ${pct(vs).toFixed(2)})
 max angular speed    ${maxW.toFixed(1)} deg/s (p99 ${pct(ws).toFixed(1)}, incl. hit shake)
 min dist to chests   ${minD.toFixed(2)} m

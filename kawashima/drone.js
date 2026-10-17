@@ -50,6 +50,18 @@ export function createDrone(camera, domElement, opts = {}) {
 
   // ---- smoothed players ----
   const S = { a: V(), b: V(), ca: V(), cb: V(), mid: V(), axis: 0, sep: 2.4, yawA: 0, yawB: Math.PI, ready: false };
+  // ---- the field (world.js FIELD.poly): any quadrilateral, any size. Its extent sizes the orbit / top shot / keep-in
+  // radius; recomputed only when setField replaced the outline (new array), so the per-frame cost is one compare ----
+  const F = { poly: null, c: V(), R: 2.83, hx: 2, hz: 2, corners: [] };
+  function syncField() {
+    if (F.poly === W.FIELD.poly) return;
+    const P = F.poly = W.FIELD.poly, xs = P.map(p => p[0]), zs = P.map(p => p[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
+    F.c.set((x0 + x1) / 2, 0, (z0 + z1) / 2); F.hx = (x1 - x0) / 2; F.hz = (z1 - z0) / 2;
+    F.R = Math.max(...P.map(p => Math.hypot(p[0], p[1])));
+    F.corners = P.map(p => V(p[0], 0, p[1]));
+  }
+  syncField();
   const startChest = k => V(W.START[k].pos[0], W.CHEST_H, W.START[k].pos[2]);
   function trackPlayers(players, dt) {
     const pa = players?.A?.chest ?? startChest('A'), pb = players?.B?.chest ?? startChest('B');
@@ -91,8 +103,9 @@ export function createDrone(camera, domElement, opts = {}) {
       const q = V(c.x, clamp(p.y, 0.2, HEAD), c.z), d = p.clone().sub(q), n = d.length();
       if (n < o.minDist) p.copy(q).addScaledVector(n > 1e-4 ? d.divideScalar(n) : V(0, 1, 0), o.minDist);
     }
-    p.y = clamp(p.y, o.minY, 9);
-    const h = Math.hypot(p.x, p.z); if (h > 9) { p.x *= 9 / h; p.z *= 9 / h; }
+    const far = Math.max(9, F.R + 5); // keep-in radius around the field
+    p.y = clamp(p.y, o.minY, far);
+    const h = Math.hypot(p.x, p.z); if (h > far) { p.x *= far / h; p.z *= far / h; }
     return p;
   }
 
@@ -112,7 +125,6 @@ export function createDrone(camera, domElement, opts = {}) {
     return pose;
   }
   const bodyPts = () => [S.a, S.b].flatMap(c => [V(c.x, c.y + 0.55, c.z), V(c.x, Math.max(0.2, c.y - 0.9), c.z)]);
-  const H = W.ARENA.half, corners = [V(-H, 0, -H), V(H, 0, -H), V(H, 0, H), V(-H, 0, H)];
 
   // ---- shots: gen(dt) returns { pos, look, fov } ----
   const camAz = (c = S.mid) => az(cur.pos, c);
@@ -124,7 +136,7 @@ export function createDrone(camera, domElement, opts = {}) {
       const turn = mode === 'auto' ? (wrap(perp - ph) >= 0 ? 1 : -1) : 1;
       return { name: 'orbit', w: 2.5, gen(dt) {
         ph += turn * 0.14 * dt; // ~8 deg/s
-        const r = clamp(3.4 + 0.65 * S.sep, 4.6, 7), along = Math.abs(Math.cos(ph - S.axis)); // 1 = looking down the A-B line
+        const r = clamp(3.4 + 0.65 * S.sep, clamp(F.R + 2.6, 3.8, 4.6), Math.max(7, F.R + 3)), along = Math.abs(Math.cos(ph - S.axis)); // 1 = looking down the A-B line
         return fit({ pos: fromAz(S.mid, ph, r, 2.5 + 1.0 * along), look: V(S.mid.x, 1.0, S.mid.z), fov: o.fovWide }, bodyPts());
       } };
     },
@@ -138,8 +150,8 @@ export function createDrone(camera, domElement, opts = {}) {
     },
     top() {
       return { name: 'top', w: 2, gen() {
-        const c = flat(S.mid).multiplyScalar(0.3);
-        return fit({ pos: V(c.x, 7, c.z + 2.4), look: c.clone(), fov: o.fovWide }, [...corners, ...bodyPts()], 0.92);
+        const c = F.c.clone().lerp(flat(S.mid), 0.3), y = Math.max(4.5, 1.2 * F.R + 3.6); // 7 m up for the old 4 m square; fit() backs off if a corner is out
+        return fit({ pos: V(c.x, y, c.z + 0.34 * y), look: c.clone(), fov: o.fovWide }, [...F.corners, ...bodyPts()], 0.92);
       } };
     },
     chase(k) {
@@ -286,6 +298,7 @@ export function createDrone(camera, domElement, opts = {}) {
 
   function update(dt, players) {
     dt = clamp(dt, 0, 0.1); t += dt;
+    syncField();
     trackPlayers(players, dt);
     if (!shot) setMode(mode);
     if (mode === 'free') {

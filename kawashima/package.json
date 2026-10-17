@@ -1,0 +1,11 @@
+{
+  "name": "bou-battle-display",
+  "private": true,
+  "type": "module",
+  "description": "PC side: projector display + admin page. No bundling: plain ES modules served by serve.mjs.",
+  "scripts": {
+    "start": "node serve.mjs",
+    "prefetch": "node serve.mjs --prefetch",
+    "test": "node --test test/"
+  }
+}

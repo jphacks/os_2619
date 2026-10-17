@@ -1,4 +1,4 @@
-// Stylized arena for the 3D / drone views: floor, glowing boundary, start rings, tag poles with the real tag images,
+// Stylized arena for the 3D / drone views: floor, glowing boundary along FIELD.poly, start rings, the tags with their real images,
 // two team-coloured avatars posed from the players' body / stick, and a 2D top-down minimap.
 // Everything lives in one group the integrator shows only in 3D views; effects.js renders on top (no depth test).
 // World frame and layout: world.js (metres, y up, origin floor centre). Body frame: x forward, y up, z right.
@@ -9,7 +9,6 @@ import { tagCanvas } from './dummycam.js';
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
 const m4 = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
-const H = W.ARENA.half;
 export const TEAM = { A: 0xff7a1a, B: 0x3fc4ff };
 const css = c => '#' + c.toString(16).padStart(6, '0');
 const UP = V(0, 1, 0);
@@ -53,29 +52,56 @@ function limitSprite(s, { maxFrac = .12, near = 2, behindNear = 3.5, facing = nu
   s.onAfterRender = () => { s.scale.set(w0, h0, 1); };
 }
 
+// ---- the field outline (world.js FIELD.poly) and a cheap signature of everything drawn from it ----
+const MAXP = 8; // outline vertices the floor shader takes (a scanned map4 field has 4)
+/** Extent of the field: bbox, radius from the origin and the vertices. Recomputed on change, never per frame. */
+export function fieldExtent(poly = W.FIELD.poly) {
+  const xs = poly.map(p => p[0]), zs = poly.map(p => p[1]);
+  return { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs), R: Math.max(...poly.map(p => Math.hypot(p[0], p[1]))), poly };
+}
+/** Changes whenever setField / setFloorSep moved the outline, a tag or a start mark (both mutate in place). No allocation. */
+export function fieldSig() {
+  let h = W.FIELD.poly.length + W.START.A.pos[0] * 7 + W.START.B.pos[0] * 13;
+  for (let i = 0; i < W.FIELD.poly.length; i++) h = h * 1.618 + W.FIELD.poly[i][0] * 3.1 + W.FIELD.poly[i][1] * 5.7;
+  for (let i = 0; i < W.CORNER_IDS.length; i++) { const t = W.TAGS[W.CORNER_IDS[i]]; h = h * 1.618 + t.pos[0] * 2.3 + t.pos[2] * 4.1 + (t.yaw ?? 0) * 6.7 + (t.flip ? 1 : 0) + (t.floor ? 2 : 0); }
+  return h;
+}
+
 // ---- floor: one quad, everything analytic (grid, boundary glow, centre line, start rings, player shadows + HP arcs) ----
 const FLOOR_VS = `
 varying vec2 vP;
 void main() { vec4 w = modelMatrix * vec4(position, 1.); vP = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const FLOOR_FS = `
-uniform float uTime, uH; uniform vec4 uP[2]; uniform vec3 uCA, uCB; uniform vec2 uSA, uSB;
+uniform float uTime, uR; uniform vec2 uX; uniform vec2 uPoly[${MAXP}]; uniform int uN;
+uniform vec4 uP[2]; uniform vec3 uCA, uCB; uniform vec2 uSA, uSB;
 varying vec2 vP;
 float aline(float d, float px) { return 1. - smoothstep(.5 * px, 1.5 * px, d); } // ~1.5 px wide line at distance d (px units)
 float gridAt(vec2 p, float s) { vec2 q = p / s, g = abs(fract(q - .5) - .5) / fwidth(q); return 1. - min(min(g.x, g.y) / 1.2, 1.); }
 float ring(vec2 p, vec2 c, float r, float w) { float d = abs(length(p - c) - r); return 1. - smoothstep(w * .5, w * .5 + fwidth(d) * 1.5, d); }
+float sdPoly(vec2 p) { // signed distance to the outline, < 0 inside (any simple polygon, either winding)
+  vec2 a = uPoly[uN - 1]; float d = 1e9, s = 1.;
+  for (int i = 0; i < ${MAXP}; i++) {
+    if (i >= uN) break;
+    vec2 b = uPoly[i], e = a - b, w = p - b, q = w - e * clamp(dot(w, e) / dot(e, e), 0., 1.);
+    d = min(d, dot(q, q));
+    bvec3 c = bvec3(p.y >= b.y, p.y < a.y, e.x * w.y > e.y * w.x);
+    if (all(c) || all(not(c))) s = -s;
+    a = b;
+  }
+  return s * sqrt(d);
+}
 void main() {
-  vec2 p = vP; float r = length(p), box = max(abs(p.x), abs(p.y)), inside = step(box, uH);
-  vec3 team = mix(uCA, uCB, smoothstep(-uH * .9, uH * .9, p.x));
+  vec2 p = vP; float r = length(p), d = sdPoly(p), inside = step(d, 0.);
+  vec3 team = mix(uCA, uCB, smoothstep(uX.x * .9, uX.y * .9, p.x));
   vec3 c = mix(vec3(.028, .034, .052), vec3(.05, .06, .09), inside);
   c += inside * vec3(.035, .04, .06) * exp(-r * r / 5.);                                           // soft centre spot
-  c += mix(vec3(.04, .05, .08), vec3(.10, .12, .17), inside) * gridAt(p, .5) * (inside > .5 ? 1. : exp(-(box - uH) * .8));
+  c += mix(vec3(.04, .05, .08), vec3(.10, .12, .17), inside) * gridAt(p, .5) * (inside > .5 ? 1. : exp(-d * .8));
   c += inside * vec3(.07, .08, .11) * gridAt(p, 1.);
   // boundary: bright core + glow, a light pulse running round it
-  float d = box - uH, ang = atan(p.y, p.x);
-  float pulse = .75 + .25 * sin(uTime * 2.2 - ang * 4.);
+  float ang = atan(p.y, p.x), pulse = .75 + .25 * sin(uTime * 2.2 - ang * 4.);
   c += team * (1. - smoothstep(.012, .03, abs(d))) * 1.6 * pulse;
   c += team * exp(-abs(d) * (d < 0. ? 9. : 16.)) * .32 * pulse;
-  // centre line (dashed) and circle
+  // centre line (dashed, x = 0 runs across the field between the A and B halves) and circle
   float dash = step(.45, fract(p.y * 2.5 + uTime * .3));
   c += inside * vec3(.55, .6, .7) * aline(abs(p.x) / fwidth(p.x), 1.) * dash * .6;
   c += inside * vec3(.35, .4, .5) * ring(p, vec2(0.), .6, .015) * .6;
@@ -93,7 +119,7 @@ void main() {
     c += tc * ring(p, P.xy, .46, .05) * mix(.12, 1.3, on) * P.w;
     c += tc * exp(-abs(dq - .46) * 22.) * .25 * on * P.w;
   }
-  float alpha = 1. - smoothstep(4.2, 8.5, r);
+  float alpha = 1. - smoothstep(uR + 1.4, uR + 5.7, r);
   gl_FragColor = vec4(c, alpha);
 }`;
 
@@ -102,35 +128,49 @@ const WALL_VS = `
 varying vec2 vUv; varying float vX;
 void main() { vUv = uv; vec4 w = modelMatrix * vec4(position, 1.); vX = w.x; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const WALL_FS = `
-uniform float uTime, uH; uniform vec3 uCA, uCB; varying vec2 vUv; varying float vX;
+uniform float uTime; uniform vec2 uX; uniform vec3 uCA, uCB; varying vec2 vUv; varying float vX;
 void main() {
-  vec3 team = mix(uCA, uCB, smoothstep(-uH * .9, uH * .9, vX));
+  vec3 team = mix(uCA, uCB, smoothstep(uX.x * .9, uX.y * .9, vX));
   float f = pow(1. - vUv.y, 2.2), scan = .65 + .35 * step(.5, fract(vUv.y * 7. - uTime * .5));
   gl_FragColor = vec4(team * f * scan * .55, 1.);
 }`;
 
-function makeFloor(uniforms) {
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), new THREE.ShaderMaterial({
+function makeFloor(uniforms) { // unit quad, scaled to the field on rebuild
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShaderMaterial({
     vertexShader: FLOOR_VS, fragmentShader: FLOOR_FS, uniforms, transparent: true, depthWrite: true,
     extensions: { derivatives: true },
   }));
   floor.rotation.x = -Math.PI / 2; floor.renderOrder = -1;
   return floor;
 }
-function makeWalls(uniforms) {
-  const g = new THREE.Group(), h = .32;
-  const mat = new THREE.ShaderMaterial({ vertexShader: WALL_VS, fragmentShader: WALL_FS, uniforms, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
-  for (const [x, z, ry] of [[0, -H, 0], [0, H, 0], [-H, 0, Math.PI / 2], [H, 0, Math.PI / 2]]) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(2 * H, h), mat); m.position.set(x, h / 2, z); m.rotation.y = ry; g.add(m);
+/** Curtain along every edge of the outline, one geometry (uv.y 0 at the floor, 1 at the top). */
+function wallGeometry(poly, h = .32) {
+  const n = poly.length, pos = new Float32Array(n * 12), uv = new Float32Array(n * 8), idx = [];
+  for (let i = 0; i < n; i++) {
+    const [ax, az] = poly[i], [bx, bz] = poly[(i + 1) % n], o = i * 4;
+    pos.set([ax, 0, az, bx, 0, bz, bx, h, bz, ax, h, az], o * 3); uv.set([0, 0, 1, 0, 1, 1, 0, 1], o * 2);
+    idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
   }
-  // corner posts
-  const post = new THREE.CylinderGeometry(.035, .035, .6, 6);
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    if (W.CORNER_IDS.some(id => Math.hypot(W.TAGS[id].pos[0] - sx * H, W.TAGS[id].pos[2] - sz * H) < .3)) continue; // a tag pole stands there
-    const m = new THREE.Mesh(post, new THREE.MeshBasicMaterial({ color: new THREE.Color(sx < 0 ? TEAM.A : TEAM.B).multiplyScalar(1.1) }));
-    m.position.set(sx * H, .3, sz * H); g.add(m);
-  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); g.setIndex(idx);
   return g;
+}
+const POST = new THREE.CylinderGeometry(.035, .035, .6, 6); // shared by every rebuild, never disposed
+const POST_MAT = { A: new THREE.MeshBasicMaterial({ color: new THREE.Color(TEAM.A).multiplyScalar(1.1) }), B: new THREE.MeshBasicMaterial({ color: new THREE.Color(TEAM.B).multiplyScalar(1.1) }) };
+function makePosts(g) { // one at every outline vertex, unless a tag pole stands there; a floor sheet there pushes it just outside
+  for (const [x, z] of W.FIELD.poly) {
+    let px = x, pz = z, skip = false;
+    for (const id of W.CORNER_IDS) {
+      const t = W.TAGS[id], d = Math.hypot(t.pos[0] - x, t.pos[2] - z);
+      if (!t.floor && d < .3) skip = true;
+      if (t.floor && d < t.size * .9 + .1) { // outward from the centre, past the sheet's corner
+        const n = Math.hypot(t.pos[0], t.pos[2]) || 1, k = t.size * .9 + .08;
+        px = t.pos[0] + t.pos[0] / n * k; pz = t.pos[2] + t.pos[2] / n * k;
+      }
+    }
+    if (skip) continue;
+    const m = new THREE.Mesh(POST, POST_MAT[x < 0 ? 'A' : 'B']); m.position.set(px, .3, pz); g.add(m);
+  }
 }
 function floorText(text, color, x, z) { // big flat letter on the floor, upright seen from +z
   const tex = canvasTex(128, 128, (g, w, h) => { g.font = '900 100px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = color; g.fillText(text, w / 2, h / 2 + 6); });
@@ -139,24 +179,38 @@ function floorText(text, color, x, z) { // big flat letter on the floor, upright
   return m;
 }
 
-// ---- tag poles: tag plane exactly at worldTagPose (flip respected), board / pole in an upright frame (as dummycam) ----
+// ---- tags: tag plane exactly at worldTagPose (flip / floor yaw respected); standing ones get a board and pole in an
+// upright frame (as dummycam), floor sheets lie flat with their paper ----
+const TAG_TEX = {}; // per id, kept across rebuilds
+const tagTex = id => {
+  if (TAG_TEX[id]) return TAG_TEX[id];
+  const t = new THREE.CanvasTexture(tagCanvas(id, 16)); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.NearestFilter; t.anisotropy = 4;
+  return (TAG_TEX[id] = t);
+};
+const KEEP = new Set([POST, ...Object.values(POST_MAT)]);
+function disposeTree(root) { // geometries / materials / textures made for one build (shared ones are kept)
+  root.traverse(o => {
+    if (o.geometry && !o.isSprite && !KEEP.has(o.geometry) && o.geometry !== CYL && o.geometry !== JOINT) o.geometry.dispose(); // sprites share three's quad
+    if (o.material && !KEEP.has(o.material)) { const m = o.material; if (m.map && !Object.values(TAG_TEX).includes(m.map)) m.map.dispose(); m.dispose(); }
+  });
+}
 function makeTags(debugGroup) {
   const g = new THREE.Group();
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x8a93a3, metalness: .5, roughness: .4 });
   const boardMat = new THREE.MeshStandardMaterial({ color: 0x2a2f3a, roughness: .7 });
   const footMat = new THREE.MeshStandardMaterial({ color: 0x1a1d24, roughness: .8 });
+  const paperMat = new THREE.MeshBasicMaterial({ color: 0xc8ccd4 });
   for (const id of W.CORNER_IDS) {
     const tp = W.worldTagPose(id), s = W.TAGS[id].size;
     const up = tp.R[4] > 0 ? tp : W.pose(W.mul3(tp.R, [-1, 0, 0, 0, -1, 0, 0, 0, 1]), tp.t);
     const gt = new THREE.Group(), gu = new THREE.Group();
     gt.matrixAutoUpdate = gu.matrixAutoUpdate = false; gt.matrix.copy(m4(tp)); gu.matrix.copy(m4(up));
-    const tex = new THREE.CanvasTexture(tagCanvas(id, 16));
-    tex.colorSpace = THREE.SRGBColorSpace; tex.magFilter = THREE.NearestFilter; tex.anisotropy = 4;
-    const face = new THREE.Mesh(new THREE.PlaneGeometry(s * 10 / 8, s * 10 / 8), new THREE.MeshBasicMaterial({ map: tex, color: 0xe8e8e8 }));
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(s * 10 / 8, s * 10 / 8), new THREE.MeshBasicMaterial({ map: tagTex(id), color: 0xe8e8e8 }));
     face.position.z = .002; gt.add(face);
-    if (W.TAGS[id].floor) { // a sheet lying on the floor: just the paper and a label above it
+    const ax = new THREE.AxesHelper(s * 1.2); ax.matrixAutoUpdate = false; ax.matrix.copy(m4(tp)); debugGroup.add(ax);
+    if (W.TAGS[id].floor) { // a sheet lying on the floor: the paper (caption margin on the tag's -y edge), the tag, a label above
+      const paper = new THREE.Mesh(new THREE.PlaneGeometry(s * 1.25 + .04, s * 1.25 + .1), paperMat); paper.position.set(0, -.03, .001); gt.add(paper);
       const lab = label('ID ' + id, '#e8eefc', .13); lab.position.set(0, 0, .3); gt.add(lab);
-      const ax = new THREE.AxesHelper(s * 1.2); ax.matrixAutoUpdate = false; ax.matrix.copy(m4(tp)); debugGroup.add(ax);
       g.add(gt); continue;
     }
     const board = new THREE.Mesh(new THREE.BoxGeometry(s * 1.6, s * 1.6, .015), boardMat); board.position.z = -.007;
@@ -168,7 +222,6 @@ function makeTags(debugGroup) {
     glow.rotation.x = -Math.PI / 2; glow.position.set(0, .006 - W.CHEST_H, -.035);
     const lab = label('ID ' + id, '#e8eefc', .13); lab.position.set(0, s * .8 + .13, 0);
     gu.add(board, edge, pole, foot, glow, lab);
-    const ax = new THREE.AxesHelper(s * 1.2); ax.matrixAutoUpdate = false; ax.matrix.copy(m4(tp)); debugGroup.add(ax);
     g.add(gt, gu);
   }
   return g;
@@ -322,25 +375,47 @@ function elbowFor(a, b, pole, l1 = UPPER, l2 = FORE) {
   return a.clone().addScaledVector(n, x).addScaledVector(perp.normalize(), h);
 }
 
+
 /**
- * createField(scene, opts) -> { group, background, update(dt, players), setLayoutDebug(on) }
+ * createField(scene, opts) -> { group, background, update(dt, players), setLayoutDebug(on), rebuild(), dispose() }
  * players = { A: { body, base, tip, hp, element, charging, charge, online }, B: ... }; body = world.js pose or null.
  * Only `group` is added to the scene; the integrator sets scene.background = background in 3D views.
+ * The arena follows the field by itself: update() notices a setField / setFloorSep (fieldSig) and rebuilds the
+ * outline, posts, letters and tags inside the same group (avatars, lights and the floor material are kept).
+ * rebuild() forces it now; dispose() frees everything (only needed if the field object is thrown away).
  */
 export function createField(scene, opts = {}) {
   const group = new THREE.Group(); group.name = 'field3d';
   const uniforms = {
-    uTime: { value: 0 }, uH: { value: H },
+    uTime: { value: 0 }, uR: { value: 3 }, uX: { value: new THREE.Vector2(-2, 2) },
+    uPoly: { value: Array.from({ length: MAXP }, () => new THREE.Vector2()) }, uN: { value: 4 },
     uCA: { value: new THREE.Color(TEAM.A) }, uCB: { value: new THREE.Color(TEAM.B) },
-    uSA: { value: new THREE.Vector2(W.START.A.pos[0], W.START.A.pos[2]) }, uSB: { value: new THREE.Vector2(W.START.B.pos[0], W.START.B.pos[2]) },
+    uSA: { value: new THREE.Vector2() }, uSB: { value: new THREE.Vector2() },
     uP: { value: [new THREE.Vector4(), new THREE.Vector4()] },
   };
-  group.add(makeFloor(uniforms), makeWalls(uniforms));
-  group.add(floorText('A', css(TEAM.A), W.START.A.pos[0], W.START.A.pos[2] + .66), floorText('B', css(TEAM.B), W.START.B.pos[0], W.START.B.pos[2] + .66));
+  const floor = makeFloor(uniforms);
+  const walls = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.ShaderMaterial({ vertexShader: WALL_VS, fragmentShader: WALL_FS, uniforms, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
   const debug = new THREE.Group(); debug.visible = false;
-  group.add(makeTags(debug), debug);
   debug.add(new THREE.AxesHelper(.6));
-  for (const [t, x, z, c] of [['+x', 2.35, 0, '#ff6b6b'], ['+z', 0, 2.35, '#6b9bff']]) { const l = label(t, c, .16); l.position.set(x, .12, z); debug.add(l); }
+  group.add(floor, walls, debug);
+  let arena = null, debugArena = null, sig = NaN;
+  function rebuild() {
+    sig = fieldSig();
+    const P = W.FIELD.poly.length > MAXP ? W.FIELD.poly.slice(0, MAXP) : W.FIELD.poly, e = fieldExtent(P);
+    P.forEach((p, i) => uniforms.uPoly.value[i].set(p[0], p[1])); uniforms.uN.value = P.length;
+    uniforms.uR.value = e.R; uniforms.uX.value.set(e.minX, e.maxX);
+    uniforms.uSA.value.set(W.START.A.pos[0], W.START.A.pos[2]); uniforms.uSB.value.set(W.START.B.pos[0], W.START.B.pos[2]);
+    floor.scale.set(2 * (e.R + 6), 2 * (e.R + 6), 1);
+    walls.geometry.dispose(); walls.geometry = wallGeometry(P);
+    if (arena) { group.remove(arena); disposeTree(arena); debug.remove(debugArena); disposeTree(debugArena); }
+    arena = new THREE.Group(); debugArena = new THREE.Group();
+    makePosts(arena);
+    arena.add(floorText('A', css(TEAM.A), W.START.A.pos[0], W.START.A.pos[2] + .66), floorText('B', css(TEAM.B), W.START.B.pos[0], W.START.B.pos[2] + .66));
+    arena.add(makeTags(debugArena));
+    for (const [t, x, z, c] of [['+x', e.maxX + .35, 0, '#ff6b6b'], ['+z', 0, e.maxZ + .35, '#6b9bff']]) { const l = label(t, c, .16); l.position.set(x, .12, z); debugArena.add(l); }
+    group.add(arena); debug.add(debugArena);
+  }
+  rebuild();
 
   // lights (only lit materials here use them; they switch off with the group)
   group.add(new THREE.HemisphereLight(0xa8c0ff, 0x1a1622, 1.6));
@@ -361,8 +436,9 @@ export function createField(scene, opts = {}) {
 
   scene.add(group);
   return {
-    group, background,
+    group, background, rebuild,
     update(dt, players = {}) {
+      if (fieldSig() !== sig) rebuild();
       uniforms.uTime.value += dt;
       ['A', 'B'].forEach((s, i) => {
         const r = avatars[s].update(dt, players[s]);
@@ -370,48 +446,77 @@ export function createField(scene, opts = {}) {
       });
     },
     setLayoutDebug(on) { debug.visible = on; for (const a of Object.values(avatars)) a.ax.visible = on; },
+    dispose() { scene.remove(group); disposeTree(group); background.dispose(); },
   };
 }
 
 /**
  * createMinimap(canvas) -> { draw(players, shots) }: top-down HUD, x right, z down (as the overview camera sees it).
  * shots = [{ pos: Vector3, owner: { slot }, element }]. Transparent background; draws in canvas pixels.
+ * Fits the field outline, the tags and the start marks; the static part is cached and redrawn only when the field
+ * (fieldSig) or the canvas size changes.
  */
 export function createMinimap(canvas) {
-  const g = canvas.getContext('2d');
+  const g = canvas.getContext('2d'), bg = document.createElement('canvas'), b = bg.getContext('2d');
+  let key = '', sig = NaN, k = 1, ox = 0, oz = 0, u = 1;
+  const P = (x, z) => [ox + x * k, oz + z * k];
+  function drawStatic(w, h) {
+    bg.width = w; bg.height = h; sig = fieldSig(); key = w + 'x' + h;
+    const poly = W.FIELD.poly, e = fieldExtent(poly), ids = W.CORNER_IDS;
+    let x0 = Math.min(e.minX, W.START.A.pos[0] - .4), x1 = Math.max(e.maxX, W.START.B.pos[0] + .4), z0 = e.minZ, z1 = e.maxZ;
+    for (const id of ids) { const t = W.TAGS[id].pos; x0 = Math.min(x0, t[0] - .25); x1 = Math.max(x1, t[0] + .25); z0 = Math.min(z0, t[2] - .25); z1 = Math.max(z1, t[2] + .25); }
+    const S = Math.min(w, h); u = S / 260;
+    const pad = 26 * u; // room for the id labels outside
+    k = Math.min((w - 2 * pad) / (x1 - x0), (h - 2 * pad) / (z1 - z0));
+    ox = w / 2 - (x0 + x1) / 2 * k; oz = h / 2 - (z0 + z1) / 2 * k;
+    b.clearRect(0, 0, w, h);
+    b.fillStyle = 'rgba(8,11,20,.62)'; b.beginPath(); b.roundRect(ox + x0 * k - 10 * u, oz + z0 * k - 10 * u, (x1 - x0) * k + 20 * u, (z1 - z0) * k + 20 * u, 12 * u); b.fill();
+    const outline = () => { b.beginPath(); poly.forEach((p, i) => b[i ? 'lineTo' : 'moveTo'](...P(p[0], p[1]))); b.closePath(); };
+    // inside: lighter fill, 1 m grid and the dashed centre line, clipped to the outline
+    b.save(); outline(); b.fillStyle = 'rgba(40,50,80,.35)'; b.fill(); b.clip();
+    b.strokeStyle = 'rgba(160,180,220,.13)'; b.lineWidth = 1 * u; b.beginPath();
+    for (let x = Math.ceil(e.minX); x <= e.maxX; x++) { b.moveTo(...P(x, e.minZ)); b.lineTo(...P(x, e.maxZ)); }
+    for (let z = Math.ceil(e.minZ); z <= e.maxZ; z++) { b.moveTo(...P(e.minX, z)); b.lineTo(...P(e.maxX, z)); }
+    b.stroke();
+    b.setLineDash([6 * u, 6 * u]); b.strokeStyle = 'rgba(220,230,255,.35)'; b.lineWidth = 1.5 * u;
+    b.beginPath(); b.moveTo(...P(0, e.minZ)); b.lineTo(...P(0, e.maxZ)); b.stroke(); b.setLineDash([]);
+    b.restore();
+    const grad = b.createLinearGradient(...P(e.minX, 0), ...P(e.maxX, 0)); grad.addColorStop(0, css(TEAM.A)); grad.addColorStop(1, css(TEAM.B));
+    outline(); b.strokeStyle = grad; b.lineWidth = 3 * u; b.lineJoin = 'round'; b.stroke();
+    for (const s of ['A', 'B']) { b.strokeStyle = css(TEAM[s]); b.globalAlpha = .55; b.lineWidth = 2 * u; b.beginPath(); b.arc(...P(W.START[s].pos[0], W.START[s].pos[2]), .32 * k, 0, 7); b.stroke(); b.globalAlpha = 1; }
+    // tags: floor sheets as small turned squares with a tick on the top edge (tag +y), standing ones as a bar along
+    // the tag's x axis; id outside, away from the centre
+    b.font = `700 ${11 * u}px system-ui, sans-serif`; b.textAlign = 'center'; b.textBaseline = 'middle';
+    for (const id of ids) {
+      const tp = W.worldTagPose(id), t = W.TAGS[id], ax = [tp.R[0], tp.R[6]], ay = [tp.R[1], tp.R[7]], cx = tp.t[0], cz = tp.t[2];
+      if (t.floor) {
+        const s = Math.max(t.size * .62, 5 * u / k), Q = (i, j) => P(cx + (ax[0] * i + ay[0] * j) * s, cz + (ax[1] * i + ay[1] * j) * s);
+        b.fillStyle = '#f2f4f8'; b.beginPath(); b.moveTo(...Q(-1, -1)); b.lineTo(...Q(1, -1)); b.lineTo(...Q(1, 1)); b.lineTo(...Q(-1, 1)); b.closePath(); b.fill();
+        b.strokeStyle = '#0b0e16'; b.lineWidth = 1.5 * u; b.beginPath(); b.moveTo(...Q(0, 0)); b.lineTo(...Q(0, .95)); b.stroke();
+      } else {
+        const s = t.size * .5 + .08;
+        b.strokeStyle = '#f2f4f8'; b.lineWidth = 4 * u; b.beginPath();
+        b.moveTo(...P(cx - ax[0] * s, cz - ax[1] * s)); b.lineTo(...P(cx + ax[0] * s, cz + ax[1] * s)); b.stroke();
+      }
+      const n = Math.hypot(cx, cz) || 1, o = .16 + 13 * u / k;
+      b.fillStyle = '#cfd8ea'; b.fillText('ID' + id, ...P(cx + cx / n * o, cz + cz / n * o));
+    }
+  }
   return {
     draw(players = {}, shots = []) {
-      const w = canvas.width, h = canvas.height, S = Math.min(w, h), k = S * .74 / (2 * H), cx = w / 2, cy = h / 2;
-      const P = (x, z) => [cx + x * k, cy + z * k], u = S / 260;
-      g.clearRect(0, 0, w, h);
-      // arena
-      g.fillStyle = 'rgba(8,11,20,.62)'; g.beginPath(); g.roundRect(cx - H * k - 10 * u, cy - H * k - 10 * u, 2 * H * k + 20 * u, 2 * H * k + 20 * u, 12 * u); g.fill();
-      g.strokeStyle = 'rgba(160,180,220,.13)'; g.lineWidth = 1 * u; g.beginPath();
-      for (let x = -H + 1; x < H; x++) { g.moveTo(...P(x, -H)); g.lineTo(...P(x, H)); g.moveTo(...P(-H, x)); g.lineTo(...P(H, x)); }
-      g.stroke();
-      const grad = g.createLinearGradient(...P(-H, 0), ...P(H, 0)); grad.addColorStop(0, css(TEAM.A)); grad.addColorStop(1, css(TEAM.B));
-      g.strokeStyle = grad; g.lineWidth = 3 * u; g.strokeRect(cx - H * k, cy - H * k, 2 * H * k, 2 * H * k);
-      g.setLineDash([6 * u, 6 * u]); g.strokeStyle = 'rgba(220,230,255,.35)'; g.lineWidth = 1.5 * u;
-      g.beginPath(); g.moveTo(...P(0, -H)); g.lineTo(...P(0, H)); g.stroke(); g.setLineDash([]);
-      for (const s of ['A', 'B']) { g.strokeStyle = css(TEAM[s]); g.globalAlpha = .55; g.lineWidth = 2 * u; g.beginPath(); g.arc(...P(W.START[s].pos[0], W.START[s].pos[2]), .32 * k, 0, 7); g.stroke(); g.globalAlpha = 1; }
-      // tags: a bar along the tag's x axis, id outside the arena
-      g.font = `700 ${11 * u}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-      for (const id of W.CORNER_IDS) {
-        const tp = W.worldTagPose(id), s = W.TAGS[id].size * .5 + .08, ax = [tp.R[0], tp.R[6]];
-        g.strokeStyle = '#f2f4f8'; g.lineWidth = 4 * u; g.beginPath();
-        g.moveTo(...P(tp.t[0] - ax[0] * s, tp.t[2] - ax[1] * s)); g.lineTo(...P(tp.t[0] + ax[0] * s, tp.t[2] + ax[1] * s)); g.stroke();
-        const n = Math.hypot(tp.t[0], tp.t[2]) || 1, o = .3;
-        g.fillStyle = '#cfd8ea'; g.fillText('ID' + id, ...P(tp.t[0] * (1 + o / n), tp.t[2] * (1 + o / n)));
-      }
+      const w = canvas.width, h = canvas.height;
+      if (w !== bg.width || h !== bg.height || fieldSig() !== sig || !key) drawStatic(w, h);
+      g.clearRect(0, 0, w, h); g.drawImage(bg, 0, 0);
+      g.font = `900 ${12 * u}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
       // shots
       for (const sh of shots) {
         const [x, y] = P(sh.pos.x, sh.pos.z), c = sh.element === 'fire' ? '#ffb05a' : '#bfe6ff';
         g.fillStyle = c; g.shadowColor = c; g.shadowBlur = 8 * u; g.beginPath(); g.arc(x, y, 4 * u, 0, 7); g.fill(); g.shadowBlur = 0;
       }
-      // players
+      // players (marker size in pixels follows the field scale, but stays readable on a big field)
       for (const s of ['A', 'B']) {
         const p = players[s]; if (!p?.body) continue;
-        const c = p.online === false ? '#7a7f8a' : css(TEAM[s]), [x, y] = P(p.body.t[0], p.body.t[2]), r = .2 * k;
+        const c = p.online === false ? '#7a7f8a' : css(TEAM[s]), [x, y] = P(p.body.t[0], p.body.t[2]), r = Math.max(.2 * k, 8 * u);
         if (p.base && p.tip) { g.strokeStyle = c; g.lineWidth = 3 * u; g.lineCap = 'round'; g.beginPath(); g.moveTo(...P(p.base.x, p.base.z)); g.lineTo(...P(p.tip.x, p.tip.z)); g.stroke(); }
         const fx = p.body.R[0], fz = p.body.R[6], fn = Math.hypot(fx, fz) || 1, ux = fx / fn, uz = fz / fn;
         g.fillStyle = c; g.beginPath(); // facing wedge
@@ -420,7 +525,7 @@ export function createMinimap(canvas) {
         const hp = Math.max(0, Math.min(1, (p.hp ?? 100) / 100));
         g.strokeStyle = 'rgba(255,255,255,.18)'; g.lineWidth = 3 * u; g.beginPath(); g.arc(x, y, r + 5 * u, 0, 7); g.stroke();
         g.strokeStyle = hp < .3 ? '#ff4a4a' : c; g.beginPath(); g.arc(x, y, r + 5 * u, -Math.PI / 2, -Math.PI / 2 + hp * Math.PI * 2); g.stroke();
-        g.fillStyle = '#0b0e16'; g.font = `900 ${12 * u}px system-ui, sans-serif`; g.fillText(s, x, y + .5 * u);
+        g.fillStyle = '#0b0e16'; g.fillText(s, x, y + .5 * u);
       }
     },
   };
