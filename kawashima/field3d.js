@@ -154,6 +154,11 @@ function makeTags(debugGroup) {
     tex.colorSpace = THREE.SRGBColorSpace; tex.magFilter = THREE.NearestFilter; tex.anisotropy = 4;
     const face = new THREE.Mesh(new THREE.PlaneGeometry(s * 10 / 8, s * 10 / 8), new THREE.MeshBasicMaterial({ map: tex, color: 0xe8e8e8 }));
     face.position.z = .002; gt.add(face);
+    if (W.TAGS[id].floor) { // a sheet lying on the floor: just the paper and a label above it
+      const lab = label('ID ' + id, '#e8eefc', .13); lab.position.set(0, 0, .3); gt.add(lab);
+      const ax = new THREE.AxesHelper(s * 1.2); ax.matrixAutoUpdate = false; ax.matrix.copy(m4(tp)); debugGroup.add(ax);
+      g.add(gt); continue;
+    }
     const board = new THREE.Mesh(new THREE.BoxGeometry(s * 1.6, s * 1.6, .015), boardMat); board.position.z = -.007;
     const edge = new THREE.Mesh(new THREE.PlaneGeometry(s * 1.6 + .03, s * 1.6 + .03), new THREE.MeshBasicMaterial({ color: 0xbfd4ff, transparent: true, opacity: .35, side: THREE.DoubleSide }));
     edge.position.z = -.016;

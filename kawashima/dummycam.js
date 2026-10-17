@@ -49,7 +49,7 @@ export function lookAtPose(pos, target, rollDeg = 0) {
 }
 // Deliberately not app.js's default slider camera (0, 1.4, 4, pitch -8, fov 50). Placed so today's side tags (x = +-2)
 // are seen at <= 60° from their normal and >= 40 px tall at 720p: from z = 4.2 they are ~68° off and too thin to decode.
-export const DEFAULT_POSE = lookAtPose([0.3, 1.7, 2.9], [0, 1.0, -0.6], 2.5);
+export const DEFAULT_POSE = lookAtPose([0.2, 1.75, 3.4], [0, 0.6, 0], 1.5); // a little off the recommended spot (3.5 m, 1.7 m), as a real tripod would be
 
 function canvasTex(w, h, draw, repeat) {
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
@@ -190,6 +190,7 @@ export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = D
     const up = tp.R[4] > 0 ? tp : W.pose(W.mul3(tp.R, [-1, 0, 0, 0, -1, 0, 0, 0, 1]), tp.t);
     g.matrixAutoUpdate = gu.matrixAutoUpdate = false; g.matrix.copy(m4(tp)); gu.matrix.copy(m4(up)); scene.add(g, gu);
     const face = new THREE.Mesh(new THREE.PlaneGeometry(s * 10 / 8, s * 10 / 8), new THREE.MeshStandardMaterial({ map: tagTex(id), roughness: .9 }));
+    if (W.TAGS[id].floor) { face.position.z = .002; g.add(face); continue; } // a sheet lying on the floor
     const board = new THREE.Mesh(new THREE.BoxGeometry(s * 1.5, s * 1.5, .012), new THREE.MeshStandardMaterial({ color: 0xeeeeea, roughness: .9 }));
     board.position.z = -.0065; board.castShadow = true;
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(.02, .02, W.CHEST_H + .3, 12), new THREE.MeshStandardMaterial({ color: 0x9aa0a8, metalness: .6, roughness: .4 }));

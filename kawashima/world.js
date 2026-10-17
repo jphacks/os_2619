@@ -20,10 +20,14 @@ export const START = { A: { pos: [-1.2, 0, 0], yaw: 0 }, B: { pos: [1.2, 0, 0], 
 export const PHONE_TAG_SIZE = 0.1;   // the size typed into the phones (m); every tags[].p is scaled by this
 export const STICK = { len: 0.8, axis: [1, 0, 0], up: [0, 0, 1], hand: { fwd: 0.3, right: 0.2, up: -0.3 } };
 
-// Tag layouts. Pick one with ?layout= (browser) or LAYOUT= (node); default 'today'.
+// Tag layouts. Pick one with ?layout= (browser) or LAYOUT= (node); default 'floor'.
 // - full:  fixed tags on poles at chest height facing the arena centre: corners 0-3, plus 4 / 5 in the middle of the
 //          sides behind B / A so each player sees one straight ahead from the start mark. Chest tags 10 (A), 11 (B).
 // - today: what was printed on 10/17 (AprilTag Print Studio, 200 mm black square): only ids 0 and 1, behind B / A.
+// - floor: the same two sheets lying face up on the floor (standing them up was impractical), in front of the start
+//          marks on the camera side so the third-person camera sees them less obliquely. Only needed while scanning.
+// floor: lying face up, tag z = world up. The sheet's top edge points away from the camera (-z), so seen from the
+//        camera the page reads upright (the caption under the tag is the edge nearest the camera).
 // flip: printed in the official apriltag-imgs orientation, which OpenCV reads rotated 180° about the tag normal
 //       (our print/make_tags.py PDFs are in OpenCV's orientation and need no flip). Mount sheets upright as printed.
 const H = ARENA.half;
@@ -44,10 +48,16 @@ const LAYOUTS = {
     10: { size: 0.18, player: 'A' }, // not printed yet: kept so the dummy room and the simulator still use them
     11: { size: 0.18, player: 'B' },
   },
+  floor: {
+    0: { size: 0.2, pos: [1.5, 0, 1], floor: true, flip: true },
+    1: { size: 0.2, pos: [-1.5, 0, 1], floor: true, flip: true },
+    10: { size: 0.18, player: 'A' },
+    11: { size: 0.18, player: 'B' },
+  },
 };
 const pick = (typeof location !== 'undefined' && new URLSearchParams(location.search).get('layout'))
-  || (typeof process !== 'undefined' && process.env?.LAYOUT) || 'today';
-export const LAYOUT = LAYOUTS[pick] ? pick : 'today';
+  || (typeof process !== 'undefined' && process.env?.LAYOUT) || 'floor';
+export const LAYOUT = LAYOUTS[pick] ? pick : 'floor';
 export const TAGS = LAYOUTS[LAYOUT];
 export const CORNER_IDS = Object.keys(TAGS).map(Number).filter(id => TAGS[id].pos); // every fixed tag (name kept for the modules that use it)
 export const PLAYER_TAG = { A: 10, B: 11 };
@@ -96,6 +106,7 @@ export const arcam_T_cv = pose(CV_FROM_AR);
 export function worldTagPose(id, body) {
   const tag = TAGS[id];
   if (!tag.pos) return chestTagPose(body);
+  if (tag.floor) return pose(tag.flip ? fromCols([-1, 0, 0], [0, 0, 1], [0, 1, 0]) : fromCols([1, 0, 0], [0, 0, -1], [0, 1, 0]), tag.pos);
   const n = Math.hypot(tag.pos[0], tag.pos[2]), z = [-tag.pos[0] / n, 0, -tag.pos[2] / n], y = [0, 1, 0];
   const x = [z[2], 0, -z[0]]; // x = y × z
   return tag.flip ? pose(fromCols(x.map(v => -v), [0, -1, 0], z), tag.pos) : pose(fromCols(x, y, z), tag.pos);

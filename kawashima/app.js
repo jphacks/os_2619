@@ -15,8 +15,15 @@ const params = new URLSearchParams(location.search);
 const now = () => performance.now() / 1000;
 
 // ---- settings (kept in localStorage) ----
-// where the iPhone should go (NOTES.md): 3.5 m in front of the centre (both tags in a ~70° wide picture), 1.7 m up, tilted down to see the floor marks
-const GUIDE_CAM = { x: 0, y: 1.7, z: 3.5, yaw: 0, pitch: -12, roll: 0, fov: 45 };
+// where the iPhone should go (NOTES.md): 3.5 m in front of the centre (whole arena in a ~70° wide picture), 1.7 m up or
+// higher, tilted down to see the floor tags 2.5 m away as well as the players' heads
+const GUIDE_CAM = { x: 0, y: 1.7, z: 3.5, yaw: 0, pitch: -16, roll: 0, fov: 45 };
+const SIDE = { left: '左', right: '右' };
+function tagPlace(id) { // where a fixed tag goes, in words
+  const [x, y, z] = W.TAGS[id].pos, lr = `中心から${x < 0 ? '左' : '右'}へ${Math.abs(x)}m`;
+  return W.TAGS[id].floor ? `${lr}${z ? `・${z > 0 ? '手前' : '奥'}へ${Math.abs(z)}m` : ''}の床`
+    : `${x < 0 ? '左' : '右'}端（${lr}）・中心の高さ ${y}m`;
+}
 const DEFAULTS = {
   cam: { ...GUIDE_CAM }, // manual camera, fov = vertical degrees
   tagCam: null,     // result of calibrateCamera, used when camMode === 'tags'
@@ -92,9 +99,11 @@ for (const id of W.CORNER_IDS) {
   const p = W.worldTagPose(id), size = W.TAGS[id].size;
   const tag = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
   tag.matrixAutoUpdate = false; tag.matrix.copy(toMat(p));
+  world3d.add(tag);
+  if (W.TAGS[id].floor) continue;
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(.02, .02, p.t[1]), new THREE.MeshBasicMaterial({ color: 0x777777 }));
   pole.position.set(p.t[0], p.t[1] / 2, p.t[2]);
-  world3d.add(tag, pole);
+  world3d.add(pole);
 }
 const camHelper = new THREE.CameraHelper(camera); world3d.add(camHelper);
 
@@ -369,14 +378,21 @@ function strip(a, b, color, w = .05) { // flat band on the floor from a to b
     const frame = new THREE.Line(new THREE.BufferGeometry().setFromPoints(sq), onTop(new THREE.LineBasicMaterial({ color: 0x3ddc84 })));
     const fill = new THREE.Mesh(new THREE.PlaneGeometry(s, s), onTop(new THREE.MeshBasicMaterial({ color: 0x3ddc84, opacity: .25, side: THREE.DoubleSide })));
     fill.matrixAutoUpdate = false; fill.matrix.copy(M);
+    frame.renderOrder = fill.renderOrder = 11;
+    guide.add(frame, fill);
+    if (W.TAGS[id].floor) { // lying on the floor: the frame is the spot, the label floats above it
+      const lb = label(`ID ${id} をここの床に\n文字の行を手前（カメラ側）に`, '#9ff0c0', .085);
+      lb.position.set(p.t[0], .35, p.t[2]); guide.add(lb);
+      continue;
+    }
     const pole = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V(p.t[0], 0, p.t[2]), V(p.t[0], p.t[1] - h, p.t[2])]), onTop(new THREE.LineDashedMaterial({ color: 0x3ddc84, dashSize: .08, gapSize: .06 })));
     pole.computeLineDistances();
     const side = p.t[0] < 0 ? '左' : '右', face = p.t[0] < 0 ? '右' : '左';
     const lb = label(`ID ${id} をここに\n${side}端・中心の高さ ${p.t[1]}m・${face}向き`, '#9ff0c0', .085);
     lb.position.set(p.t[0] * .72, p.t[1] - h - .2, p.t[2]);
     const foot = strip(V(p.t[0] - .15, 0, p.t[2]), V(p.t[0] + .15, 0, p.t[2]), 0x3ddc84, .3);
-    frame.renderOrder = fill.renderOrder = pole.renderOrder = 11;
-    guide.add(frame, fill, pole, foot, lb);
+    pole.renderOrder = 11;
+    guide.add(pole, foot, lb);
   }
 }
 // live check of the tags while setting up: which ids the iPhone sees, and on which side of the picture
@@ -416,20 +432,19 @@ function drawGuide2d(show) {
     guideCtx.fillText(`ID ${d.id} 検出`, x * k, Math.min(...d.corners.map(c => c[1])) * k - 8 * devicePixelRatio);
   }
 }
-const SIDE = { left: '左', right: '右' };
 let guideTextAt = 0;
 function updateGuideText() {
   if (now() - guideTextAt < .4) return; guideTextAt = now();
   const tc = cfg.camMode === 'tags' && cfg.tagCam, checks = tagChecks();
   const row = c => {
-    const where = `${SIDE[c.want]}端（中心から${SIDE[c.want]}へ${W.ARENA.half}m）`;
+    const where = tagPlace(c.id);
     const st = !c.seen ? '<b class="ng">見えていない</b>' : c.side !== c.want ? `<b class="warn">画面の${SIDE[c.side]}に見えている：左右が逆かも</b>` : c.px < 14 ? '<b class="warn">小さすぎる：iPhoneを近づける</b>' : '<b class="ok">OK</b>';
-    return `<li>ID ${c.id}：${where}・中心の高さ ${W.TAGS[c.id].pos[1]}m　${st}</li>`;
+    return `<li>ID ${c.id}：${where}　${st}</li>`;
   };
   const camLine = tc ? `合わせ済み：iPhone は中心から手前 ${tc.pose.t[2].toFixed(2)}m、横 ${tc.pose.t[0].toFixed(2)}m、高さ ${tc.pose.t[1].toFixed(2)}m にあると計算（目安は ${GUIDE_CAM.z}m・0m・${GUIDE_CAM.y}m）`
     : '緑の枠に実物のタグが重なるように、iPhone の位置と向きを動かす';
   guideEl.innerHTML = `<h4>設置ガイド（準備中）</h4><ol>${checks.map(row).join('')}
-    <li>iPhone：中心から手前へ ${GUIDE_CAM.z}m、高さ ${GUIDE_CAM.y}m・横向きで固定</li></ol>
+    <li>iPhone：中心から手前へ ${GUIDE_CAM.z}m、高さ ${GUIDE_CAM.y}m 以上（高いほど床のタグが見やすい）・横向きで少し見下ろす</li></ol>
     <p>${camLine}</p>${match.ready ? '<p><b class="ok">スキャン完了：試合を始められます</b></p>' : '<p class="dim">全部 OK になったら、人がいない状態で「タグでカメラ合わせ」(K) でスキャンする。スキャンが済むと試合を始められる</p>'}`;
 }
 
