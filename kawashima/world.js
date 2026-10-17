@@ -20,17 +20,20 @@ export const START = { A: { pos: [-1.2, 0, 0], yaw: 0 }, B: { pos: [1.2, 0, 0], 
 export const PHONE_TAG_SIZE = 0.1;   // the size typed into the phones (m); every tags[].p is scaled by this
 export const STICK = { len: 0.8, axis: [1, 0, 0], up: [0, 0, 1], hand: { fwd: 0.3, right: 0.2, up: -0.3 } };
 
-// Corner tags 0-3 on poles at chest height, facing the arena centre. Chest tags 10 (A) and 11 (B) face forward.
+// Fixed tags on poles at chest height, facing the arena centre: corners 0-3, plus 4 / 5 in the middle of the sides
+// behind B / A, so each player sees one straight ahead from the start mark. Chest tags 10 (A) and 11 (B) face forward.
 const H = ARENA.half;
 export const TAGS = {
   0: { size: 0.25, pos: [-H, CHEST_H, -H] },
   1: { size: 0.25, pos: [H, CHEST_H, -H] },
   2: { size: 0.25, pos: [H, CHEST_H, H] },
   3: { size: 0.25, pos: [-H, CHEST_H, H] },
-  10: { size: 0.12, player: 'A' },
-  11: { size: 0.12, player: 'B' },
+  4: { size: 0.25, pos: [H, CHEST_H, 0] },
+  5: { size: 0.25, pos: [-H, CHEST_H, 0] },
+  10: { size: 0.18, player: 'A' },
+  11: { size: 0.18, player: 'B' },
 };
-export const CORNER_IDS = [0, 1, 2, 3];
+export const CORNER_IDS = [0, 1, 2, 3, 4, 5]; // every fixed tag (name kept for the modules that use it)
 export const PLAYER_TAG = { A: 10, B: 11 };
 export const tagScale = id => (TAGS[id]?.size ?? PHONE_TAG_SIZE) / PHONE_TAG_SIZE;
 
@@ -61,11 +64,11 @@ export const fromRodrigues = r => {
   const [x, y, z] = r.map(v => v / th), c = Math.cos(th), s = Math.sin(th), C = 1 - c;
   return [c + x * x * C, x * y * C - z * s, x * z * C + y * s, y * x * C + z * s, c + y * y * C, y * z * C - x * s, z * x * C - y * s, z * y * C + x * s, c + z * z * C];
 };
-export const toRodrigues = R => {
-  const th = Math.acos(Math.max(-1, Math.min(1, (R[0] + R[4] + R[8] - 1) / 2)));
-  if (th < 1e-9) return [0, 0, 0];
-  const k = th / (2 * Math.sin(th));
-  return [(R[7] - R[5]) * k, (R[2] - R[6]) * k, (R[3] - R[1]) * k];
+export const toRodrigues = R => { // via the quaternion: stable near 180° (a tag facing the camera sits there)
+  const [w, x, y, z] = toQuat(R), n = Math.hypot(x, y, z);
+  if (n < 1e-12) return [0, 0, 0];
+  const k = 2 * Math.atan2(n, w) / n;
+  return [x * k, y * k, z * k];
 };
 
 // Fixed frame changes
