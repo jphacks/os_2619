@@ -207,6 +207,14 @@ scenario('棒を背中側で止めた振りでは撃たず、体の前で止め�
   S.put('A', -1.2, 0); S.run(.1); S.swing('A'); S.run(1.5);
   eq(S.A.shots, 1, '前で止めたときの発射数'); eq(S.B.hp, 80, '中が当たったあとの B の HP');
 });
+scenario('棒が水平より下で回しても溜まらず、上なら溜まる（下で回し続けると溜めが切れる）', () => {
+  const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); // the real rule: a charge needs the circling to go on
+  const aim = y => S.g.ingest({ type: 'truth', slot: 'A', chest: [-1.2, 1.3, 0], yaw: 0, base: [-1, 1.0, 0], dir: [Math.sqrt(1 - y * y), y, 0] });
+  aim(-.3); S.run(.1); S.charge('A'); S.run(.2); eq(S.A.charging, false, '下向きで回したときの溜め');
+  aim(.3); S.run(.1); S.charge('A'); S.run(.2); eq(S.A.charging, true, '上向きで回したときの溜め');
+  aim(-.3); for (let i = 0; i < 4; i++) { S.charge('A'); S.run(.5); }
+  eq(S.A.charging, false, '溜め中に下向きで回し続けたあと');
+});
 scenario('ガードと回避のセンサー判定は、ゲームでは何も起きない', () => {
   const S = setup(); S.fight();
   S.g.onSensed({ slot: 'B', name: 'Guard' }); S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'left', speed: 1.5 });

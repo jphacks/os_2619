@@ -213,7 +213,11 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   /** A detector event from actions.js ({ slot, name, dir, power, speed }). Guard / Dodge are not part of the game. */
   function onSensed(ev) {
     const p = players[ev.slot]; if (!p || !canAct()) return;
-    if (ev.name === 'Charge') { p.chargeSeen = now(); startCharge(p); }
+    if (ev.name === 'Charge') { // only while the stick is not below horizontal (its IMU elevation; exactly level only happens in scripted tests);
+      // circling it lower neither starts nor keeps a charge
+      if (p.dir.y < 0) { if (now() - (p.lowLogged ?? -9) > 1) { p.lowLogged = now(); log(p.slot, 'charge', '棒が水平より下なので溜めない'); } return; }
+      p.chargeSeen = now(); startCharge(p);
+    }
     else if (ev.name === 'Swing') { if (inFront(p)) attack(p); else log(p.slot, 'shot', '背中側で止めたので撃たない'); }
   }
   /** A swing only fires when the stick stops in front of the body: tip ahead of the chest along the body's facing

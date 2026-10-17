@@ -21,7 +21,10 @@ const REF_LUFS = -16;
 // what plays what (10/18): every launch (小・中・大) = 1; the hit by tier: 小 = 1, 中 = 2, 大 = 3. fire3 is also fire's aura bed.
 const EL = { fire: { 1: 'fire1', 2: 'fire2', 3: 'fire3', bed: 'fire3' }, thunder: { 1: 'lightning1', 2: 'lightning2', 3: 'lightning3' } };
 const HIT_FILE = { s: 1, m: 2, l: 3 };
-// the 大 hit (3): full until fadeAt, linearly down to silence at end (s)
+// fire's 大 is the exception: fire3 0-0.7 s is the launch, and the hit starts at 0.7 s of fire3. lufs: those parts, measured
+// with their fades (the 0.7 s launch is fire3's soft swell, so it is brought up to the other launches' level)
+const FIRE_BIG = { launchTo: .7, launchLufs: -18.2, hitFrom: .7, hitLufs: -11.6 };
+// the 大 hit (3): full until fadeAt, linearly down to silence at end (s), counted from where the hit starts
 const BIG_HIT = { fadeAt: 3, end: 6 };
 // loop regions [start, end, crossfade] s: the beds ramp in for ~1 s and decay for 10+ s, so only the steady middle loops
 const LOOPS = { charge: [.2, 4.4, .35] };
@@ -109,7 +112,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     v.g.gain.cancelScheduledValues(t); v.g.gain.setValueAtTime(v.g.gain.value, t); v.g.gain.linearRampToValueAtTime(0, t + fade);
     try { v.src.stop(t + fade + .005); } catch {}
   }
-  function voice(key, name, { gain = 1, pan = 0, rate = 1, dur = 0, rel = .25, vary = true, fade = null } = {}) {
+  function voice(key, name, { gain = 1, pan = 0, rate = 1, dur = 0, rel = .25, vary = true, fade = null, offset = 0 } = {}) {
     const b = buf[name];
     if (!b || ctx.state !== 'running' || muted) return null;
     const t = ctx.currentTime, same = voices.filter(v => v.key === key);
@@ -123,8 +126,8 @@ export function createAudio({ base = 'audio/' } = {}) {
     const peak = gain * norm[name] * (vary ? db(rnd(VAR.db)) : 1);
     p.pan.value = clamp(pan, -1, 1) * PAN_MAX;
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + FADE * .25); // transients survive a 3 ms fade-in
-    src.start(t);
-    const len = b.duration / src.playbackRate.value;
+    src.start(t, offset); // offset: where in the file to begin (s)
+    const len = (b.duration - offset) / src.playbackRate.value;
     if (dur && dur < len) { g.gain.setValueAtTime(peak, t + dur); g.gain.setTargetAtTime(0, t + dur, rel / 4); src.stop(t + dur + rel * 1.5); }
     if (fade && fade[0] < len) { g.gain.setValueAtTime(peak, t + fade[0]); g.gain.linearRampToValueAtTime(0, t + fade[1]); src.stop(t + fade[1] + .01); } // fade: [from, silent at] s
     src.connect(g).connect(p).connect(bus.sfx);
@@ -227,16 +230,21 @@ export function createAudio({ base = 'audio/' } = {}) {
   function hit(element, pan = 0, power = .5, tier = null) {
     const e = EL[element]; if (!e) return;
     const p = clamp(power, 0, 1), t = HIT_FILE[tier] ? tier : p >= 1 ? 'l' : p >= .5 ? 'm' : 's', name = e[HIT_FILE[t]];
-    if (t === 'l') { // 大: the long one, faded out from 3 s to 6 s
-      voice(key('special', element) + 'hit', name, { pan: pan * .5, gain: db(MIX.special + (LUFS[name] - (BIG_LUFS[name] ?? LUFS[name]))), vary: false, fade: [BIG_HIT.fadeAt, BIG_HIT.end] });
+    if (t === 'l') { // 大: the long one, faded out from 3 s to 6 s (fire: from 0.7 s into fire3)
+      const from = element === 'fire' ? FIRE_BIG.hitFrom : 0, lufs = element === 'fire' ? FIRE_BIG.hitLufs : BIG_LUFS[name] ?? LUFS[name];
+      voice(key('special', element) + 'hit', name, { pan: pan * .5, gain: db(MIX.special + LUFS[name] - lufs), vary: false, fade: [BIG_HIT.fadeAt, BIG_HIT.end], offset: from });
       duck(DUCK.special); return;
     }
     // 中 (2): fire2 is a 4 s roar, so a hit takes its head and lets it go; 小 (1): the short shot sound, whole
     voice(key('hit', element), name, { pan, gain: db(MIX.hit - MIX.hitSpan * (1 - p)), ...(t === 'm' ? { dur: .5 + .7 * p, rel: .35 } : {}) });
     if (p >= .5) duck(DUCK.hit);
   }
-  /** 大 launch: the same launch sound (1) as 中 (power .6 = game.js TIER.m). The 大 sound is the hit (3). */
-  function special(element, pan = 0) { shot(element, pan, .6); }
+  /** 大 launch: the same launch sound (1) as 中 (power .6 = game.js TIER.m); fire: fire3's first 0.7 s instead. The 大 sound is the hit (3). */
+  function special(element, pan = 0) {
+    if (element !== 'fire') return shot(element, pan, .6);
+    const L = FIRE_BIG.launchTo;
+    voice(key('special', element), EL.fire[3], { pan, gain: db(MIX.shot + LUFS.fire3 - FIRE_BIG.launchLufs), vary: false, fade: [L - .04, L] }); // 40 ms fade at the cut: no click
+  }
   function play(name, { gain = 1, pan = 0, rate = 1 } = {}) { return !!voice(key('play', name), name, { gain, pan, rate, vary: false }); }
 
   function setVolume(b, v) {
