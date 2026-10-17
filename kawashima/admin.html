@@ -249,7 +249,8 @@
           <h3>タグの置き方</h3>
           <div class="seg"><button data-mount="stand">立てる（縦に垂直）</button><button data-mount="floor">床に置く</button></div>
           <label class="f" id="tagHeightRow"><span>タグの中心の高さ（m）</span><input id="tagHeight" type="number" min="0.1" max="3" step="0.05" value="1.0"><span></span></label>
-          <p class="note" id="mountNote"></p></div>
+          <p class="note" id="mountNote"></p>
+          <div class="row"><span class="note" id="fovNote"></span><button id="forgetFov">覚えた画角を消す</button></div></div>
         <label class="f"><span>合わせ方</span><select id="camMode"><option value="tags">タグから（tags）</option><option value="manual">手動（manual）</option></select><span></span></label>
         <div class="row"><button id="calibrate">タグでカメラ合わせ<kbd>K</kbd></button><button id="guideCam">ガイドを推奨位置から表示</button></div>
         <div class="msg" id="tagCheck"></div>
@@ -350,6 +351,7 @@ $('#swap').onclick = () => send({ cmd: 'swap' });
 $$('[data-tagmode]').forEach(b => b.onclick = () => send({ cmd: 'tagMode', value: +b.dataset.tagmode }));
 $$('[data-mount]').forEach(b => b.onclick = () => send({ cmd: 'tagMount', value: b.dataset.mount }));
 $('#tagHeight').onchange = e => send({ cmd: 'tagHeight', value: +e.target.value });
+$('#forgetFov').onclick = () => send({ cmd: 'forgetFov' });
 $('#forceReady').onclick = () => send({ cmd: 'forceReady' });
 $('#pause').onclick = () => send({ cmd: 'pause' });
 $('#reset').onclick = () => send({ cmd: 'reset' });
@@ -503,6 +505,9 @@ function render() {
   if (document.activeElement !== $('#tagHeight') && s.tagHeight != null) $('#tagHeight').value = s.tagHeight;
   const mn = s.tagMount === 'stand' ? 'タグは縦に垂直に立て、どれも中心が同じ高さになるように貼ります。その高さを上に入れます。向きと位置は自由です（紙の上下もどちらでも可）。' : 'タグは表を上にして床に置きます。向きと位置は自由です。';
   if ($('#mountNote').textContent !== mn) $('#mountNote').textContent = mn;
+  const fn = s.knownFov ? `カメラの画角: ${s.knownFov.toFixed(1)}° を覚えている（立てたタグのスキャンで使う。カメラやズームを変えたら消す）` : 'カメラの画角: まだ測っていない（床置きか、まっすぐ立てた状態でスキャンすると覚える）';
+  if ($('#fovNote').textContent !== fn) $('#fovNote').textContent = fn;
+  $('#forgetFov').style.display = s.knownFov ? '' : 'none';
   show('#tagModes', s.layout === 'map4');
   const pb = s.phoneBodies ?? {};
   setHtml('#poseInfo', lines([

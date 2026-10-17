@@ -36,6 +36,10 @@ const FOV_SIGMA_MAX2 = 3.5;
 const FOV_PRIOR_SIGMA = 15, PRIOR_PX = .3; // deg, px
 // standing sheets: equal-height prior, 1 px of misfit per HEIGHT_W⁻¹ m off the common height (σ ≈ 2 cm at 0.3 px noise)
 const HEIGHT_W = PRIOR_PX / .02, HEIGHT_SPREAD_MAX = .15; // m
+// each sheet's lean is pulled toward the common up with sigma LEAN_SIGMA: weak enough that a real 5-10° lean is mostly
+// kept (one sheet's image fixes its own tilt to ~3-4° at 0.3 px noise), strong enough to define up with two sheets and
+// to keep noise from leaning every sheet (tests: 15° lost ~2° more fov than 8°); warn above LEAN_WARN
+const LEAN_SIGMA = 8, LEAN_WARN = 10; // deg
 const DEG = Math.PI / 180;
 const fToFov = (f, h) => 2 * Math.atan(h / 2 / f) / DEG;
 const fovToF = (fov, h) => h / 2 / Math.tan(fov * DEG / 2);
@@ -153,9 +157,16 @@ function initAt(f, tags, g) {
 // spin k turns the tag frame k·90° about its normal: x_k = cos(kπ/2) x + sin(kπ/2) y, y_k = -sin(kπ/2) x + cos(kπ/2) y.
 // A sheet's up is +y_tag (k 0), +x_tag (k 1), -y_tag (k 2) or -x_tag (k 3).
 const SPIN_CS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
-function standCorners(h, k, [x, y, z, yaw]) {
+const SPIN_UP = [[0, 1, 0], [1, 0, 0], [0, -1, 0], [-1, 0, 0]]; // up in the tag frame for each spin
+// Lean (pose numbers 5 and 6, when present): a rotation vector [tx, 0, tz] in the frame applied after the upright
+// pose, about the sheet centre (real sheets lean a few degrees on their stands).
+function standRot(k, [, , , yaw, tx = 0, tz = 0]) { // sheet axes in the frame: [x_k, y_k, normal], leaned
   const c = Math.cos(yaw), s = Math.sin(yaw), [ck, sk] = SPIN_CS[k];
-  const xb = [c, 0, -s], xk = [ck * xb[0], sk, ck * xb[2]], yk = [-sk * xb[0], ck, -sk * xb[2]];
+  const xb = [c, 0, -s], R = W.fromCols([ck * xb[0], sk, ck * xb[2]], [-sk * xb[0], ck, -sk * xb[2]], [s, 0, c]);
+  return tx || tz ? W.mul3(W.fromRodrigues([tx, 0, tz]), R) : R;
+}
+function standCorners(h, k, q) {
+  const R = standRot(k, q), [x, y, z] = q, xk = col(R, 0), yk = col(R, 1);
   return OBJ.map(([ox, oy]) => [x + h * (ox * xk[0] + oy * yk[0]), y + h * (ox * xk[1] + oy * yk[1]), z + h * (ox * xk[2] + oy * yk[2])]);
 }
 // Initial poses at focal f: both IPPE poses per sheet, each sheet's up = its tag axis closest to image-up (spin),
@@ -195,21 +206,23 @@ function initStand(f, tags, g) {
 // LM over [log f?, rotation increment 3, translation 3, the pose (init.k numbers) of every tag but g]. Numeric
 // central Jacobian.
 function refine(init, f0, tags, g, fitF) {
-  const o = fitF ? 1 : 0, K = init.k, free = tags.map((_, i) => i).filter(i => i !== g);
+  // the gauge sheet's first gk pose numbers are fixed at 0 (its position and yaw define the frame); the rest (a
+  // standing sheet's lean) stay free, parked after the other sheets' poses
+  const o = fitF ? 1 : 0, K = init.k, gk = init.gk ?? K, free = tags.map((_, i) => i).filter(i => i !== g), gb = o + 6 + K * free.length;
   const unpack = p => {
     const f = fitF ? f0 * Math.exp(p[0]) : f0, R = W.mul3(W.fromRodrigues(p.slice(o, o + 3)), init.R);
     const t = init.t.map((v, i) => v + p[o + 3 + i]), poses = init.poses.map(q => [...q]);
     free.forEach((i, k) => { poses[i] = p.slice(o + 6 + K * k, o + 6 + K * (k + 1)); });
-    poses[g] = Array(K).fill(0);
+    poses[g] = [...Array(gk).fill(0), ...p.slice(gb, gb + K - gk)];
     return { f, R, t, poses };
   };
   const resid = p => { // reprojection, then the optional prior's residuals (init.prior(poses), already in px units)
     const m = unpack(p), r = reproj(m.R, m.t, m.f, tags, m.poses, init.cornersOf);
     return r && init.prior ? r.concat(init.prior(m.poses, m.f)) : r;
   };
-  const nR = 8 * tags.length, done = (p, c, JtJ, r) => { const rr = r.slice(0, nR); return { ...unpack(p), cost: rr.reduce((s, v) => s + v * v, 0), total: c, JtJ, n: nR }; };
+  const nR = 8 * tags.length, done = (p, c, JtJ, r) => { if (!r) return { ...unpack(p), cost: Infinity, total: Infinity, JtJ, n: nR }; const rr = r.slice(0, nR); return { ...unpack(p), cost: rr.reduce((s, v) => s + v * v, 0), total: c, JtJ, n: nR }; };
   const cost = r => r ? r.reduce((s, v) => s + v * v, 0) : Infinity;
-  let p = [...(fitF ? [0] : []), 0, 0, 0, 0, 0, 0, ...free.flatMap(i => init.poses[i])];
+  let p = [...(fitF ? [0] : []), 0, 0, 0, 0, 0, 0, ...free.flatMap(i => init.poses[i]), ...init.poses[g].slice(gk)];
   const eps = p.map((_, k) => k < o ? 1e-6 : k < o + 3 ? 1e-7 : 1e-7);
   let r = resid(p), c = cost(r), lam = 1e-3, JtJ = null;
   for (let it = 0; it < 60 && isFinite(c); it++) {
@@ -236,8 +249,10 @@ function refine(init, f0, tags, g, fitF) {
 }
 
 /**
- * solveFieldMap(dets, width, height, { fovYGuess, mode, mount, tagHeight }) -> null or { cam, tags, poly, fovY, reprojErrPx, ids, warnings }.
+ * solveFieldMap(dets, width, height, { fovYGuess, fovY, mode, mount, tagHeight }) -> null or { cam, tags, poly, fovY, reprojErrPx, ids, warnings }.
  * dets: [{ id, corners: [[u,v] x4] }] in OpenCV corner order (detectTags / calibrateCamera).
+ * fovY: the vertical fov when already known (e.g. from an earlier floor scan with the camera untouched): no focal fit.
+ *   Standing sheets that lean need it most (their focal is weak, see below).
  * mode 4 (default): needs >= 3 of ids 0-3, the sheets are the field's corners.
  * mode 2: uses only ids 0 and 1 (both needed), which mark the A end (further left in the picture) and the B end:
  *   origin at their midpoint, +x from A's sheet to B's; poly = a rectangle whose x = ±L/2 edges pass through the
@@ -250,11 +265,16 @@ function refine(init, f0, tags, g, fitF) {
  *   stand. The floor is not seen: every sheet centre is assumed tagHeight above it (y = 0 at their mean height minus
  *   tagHeight; heightSpread reported, warned over 0.15 m). tags: { id: { pos: [x, y, z] (sheet centre), yaw (0 =
  *   facing +z), spin (0-3, tag frame turned spin·90° about its normal), stand: true } } (worldTagPose stand
- *   convention). poly / A side / 2-sheet rectangle as for the floor, from the sheets' floor footprints (x, z).
+ *   convention), plus R (world rotation of the tag frame as measured, lean included: worldTagPose uses it), tilt
+ *   (deg from world up) and tiltDir ('前' / '後': top toward / away from where it faces, '右' / '左' as seen from in front
+ *   of it; '' under 0.5°); warned over LEAN_WARN. World up = the sheets' ups averaged (see LEAN_SIGMA): a lean shared
+ *   by every sheet looks the same as a tilted floor from one camera and goes into the floor instead.
+ *   poly / A side / 2-sheet rectangle as for the floor, from the sheets' floor footprints (x, z).
  * Either result goes straight to setField({ poly, tags }).
  * poly: the tag centres (mode 4) [[x, z] x N] counter-clockwise seen from above (y toward the viewer): +x, then -z, -x, +z.
  */
-export function solveFieldMap(dets, width, height, { fovYGuess = 45, mode = 4, mount = 'floor', tagHeight = 1.0 } = {}) {
+export function solveFieldMap(dets, width, height, { fovYGuess = 45, fovY: fovKnown = null, mode = 4, mount = 'floor', tagHeight = 1.0 } = {}) {
+  const fitF = !fovKnown;
   const warnings = [], seen = new Set(), use = mode === 2 ? PAIR_IDS : FIELD_IDS, stand = mount === 'stand';
   const ds = dets.filter(d => use.includes(d.id) && W.TAGS[d.id]?.size && !seen.has(d.id) && seen.add(d.id));
   if (ds.length < (mode === 2 ? 2 : 3)) return null;
@@ -270,17 +290,17 @@ export function solveFieldMap(dets, width, height, { fovYGuess = 45, mode = 4, m
 
   // focal sweep (log-spaced fov 12..100°), then LM from the best local minima of the sweep score
   const sweep = [];
-  for (let fov = 12; fov <= 100; fov *= 1.04) {
+  for (let fov = fovKnown || 12; fov <= (fovKnown || 100); fov *= 1.04) {
     const f = fovToF(fov, height), s = initFn(f, tags, g);
     if (s) sweep.push({ f, inits: s, cost: Math.min(...s.map(q => q.cost)) });
   }
   if (!sweep.length) return null;
   const minima = sweep.filter((s, i) => (!sweep[i - 1] || s.cost <= sweep[i - 1].cost) && (!sweep[i + 1] || s.cost <= sweep[i + 1].cost))
     .sort((a, b) => a.cost - b.cost).slice(0, 3);
-  const fitAll = (cands, fitF) => cands.map(({ f, s }) => ({ ...refine(s, f, tags, g, fitF), spread: s.spread, spins: s.spins, cornersOf: s.cornersOf }))
+  const fitAll = (cands, fitF) => cands.map(({ f, s }) => ({ ...refine(s, f, tags, g, fitF), spread: s.spread, spins: s.spins, cornersOf: s.cornersOf, k: s.k, gk: s.gk }))
     .sort((a, b) => a.total - b.total);
   const fitBest = (cands, fitF) => fitAll(cands, fitF)[0];
-  const free = fitAll(minima.flatMap(m => m.inits.map(s => ({ f: m.f, s }))), true);
+  const free = fitAll(minima.flatMap(m => m.inits.map(s => ({ f: m.f, s }))), fitF);
   let best = free[0];
   // standing: one sheet alone fixes its depth only through its own size (∝ f), so free sheets barely constrain the
   // focal, and unlike the floor a wrong focal distorts the layout badly (a hard 45° fallback put sheets 0.3-2 m off
@@ -291,12 +311,14 @@ export function solveFieldMap(dets, width, height, { fovYGuess = 45, mode = 4, m
   const freeSpread = stand ? spreadOf(heights(best)) : 0, usePrior = stand && freeSpread < HEIGHT_SPREAD_MAX;
   if (stand) {
     const fg = fovToF(fovYGuess, height), sLn = FOV_PRIOR_SIGMA * DEG / Math.sin(fovYGuess * DEG); // σ of ln f
+    const lw = PRIOR_PX / (LEAN_SIGMA * DEG);
     const prior = (ps, ff) => {
       const m = ps.reduce((s, q) => s + q[1], 0) / ps.length;
-      return [...(usePrior ? ps.map(q => (q[1] - m) * HEIGHT_W) : []), Math.log(ff / fg) / sLn * PRIOR_PX];
+      return [...(usePrior ? ps.map(q => (q[1] - m) * HEIGHT_W) : []), ...ps.flatMap(q => q.length > 4 ? [q[4] * lw, q[5] * lw] : []), Math.log(ff / fg) / sLn * PRIOR_PX];
     };
-    // from every free fit, not just the best: under the priors another basin may win
-    best = fitBest(free.map(b => ({ f: b.f, s: { R: b.R, t: b.t, poses: b.poses, cornersOf: b.cornersOf, spins: b.spins, k: 4, spread: b.spread, prior } })), true);
+    // still upright, from the best few free fits: under the priors another basin may win
+    const upright = b => ({ R: b.R, t: b.t, poses: b.poses, cornersOf: b.cornersOf, spins: b.spins, k: 4, spread: b.spread, prior });
+    best = fitBest(free.slice(0, 3).map(b => ({ f: b.f, s: upright(b) })), fitF);
     // a small sheet seen near face-on has two yaws (IPPE's turn left / right) that fit almost equally, and LM cannot
     // cross between them: try each sheet mirrored about its line of sight, keep what lowers the total cost
     for (let i = 0; i < tags.length; i++) {
@@ -308,9 +330,20 @@ export function solveFieldMap(dets, width, height, { fovYGuess = 45, mode = 4, m
         for (const q of poses) { const [x, z] = [q[0], q[2]]; q[0] = c * x - sn * z; q[2] = sn * x + c * z; q[3] -= a; }
         R = W.mul3(b.R, [c, 0, sn, 0, 1, 0, -sn, 0, c]);
       }
-      const r = fitBest([{ f: b.f, s: { R, t: b.t, poses, cornersOf: b.cornersOf, spins: b.spins, k: 4, spread: b.spread, prior } }], true);
+      const r = fitBest([{ f: b.f, s: { ...upright(b), R, poses } }], fitF);
       if (r.total < b.total) best = r;
     }
+    // then a lean per sheet. The frame's up becomes where the lean prior balances: the sheets' ups averaged, each
+    // weighted by how firmly its own image fixes it. The focal of standing sheets comes mostly from their verticals
+    // agreeing (a common vanishing point), which free leans take away: so first with the focal held at the upright
+    // fit's (S), then with it free (J), and J is kept only when it fits clearly better (> 3 sigma for the one extra
+    // number): real leans bias the upright focal, noise alone should not move it.
+    const A = best, leaned = { ...upright(A), k: 6, gk: 4, poses: A.poses.map(q => [...q, 0, 0]) };
+    if (fitF) {
+      const S = { ...fitBest([{ f: A.f, s: leaned }], false), JtJ: A.JtJ }, J = fitBest([{ f: A.f, s: { ...leaned, R: S.R, t: S.t, poses: S.poses } }], true);
+      const s2 = Math.max(PRIOR_PX ** 2, S.cost / S.n);
+      best = S.total - J.total > 9 * s2 ? J : S;
+    } else best = fitBest([{ f: A.f, s: leaned }], false);
   }
 
   // focal pinned down? 1-sigma of the fov from the LM normal matrix (corner noise >= 0.2 px)
@@ -319,7 +352,8 @@ export function solveFieldMap(dets, width, height, { fovYGuess = 45, mode = 4, m
   const sLogF = colF ? Math.sqrt(Math.max(0, colF[0])) * sPx : Infinity;
   let fovSigma = Math.abs(fToFov(best.f * Math.exp(-sLogF), height) - fToFov(best.f, height)), focalFitted = true;
   const fovFit = fToFov(best.f, height);
-  if (stand) { if (fovSigma >= FOV_SIGMA_MAX) warnings.push(`focal only loosely fixed by the standing sheets: fov ${fovFit.toFixed(1)} ± ${fovSigma.toFixed(1)}° (pulled toward fovYGuess ${fovYGuess}°)`); }
+  if (!fitF) { fovSigma = null; focalFitted = false; } // given by the caller
+  else if (stand) { if (fovSigma >= FOV_SIGMA_MAX) warnings.push(`focal only loosely fixed by the standing sheets: fov ${fovFit.toFixed(1)} ± ${fovSigma.toFixed(1)}° (pulled toward fovYGuess ${fovYGuess}°)`); }
   else if (fovSigma >= FOV_SIGMA_MAX && fovSigma < FOV_SIGMA_MAX2 && mode === 2 && fovFit >= 12 && fovFit <= 100)
     warnings.push(`focal only loosely fixed by two sheets: fov ${fovFit.toFixed(1)} ± ${fovSigma.toFixed(1)}°`);
   else if (!(fovSigma < FOV_SIGMA_MAX) || fovFit < 12 || fovFit > 100) {
@@ -369,8 +403,14 @@ export function solveFieldMap(dets, width, height, { fovYGuess = 45, mode = 4, m
   tags.forEach((t, i) => {
     const q = best.poses[i];
     if (stand) {
-      const P = W.apply(world_T_fl, q.slice(0, 3)), n = W.app3(world_T_fl.R, [Math.sin(q[3]), 0, Math.cos(q[3])]);
-      out[t.id] = { pos: P, yaw: Math.atan2(n[0], n[2]), spin: best.spins[i], stand: true };
+      const P = W.apply(world_T_fl, q.slice(0, 3)), Rw = W.mul3(world_T_fl.R, standRot(best.spins[i], q));
+      const n = W.app3(world_T_fl.R, [Math.sin(q[3]), 0, Math.cos(q[3])]), yaw = Math.atan2(n[0], n[2]);
+      // lean: the sheet's up vs world up; direction as seen by someone standing in front of the sheet
+      const up = W.app3(Rw, SPIN_UP[best.spins[i]]), tilt = Math.acos(Math.min(1, up[1])) / DEG;
+      const fwd = up[0] * n[0] + up[2] * n[2], right = up[0] * Math.cos(yaw) - up[2] * Math.sin(yaw);
+      const tiltDir = tilt < .5 ? '' : Math.abs(fwd) > Math.abs(right) ? (fwd > 0 ? '前' : '後') : (right > 0 ? '右' : '左');
+      out[t.id] = { pos: P, yaw, spin: best.spins[i], stand: true, R: Rw, tilt, tiltDir };
+      if (tilt > LEAN_WARN) warnings.push(`ID ${t.id} が ${tilt.toFixed(0)}° 傾いている (${tiltDir})`);
     } else {
       const [x, z, yaw] = q, [X, Z] = toW([x, z]), xw = W.app3(world_T_fl.R, [Math.cos(yaw), 0, -Math.sin(yaw)]);
       out[t.id] = { pos: [X, 0, Z], yaw: Math.atan2(-xw[2], xw[0]) };
@@ -389,12 +429,12 @@ export function solveFieldMap(dets, width, height, { fovYGuess = 45, mode = 4, m
 }
 
 /**
- * scanField(videoOrCanvas, { fovYGuess, mode, mount, tagHeight, frames, intervalMs }) -> Promise of solveFieldMap's result (plus dets) or null.
+ * scanField(videoOrCanvas, { fovYGuess, fovY, mode, mount, tagHeight, frames, intervalMs }) -> Promise of solveFieldMap's result (plus dets) or null.
  * Like calibrateCamera: `frames` frames `intervalMs` apart (tripod), each tag's corners averaged over the frames it
  * fit the pattern well in, so someone walking past a sheet for a moment does not lose it.
  */
 const MAX_MISFIT = .15;
-export async function scanField(videoOrCanvas, { fovYGuess = 45, mode = 4, mount = 'floor', tagHeight = 1.0, frames = 5, intervalMs = 150 } = {}) {
+export async function scanField(videoOrCanvas, { fovYGuess = 45, fovY = null, mode = 4, mount = 'floor', tagHeight = 1.0, frames = 5, intervalMs = 150 } = {}) {
   const acc = {}; let size = null;
   for (let i = 0; i < frames; i++) {
     if (i) await new Promise(r => setTimeout(r, intervalMs));
@@ -409,7 +449,7 @@ export async function scanField(videoOrCanvas, { fovYGuess = 45, mode = 4, mount
     if (m0 > MAX_MISFIT) continue;
     dets.push({ id: +id, corners: [0, 1, 2, 3].map(k => [0, 1].map(a => ok.reduce((s, d) => s + d.corners[k][a], 0) / ok.length)), seen: ok.length, misfit: m0 });
   }
-  const r = solveFieldMap(dets, size[0], size[1], { fovYGuess, mode, mount, tagHeight });
+  const r = solveFieldMap(dets, size[0], size[1], { fovYGuess, fovY, mode, mount, tagHeight });
   return r && { ...r, dets };
 }
 

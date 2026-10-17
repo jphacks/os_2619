@@ -17,6 +17,9 @@ const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
 const norm = v => { const n = Math.hypot(...v); return v.map(x => x / n); };
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const OBJ = [[-1, 1], [1, 1], [1, -1], [-1, -1]];
+const { mul3, tr3, app3 } = W;
+const SPIN_UP = [[0, 1, 0], [1, 0, 0], [0, -1, 0], [-1, 0, 0]];
+const angle = (a, b) => Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]))) / DEG;
 
 // camera at eye looking at target, rolled; returns world_T_cam (cv frame)
 function lookAt(eye, target, roll = 0) {
@@ -258,7 +261,7 @@ test('mode 2 needs both sheets 0 and 1; mode 4 still refuses 2', () => {
 // ---- mount 'stand': sheets taped upright, facing roughly toward the camera ----
 const SPIN_PRINT = { 0: 2, 1: 2, 2: 0, 3: 0 }; // Print Studio sheets (0/1) read upside down by OpenCV, make_tags.py (2/3) upright
 function sceneStand({ mode = 4, across = uni(1.5, 6), base = uni(.8, 1.5), hJit = .02, height = uni(.8, 2.5), back = uni(2, 6), fov = uni(25, 75),
-  noise = .3, minPx = 6, spins = SPIN_PRINT, face = 70, wall = false } = {}) {
+  noise = .3, minPx = 6, spins = SPIN_PRINT, face = 70, wall = false, lean = null } = {}) {
   const depth = mode === 2 ? across * uni(-.1, .1) : across * uni(.5, 1.1), tags = {}, ids = mode === 2 ? [0, 1] : [0, 1, 2, 3];
   const corner = mode === 2 ? [[1, 0], [-1, 0]] : [[1, 1], [-1, 1], [-1, -1], [1, -1]];
   const perm = [...ids].sort(() => rand() - .5);
@@ -268,7 +271,11 @@ function sceneStand({ mode = 4, across = uni(1.5, 6), base = uni(.8, 1.5), hJit 
     const pos = wall ? [sx * across / 2 + sz * across / 6, base + uni(-hJit, hJit), 0] // one wall facing the camera, in a row
       : [sx * across / 2 + uni(-.1, .1) * across, base + uni(-hJit, hJit), sz * (mode === 2 ? depth : depth / 2) + uni(-.1, .1) * across];
     const toCam = Math.atan2(eye[0] - pos[0], eye[2] - pos[2]);
-    tags[id] = { pos, yaw: wall ? 0 : toCam + uni(-face, face) * DEG, spin: typeof spins === 'function' ? spins(id) : spins[id], stand: true };
+    tags[id] = { pos, yaw: wall ? 0 : toCam + uni(-face, face) * DEG, spin: typeof spins === 'function' ? spins(id) : spins[id], stand: true, R: undefined };
+    if (lean) { // lean(yaw) -> rotation vector (horizontal) applied about the sheet centre on top of the upright pose
+      Object.assign(W.TAGS[id], tags[id], { floor: false, flip: false });
+      tags[id].R = mul3(W.fromRodrigues(lean(tags[id].yaw)), W.worldTagPose(id).R);
+    }
   });
   const cam = lookAt(eye, [uni(-.3, .3), base * uni(.3, 1), mode === 2 ? 0 : uni(-.3, .3)], uni(-3, 3) * DEG), f = IMG[1] / 2 / Math.tan(fov * DEG / 2);
   const dets = [];
@@ -370,4 +377,53 @@ test('stand: uneven heights are warned; one wall facing the camera gives no garb
   for (const id of [0, 1, 2, 3]) Object.assign(W.TAGS[id], { floor: true, stand: false });
   const rf = solveFieldMap(sf.dets, ...IMG);
   assert.ok(rf && Object.values(rf.tags).every(t => !t.stand && t.pos[1] === 0));
+});
+
+// ---- standing sheets that lean ----
+const randomLean = (maxDeg = 10) => () => { const th = uni(0, maxDeg) * DEG, ph = uni(0, 2 * Math.PI); return [th * Math.cos(ph), 0, th * Math.sin(ph)]; };
+const backward = deg => yaw => [-deg * DEG * Math.cos(yaw), 0, deg * DEG * Math.sin(yaw)]; // top away from where it faces
+function leanErrors(sc, res) { // compared in the camera frame: no alignment needed
+  const camUp = (camPose, v) => app3(tr3(camPose.R), v);
+  const floorN = angle(camUp(res.cam.pose, [0, 1, 0]), camUp(sc.cam, [0, 1, 0]));
+  let tiltE = 0, upE = 0;
+  for (const id of res.ids) {
+    const t = sc.tags[id], Rt = t.R ?? (Object.assign(W.TAGS[id], t, { floor: false }), W.worldTagPose(id).R);
+    const upT = app3(Rt, SPIN_UP[t.spin]), r = res.tags[id], upR = app3(r.R, SPIN_UP[r.spin]);
+    tiltE = Math.max(tiltE, Math.abs(r.tilt - angle(upT, [0, 1, 0])));
+    upE = Math.max(upE, angle(camUp(res.cam.pose, upR), camUp(sc.cam, upT)));
+  }
+  return { floorN, tiltE, upE };
+}
+
+for (const mode of [4, 2]) test(`stand, ${mode} sheets leaning 0-10° each: leans and floor recovered`, () => {
+  seed = 141 + mode;
+  const E = { pos: [], fov: [], tiltE: [], upE: [], floorN: [], t: [], posK: [], tiltK: [], floorK: [] }; let warned = 0, big = 0, worstRe = 0;
+  for (let n = 0; n < 40; n++) {
+    const sc = needS({ mode, lean: randomLean(10), ...(mode === 2 ? { across: uni(1, 5) } : {}) });
+    const t0 = performance.now(), res = solveS(sc, { mode }); E.t.push(performance.now() - t0);
+    const e = mode === 2 ? { pos: errors2(sc, res).sep, fov: errors2(sc, res).fov } : errors(sc, res), l = leanErrors(sc, res);
+    E.pos.push(e.pos); E.fov.push(e.fov); for (const k of ['tiltE', 'upE', 'floorN']) E[k].push(l[k]);
+    big += res.ids.filter(id => res.tags[id].tilt > 10).length; warned += res.warnings.filter(w => /傾いている/.test(w)).length;
+    worstRe = Math.max(worstRe, worldReproj(sc, res));
+    const rk = solveS(sc, { mode, fovY: sc.fov }), ek = mode === 2 ? errors2(sc, rk).sep : errors(sc, rk).pos, lk = leanErrors(sc, rk); // focal known
+    E.posK.push(ek); E.tiltK.push(lk.tiltE); E.floorK.push(lk.floorN);
+  }
+  table(`stand, ${mode} sheets, independent leans 0-10°: 40 scenes; world.js reprojection max ${worstRe.toFixed(2)} px; ${warned} lean warnings (${big} sheets measured > 10°)`, E,
+    [['pos', 100, mode === 2 ? 'sheet distance' : 'sheet position', 'cm'], ['fov', 1, 'vertical fov', 'deg'], ['tiltE', 1, 'tilt size error', 'deg (worst sheet)'],
+      ['upE', 1, 'sheet up error', 'deg (worst sheet, absolute)'], ['floorN', 1, 'floor normal', 'deg'], ['t', 1, 'solve time', 'ms'],
+      ['posK', 100, 'fov known: pos', mode === 2 ? 'cm (distance)' : 'cm'], ['tiltK', 1, 'fov known: tilt', 'deg'], ['floorK', 1, 'fov known: floor', 'deg']]);
+  assert.equal(warned, big);
+  assert.ok(stats(E.tiltE).med < 6 && stats(E.floorN).med < 6 && stats(E.posK).med < .1);
+});
+
+test('stand: every sheet leaning 6° backward reads as a tilted floor (one camera cannot tell)', () => {
+  seed = 151;
+  const E = { floorN: [], tilt: [], pos: [] };
+  for (let n = 0; n < 20; n++) {
+    const sc = needS({ lean: backward(6) }), res = solveS(sc), l = leanErrors(sc, res);
+    E.floorN.push(l.floorN); E.tilt.push(Math.max(...res.ids.map(id => res.tags[id].tilt))); E.pos.push(errors(sc, res).pos);
+  }
+  const f = stats(E.floorN), t = stats(E.tilt), p = stats(E.pos.map(v => v * 100));
+  console.log(`all lean 6° back (4 sheets, facings ±70°): floor normal error med ${f.med.toFixed(1)} p90 ${f.p90.toFixed(1)}°, measured tilt (worst sheet) med ${t.med.toFixed(1)} p90 ${t.p90.toFixed(1)}°, position med ${p.med.toFixed(1)} p90 ${p.p90.toFixed(1)} cm`);
+  assert.ok(f.med < 8);
 });

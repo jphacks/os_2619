@@ -344,14 +344,21 @@ async function scanMap() {
   status.extra = '4枚のタグをスキャン中…';
   let FM; try { FM = await import('./fieldmap.js'); } catch (e) { status.extra = 'スキャン失敗：fieldmap.js を読み込めない ' + e.message; return; }
   const need = modeIds();
-  const m = await FM.scanField(dummy?.canvas ?? video, { fovYGuess: cfg.tagCam?.fovY ?? cfg.cam.fov, mode: cfg.tagMode, mount: cfg.tagMount, tagHeight: cfg.tagHeight });
+  // leaning standing sheets cannot fix the focal from one view: reuse a fov measured firmly before (same camera), if any
+  const fovY = cfg.tagMount === 'stand' ? cfg.knownFov ?? null : null;
+  const m = await FM.scanField(dummy?.canvas ?? video, { fovYGuess: cfg.tagCam?.fovY ?? cfg.cam.fov, fovY, mode: cfg.tagMode, mount: cfg.tagMount, tagHeight: cfg.tagHeight });
   if (!m) { status.extra = `スキャン失敗：床のタグ（ID ${need.join('・')}）が${cfg.tagMode === 2 ? '2枚' : '3枚以上'}見えていない。カメラを高くするか、遠いタグを近づける`; return; }
   applyField({ poly: m.poly, tags: m.tags }); saveField();
+  const firm = m.cam.focalFitted && !(m.warnings ?? []).some(w => /loosely|fovYGuess|focal/i.test(w))
+    && Object.values(m.tags).every(t => !(t.tilt > 2)); // leaning sheets fit the focal poorly: only trust floor / straight scans
+  if (firm) cfg.knownFov = m.fovY; // remembered for later standing scans (cleared from admin when the camera / zoom changes)
   cfg.tagCam = m.cam; cfg.camMode = 'tags'; save(); applyCam();
+  const lean = Object.entries(m.tags).filter(([, t]) => t.tilt > 3).map(([id, t]) => `ID ${id} ${t.tilt.toFixed(0)}°${t.tiltDir ? '（' + t.tiltDir + '）' : ''}`);
   const xs = m.poly.map(q => q[0]), zs = m.poly.map(q => q[1]), size = `${(Math.max(...xs) - Math.min(...xs)).toFixed(1)}m × ${(Math.max(...zs) - Math.min(...zs)).toFixed(1)}m`;
   const good = need.every(id => m.ids.includes(id)) && m.reprojErrPx < 4;
   if (good) match.ready = true;
-  status.extra = good ? `スキャン完了：タグ ${m.ids.join(',')}  フィールド 約${size}  誤差 ${m.reprojErrPx.toFixed(1)}px  縦画角 ${m.fovY.toFixed(1)}°。試合を始められる`
+  const fovNote = fovY ? `（覚えていた ${fovY.toFixed(1)}° を使用）` : firm ? '' : '（画角はあいまい。床置きか、まっすぐ立てた状態で一度スキャンすると覚える）';
+  status.extra = good ? `スキャン完了：タグ ${m.ids.join(',')}  フィールド 約${size}  誤差 ${m.reprojErrPx.toFixed(1)}px  縦画角 ${m.fovY.toFixed(1)}°${fovNote}${lean.length ? '  傾き: ' + lean.join('、') : ''}。試合を始められる`
     : `スキャン不十分：${!need.every(id => m.ids.includes(id)) ? `タグが${m.ids.length}枚しか見えていない` : `誤差 ${m.reprojErrPx.toFixed(1)}px が大きい`}${m.warnings?.length ? '（' + m.warnings.join('、') + '）' : ''}。置き方を直してもう一度`;
 }
 const modeIds = () => W.LAYOUT === 'map4' && cfg.tagMode === 2 ? [0, 1] : W.CORNER_IDS;
@@ -679,6 +686,7 @@ function command(c) {
     case 'camMode': cfg.camMode = c.value; break;
     case 'tagMode': cfg.tagMode = +c.value === 2 ? 2 : 4; match.ready = false; save(); return;
     case 'tagMount': cfg.tagMount = c.value === 'floor' ? 'floor' : 'stand'; match.ready = false; save(); return;
+    case 'forgetFov': cfg.knownFov = null; save(); status.extra = '覚えていた画角を消した。次のスキャンで測り直す'; return;
     case 'tagHeight': cfg.tagHeight = Math.max(.1, Math.min(3, +c.value || 1)); match.ready = false; save(); return;
     case 'skelSrc': cfg.skelSrc = ['camera', 'phones', 'both'].includes(c.value) ? c.value : 'both'; break;
     case 'posSrc': cfg.posSrc = c.value; save(); return syncTracker();
@@ -738,7 +746,7 @@ function publish() { // state for admin.html, a few times a second
     video: { w: video.videoWidth, h: video.videoHeight, label: video.srcObject?.getVideoTracks()[0]?.label ?? '', id: video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId }, devices,
     view: cfg.view, drone: drone.mode, shot: drone.shot, fpv: cfg.fpv, fovPhone: intr,
     audio: sfx && { unlocked: sfx.unlocked, loaded: sfx.loaded, muted: sfx.muted, vol: sfx.volumes },
-    posSrc: cfg.posSrc, hand: cfg.hand, skelSrc: cfg.skelSrc, phoneBodies: { A: phoneSk.A.has, B: phoneSk.B.has, aligned: !!roomToWorld, warn: phoneEst?.warn?.slice(0, 2) ?? [] }, tagMode: cfg.tagMode, tagMount: cfg.tagMount, tagHeight: cfg.tagHeight, layout: W.LAYOUT, pose: tracker ? { ms: tracker.ms, hz: tracker.hz, ready: tracker.ready, A: !!tracker.get('A')?.seen, B: !!tracker.get('B')?.seen } : null,
+    posSrc: cfg.posSrc, hand: cfg.hand, skelSrc: cfg.skelSrc, phoneBodies: { A: phoneSk.A.has, B: phoneSk.B.has, aligned: !!roomToWorld, warn: phoneEst?.warn?.slice(0, 2) ?? [] }, tagMode: cfg.tagMode, tagMount: cfg.tagMount, tagHeight: cfg.tagHeight, knownFov: cfg.knownFov ?? null, layout: W.LAYOUT, pose: tracker ? { ms: tracker.ms, hz: tracker.hz, ready: tracker.ready, A: !!tracker.get('A')?.seen, B: !!tracker.get('B')?.seen } : null,
     field: { scanned: fieldScanned, poly: W.FIELD.poly }, setupTags: tagChecks(), tagCheckMs: Math.round(seenTags.ms), toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
 }
 setInterval(publish, 250);
