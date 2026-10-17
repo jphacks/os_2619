@@ -146,16 +146,23 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
     src[s] = { grp, trail, trailPos, tg, phone, frustum, arrow, tag, name, seen, drop, sword, blade, glow, tip, tipGlow, hand, tipShadow, swordLabel, ghost };
   }
   const rays = segs(RAY_N, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .7, depthTest: false }), true); scene.add(rays.obj);
-  // fixed tags as detected: each id where a phone last saw it (not where the layout says it should be), with its real turn
+  // fixed tags as detected: each id where a phone first saw it (not where the layout says it should be), with its real turn.
+  // The first few sightings (nearest one wins) fix the spot for good: seeing a tag again never moves it, so ARCore drift or
+  // a changing phone alignment cannot make it wander. A new field scan clears them (the scan measures the sheets anyway).
+  const LOCK_AFTER = 5, LOCK_MAX_D = 4;
   const detected = new Map(), detGrp = new THREE.Group(); scene.add(detGrp);
-  function showDetected(id, R, p, now) {
+  function showDetected(id, R, p, dist) {
+    if (!(dist < LOCK_MAX_D)) return; // too far to place a sheet reliably: wait for a closer look
     let d = detected.get(id);
     if (!d) {
       const sq = tagSquare(id, W.TAGS[id]?.size ?? .2, COL.tag), l = label(`ID ${id}`, '#3ddc84', .13); sq.matrixAutoUpdate = false; detGrp.add(sq, l);
-      detected.set(id, d = { sq, l });
+      detected.set(id, d = { sq, l, n: 0, best: Infinity, locked: false });
     }
-    toMat({ R, t: p }, d.sq.matrix); d.l.position.set(p[0], p[1] + .16, p[2]); d.at = now;
+    if (d.locked) return;
+    if (dist < d.best) { d.best = dist; toMat({ R, t: p }, d.sq.matrix); d.l.position.set(p[0], p[1] + .16, p[2]); d.sq.visible = d.l.visible = true; }
+    if (++d.n >= LOCK_AFTER) d.locked = true;
   }
+  W.onFieldChange(() => { for (const d of detected.values()) detGrp.remove(d.sq, d.l); detected.clear(); });
   const seenTags = new THREE.Group(); scene.add(seenTags); // small squares where each phone sees a tag right now
   const seenPool = Array.from({ length: RAY_N }, () => { const m = new THREE.Mesh(new THREE.PlaneGeometry(.12, .12), new THREE.MeshBasicMaterial({ color: COL.tag, transparent: true, opacity: .35, side: THREE.DoubleSide, depthTest: false })); m.visible = false; seenTags.add(m); return m; });
 
@@ -225,7 +232,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
         d.tag.visible = on.tags && g.yaw != null;
         if (d.tag.visible) toMat(W.compose(W.chestTagPose(W.bodyPose(g.chest, g.yaw, g.chest[1] - .12)), W.pose(W.I3, [0, 0, .01])), d.tag.matrix);
         d.seen.visible = !!g.seenBy; if (g.seenBy) d.seen.position.set(...g.seenBy.p);
-        for (const sg of g.sightings ?? []) if (sg.R && !W.isChestTag(sg.id)) showDetected(sg.id, sg.R, sg.p, t);
+        for (const sg of g.sightings ?? []) if (sg.R && !W.isChestTag(sg.id) && !(getStage()?.state.scanned && W.TAGS[sg.id]?.pos)) showDetected(sg.id, sg.R, sg.p, sg.d);
         if (on.rays && g.sightings) for (const sg of g.sightings) {
           if (nRays >= RAY_N) break;
           const isField = W.TAGS[sg.id]?.pos, m = seenPool[nRays];
