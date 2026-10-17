@@ -20,7 +20,7 @@ const toMat = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3
 export const GUIDE_CAM = { x: 0, y: 1.7, z: 3.5, yaw: 0, pitch: -16, roll: 0, fov: 45 };
 export const DRONE_JA = { auto: '自動演出', orbit: '周回', chaseA: 'A の肩越し', chaseB: 'B の肩越し', top: '真上', side: '真横', free: '自由操作' };
 
-const FIELD_KEY = 'pd-field-fixed-' + W.LAYOUT, CAM_KEY = 'pd-tagcam-fixed'; // v2: the sheets' positions are fixed (world.js), a saved scan only holds their turns and phone C
+const FIELD_KEY = 'pd-field-fixed3-' + W.LAYOUT, CAM_KEY = 'pd-tagcam-fixed3'; // v3: drops scans made with map4 sheets taken as standing (phone C turned 180° from the phones); a saved scan only holds the sheets' turns and phone C
 
 export function createStage({ video, cfg, hub, PA, isSetup = () => true }) {
   const el = document.createElement('div'); el.className = 'stage';
@@ -101,10 +101,11 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true }) {
     S.msg = `${cfg.tagMode}枚のタグをスキャン中…`;
     let FM; try { FM = await import('./fieldmap.js'); } catch (e) { S.msg = 'スキャン失敗：fieldmap.js を読み込めない ' + e.message; return; }
     const need = modeIds(), src = video.__dummy?.canvas ?? video;
-    const fovY = cfg.tagMount === 'stand' ? cfg.knownFov ?? null : null; // leaning sheets cannot fix the focal from one view
-    const m = await FM.scanField(src, { fovYGuess: S.tagCam?.fovY ?? GUIDE_CAM.fov, fovY, mode: cfg.tagMode, mount: cfg.tagMount, tagHeight: cfg.tagHeight });
+    const mount = W.FIXED_FIELD ? 'floor' : cfg.tagMount; // map4's centre square lies on the floor: the standing model would make its own frame from the picture
+    const fovY = mount === 'stand' ? cfg.knownFov ?? null : null; // leaning sheets cannot fix the focal from one view
+    const m = await FM.scanField(src, { fovYGuess: S.tagCam?.fovY ?? GUIDE_CAM.fov, fovY, mode: cfg.tagMode, mount, tagHeight: cfg.tagHeight });
     if (!m) { S.msg = `スキャン失敗：タグ（ID ${need.join('・')}）が${cfg.tagMode === 2 ? '2枚' : '3枚以上'}見えていない。カメラを高くするか、遠いタグを近づける`; return; }
-    const fit = W.FIXED_FIELD && cfg.tagMount !== 'stand' ? W.toFixedFrame(m.tags, m.cam.pose) : null;
+    const fit = W.FIXED_FIELD ? W.toFixedFrame(m.tags, m.cam.pose) : null;
     if (fit && fit.rms > .05) S.msg = `注意：置いたタグの位置が固定の配置と ${(fit.rms * 100).toFixed(0)} cm ずれている。置き方か、隣の中心までの距離（?pitch=）を見直して`;
     if (fit) { m.cam = { ...m.cam, pose: fit.pose }; m.tags = fit.tags; m.poly = W.FIELD.poly.map(p => [...p]); }
     applyField({ poly: m.poly, tags: m.tags }); saveField();

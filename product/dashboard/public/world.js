@@ -18,7 +18,7 @@ export const ARENA = { half: 2 };   // 4 m x 4 m
 export const CHEST_H = 1.3;          // chest phone / chest tag height, m
 export const START = { A: { pos: [-1.2, 0, 0], yaw: 0 }, B: { pos: [1.2, 0, 0], yaw: Math.PI } }; // yaw 0 = facing +x
 export const PHONE_TAG_SIZE = 0.1;   // old app only: the one size typed into the phone; tags with `sz` (new app) are already metric
-export const STICK = { len: 0.8, axis: [0, 1, 0], up: [0, 0, 1], hand: { fwd: 0.3, right: 0.2, up: -0.3 } };
+export const STICK = { len: 1.0, axis: [0, 1, 0], up: [0, 0, 1], hand: { fwd: 0.3, right: 0.2, up: -0.3 } };
 
 // Tag layouts. Pick one with ?layout= (browser) or LAYOUT= (node); default 'map4'.
 // - map4:  four sheets (ids 0-3, any size listed here) lying anywhere on the floor, roughly the corners of the play area.

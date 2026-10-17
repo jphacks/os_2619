@@ -24,12 +24,13 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 // ---- settings (localStorage) ----
 const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
-  minimap: true, debug: false, pip: false, fpv: null, drone: 'auto', videoSrc: 'remote', tagMode: 4, tagMount: 'stand', tagHeight: 1.0, knownFov: null,
+  minimap: true, debug: false, pip: false, fpv: null, drone: 'auto', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
   matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 4, fxStyle: 'smash',
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
 if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
+for (const s of ['A', 'B']) if (cfg.stickLen[s] === .8) cfg.stickLen[s] = W.STICK.len; // the old default, saved before the real 1.0 m stick was measured
 if ((saved.rulesVer ?? 0) < 2) cfg.aim = 'motion'; // ...and the aim from the tip's motion
 if ((saved.rulesVer ?? 0) < 4) cfg.fxStyle = 'smash'; // the program-drawn set is the one used in the show (10/18)
 cfg.rulesVer = 4;
@@ -188,7 +189,7 @@ drawer.innerHTML = `
     <p class="note">自動：胸スマホがタグで合っていればそれ、なければ直前の位置。</p>
   </section>
   <section><h3>タグのスキャン（スマホ C）</h3>${seg('tagMode', { 2: '2枚（ID 0・1）', 4: '4枚（ID 0〜3）' })}
-    <div style="height:6px"></div>${seg('tagMount', { stand: '立てる', floor: '床に置く' })}
+    ${W.FIXED_FIELD ? '' : `<div style="height:6px"></div>${seg('tagMount', { stand: '立てる', floor: '床に置く' })}`}
     <label class="f"><span>タグ中心の高さ</span><input type="number" id="tagHeight" min="0.1" max="3" step="0.05"><output>m</output></label>
     <p class="note" id="fovNote"></p>
     <div class="row"><button id="forgetFov">覚えた画角を消す</button><button id="clearScan">スキャン結果を消す</button></div>
