@@ -151,9 +151,11 @@ function shoot(p, power = .5) {
     : cfg.aim === 'eye' ? p.tip.clone().sub(p.chest.clone().add(V(0, .35, 0))).normalize() : p.dir.clone();
   shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), power), owner: p, pos: p.tip.clone(), vel: aim.multiplyScalar(9), power, born: now() });
 }
+const noKO = params.has('demo') || params.has('test'); // setting up / testing: hits show but HP never drops
 function damage(foe, from, n) {
-  foe.hp = Math.max(0, foe.hp - n);
   flash(from.element);
+  if (noKO) return;
+  foe.hp = Math.max(0, foe.hp - n);
   if (foe.hp === 0) winner = from;
 }
 function stepShots(dt) {
