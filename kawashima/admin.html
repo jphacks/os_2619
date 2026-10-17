@@ -100,6 +100,7 @@
       <h2>プレイヤーの位置の取り方</h2>
       <div class="row" id="posSrcs"><button data-pos="camera">カメラ映像（骨格）</button><button data-pos="phones">胸スマホ（ARCore＋タグ）</button><button data-pos="start">固定（立ち位置）</button></div>
       <div class="row" style="margin-top:8px"><button id="swap">A・B を入れ替える</button><span class="note">棒を持つ手</span><button data-hand="R">右</button><button data-hand="L">左</button></div>
+      <div class="row" style="margin-top:8px"><span class="note">3Dに出す骨格</span><button data-skel="camera">カメラ映像</button><button data-skel="phones">胸スマホ</button><button data-skel="both">両方</button></div>
       <div class="msg" id="poseInfo"></div>
     </section>
     <section>
@@ -142,6 +143,7 @@ let st = null, lastState = 0, dragging = false;
 $('#openDisplay').onclick = () => window.open('index.html' + location.search, 'bou-display');
 $$('[data-phase]').forEach(b => b.onclick = () => send({ cmd: 'phase', phase: b.dataset.phase }));
 $$('[data-pos]').forEach(b => b.onclick = () => send({ cmd: 'posSrc', value: b.dataset.pos }));
+$$('[data-skel]').forEach(b => b.onclick = () => send({ cmd: 'skelSrc', value: b.dataset.skel }));
 $$('[data-hand]').forEach(b => b.onclick = () => send({ cmd: 'hand', value: b.dataset.hand }));
 $('#swap').onclick = () => send({ cmd: 'swap' });
 $$('[data-tagmode]').forEach(b => b.onclick = () => send({ cmd: 'tagMode', value: +b.dataset.tagmode }));
@@ -239,9 +241,15 @@ function render() {
   setHtml('#tagCheck', s.phase !== 'setup' ? '' : '<div>タグの見え方（準備中だけ確認）</div>' + s.setupTags.map(c => `<div>${dot(!c.seen ? '' : (c.want && c.side !== c.want) || c.px < 14 ? 'warn' : 'ok')}ID ${c.id}${c.want ? `（${SIDE[c.want]}側）` : ''}：${!c.seen ? '見えていない' : c.want && c.side !== c.want ? `画面の${SIDE[c.side]}に見えている。左右が逆かも` : c.px < 14 ? '小さい' : 'OK'}</div>`).join(''));
   $$('[data-pos]').forEach(b => b.classList.toggle('on', b.dataset.pos === s.posSrc));
   $$('[data-hand]').forEach(b => b.classList.toggle('on', b.dataset.hand === s.hand));
+  $$('[data-skel]').forEach(b => b.classList.toggle('on', b.dataset.skel === s.skelSrc));
   $$('[data-tagmode]').forEach(b => b.classList.toggle('on', +b.dataset.tagmode === s.tagMode));
   $('#tagModes').style.display = s.layout === 'map4' ? '' : 'none';
-  setHtml('#poseInfo', s.posSrc !== 'camera' ? '' : !s.pose ? '骨格推定を準備中' : `${dot(s.pose.A ? 'ok' : '')}A ${s.pose.A ? '見えている' : '見えていない'}　${dot(s.pose.B ? 'ok' : '')}B ${s.pose.B ? '見えている' : '見えていない'}`);
+  const pb = s.phoneBodies ?? {};
+  setHtml('#poseInfo', [
+    s.posSrc !== 'camera' ? '' : !s.pose ? 'カメラ映像の骨格: 準備中' : `カメラ映像の骨格: ${dot(s.pose.A ? 'ok' : '')}A ${s.pose.A ? '見えている' : '見えていない'}　${dot(s.pose.B ? 'ok' : '')}B ${s.pose.B ? '見えている' : '見えていない'}`,
+    s.skelSrc === 'camera' ? '' : `胸スマホの骨格: ${!pb.aligned ? '床のタグを両方のスマホとカメラで共有できていない' : `${dot(pb.A ? 'ok' : '')}A ${pb.A ? 'あり' : 'なし'}　${dot(pb.B ? 'ok' : '')}B ${pb.B ? 'あり' : 'なし'}`}`,
+    ...(pb.warn ?? []).map(w => `<span class="note">センサー: ${w}</span>`),
+  ].filter(Boolean).map(x => `<div>${x}</div>`).join(''));
   $$('[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === s.view));
   $$('[data-drone]').forEach(b => b.classList.toggle('on', b.dataset.drone === s.drone));
   $$('[data-fpv]').forEach(b => b.classList.toggle('on', (b.dataset.fpv || null) === s.fpv));

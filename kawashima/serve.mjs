@@ -41,6 +41,8 @@ http.createServer(async (req, res) => {
     try { return res.writeHead(200, { 'content-type': types[extname(p)] ?? 'application/octet-stream', 'cache-control': 'max-age=31536000, immutable' }).end(await fromCdn(p)); }
     catch (e) { console.warn(e.message); return res.writeHead(502).end(); }
   }
+  // the sensing team's pure-logic modules (space map), read from their folder so we always run their latest version
+  if (path === '/sensing/map.js') path = '/../sensing/dashboard/map.js';
   try {
     const body = await readFile(join(root, path));
     res.writeHead(200, { 'content-type': types[extname(path)] ?? 'application/octet-stream' }).end(body);

@@ -8,6 +8,7 @@ import { createFx } from './effects.js';
 import { calibrateCamera, toThreeCamera, detectTags, solveCamera } from './extrinsics.js';
 import { createDrone } from './drone.js';
 import { createField, createMinimap } from './field3d.js';
+import { createMap } from '/sensing/map.js'; // the sensing team's space map: each phone's view of the opponent's body
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
@@ -41,7 +42,8 @@ const DEFAULTS = {
                     // 'phones' (chest phones: ARCore + tags, localize.js) or 'start' (fixed at the start marks)
   hand: 'R',        // which wrist holds the stick when positions come from the camera
   tagMode: 4,       // map4 layout: scan with 2 sheets (ids 0 / 1 mark the A / B ends) or 4 sheets (ids 0-3 at the corners)
-  skeleton: false,  // the camera-tracked skeletons over the video too (they always show in the 3D views)
+  skeleton: false,
+  skelSrc: 'both',  // skeletons in 3D from 'camera' (third-person video), 'phones' (opponent's chest camera) or 'both'  // the camera-tracked skeletons over the video too (they always show in the 3D views)
 };
 const STORE = params.has('dummy') ? '-dummy' : ''; // the dummy room keeps its own settings: its scans must never leak into the real setup
 const load = () => { try { return JSON.parse(localStorage.getItem('fx-cfg2' + STORE)) ?? {}; } catch { return {}; } };
@@ -261,7 +263,7 @@ function connect() {
     const k = JSON.parse(m.data);
     if (k.type === 'phones') { for (const p of Object.values(players)) p.online = k.list.some(q => q.slot === p.slot); return; }
     const p = players[k.slot]; if (!p) return;
-    loc.onMessage(k);
+    loc.onMessage(k); smap.ingest(k);
     if (k.type === 'tags') fitIntrinsics(k);
     if (k.type === 'imu') {
       p.imu = k;
@@ -393,7 +395,46 @@ function updateSkels() {
     k.pos.set(s.skel); k.attr.needsUpdate = true;
   }
 }
-const showSkels = on => { for (const k of Object.values(skels)) k.grp.visible = on && k.has; };
+// phone-side bodies: map.js puts what each chest camera sees of the opponent into its room frame (centre of the floor
+// tags). Our world sits on the same floor tags (fieldmap.js), so a yaw + shift fitted on the shared tag ids maps one to the other.
+const smap = createMap();
+const phoneSk = Object.fromEntries(['A', 'B'].map(slot => {
+  const pos = new Float32Array(BONES.length * 6), g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const lines = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: slot === 'A' ? 0xffd2a8 : 0xd2f0ff, transparent: true, opacity: .75, depthTest: false }));
+  lines.renderOrder = 14; lines.frustumCulled = false; lines.visible = false; scene.add(lines);
+  return [slot, { lines, pos, attr: g.getAttribute('position'), has: false }];
+}));
+let phoneEst = null, phoneEstAt = 0, roomToWorld = null;
+function fitRoom(corners) { // 2D Procrustes (yaw + shift) from map.js room coords onto our measured floor tags
+  const pairs = corners.filter(c => W.TAGS[c.id]?.floor && fieldScanned).map(c => [c.p, W.TAGS[c.id].pos]);
+  if (pairs.length < 2) return null;
+  const m = i => pairs.reduce((a, q) => [a[0] + q[i][0] / pairs.length, a[1] + q[i][2] / pairs.length], [0, 0]), ma = m(0), mb = m(1);
+  let sc = 0, ss = 0;
+  for (const [a, b] of pairs) { const A = [a[0] - ma[0], a[2] - ma[1]], B = [b[0] - mb[0], b[2] - mb[1]]; sc += A[0] * B[0] + A[1] * B[1]; ss += A[0] * B[1] - A[1] * B[0]; }
+  const th = Math.atan2(ss, sc), c = Math.cos(th), s = Math.sin(th);
+  return p => [c * (p[0] - ma[0]) - s * (p[2] - ma[1]) + mb[0], p[1], s * (p[0] - ma[0]) + c * (p[2] - ma[1]) + mb[1]];
+}
+function updatePhoneSkels() {
+  if (cfg.skelSrc === 'camera') { for (const k of Object.values(phoneSk)) k.has = false; return; }
+  if (now() - phoneEstAt > .1) {
+    phoneEstAt = now();
+    try { phoneEst = smap.estimate({ now: Date.now() / 1000 }); roomToWorld = fitRoom(phoneEst.corners ?? []); } catch { phoneEst = null; }
+  }
+  for (const slot of ['A', 'B']) {
+    const k = phoneSk[slot], b = roomToWorld && phoneEst?.bodies?.[slot];
+    k.has = !!b; if (!b) continue;
+    BONES.forEach(([i, j], n) => { // a bone with a hidden end collapses to a point
+      const p = b[i] && b[j] ? [roomToWorld(b[i]), roomToWorld(b[j])] : [[0, -50, 0], [0, -50, 0]];
+      k.pos.set(p[0], n * 6); k.pos.set(p[1], n * 6 + 3);
+    });
+    k.attr.needsUpdate = true;
+  }
+}
+const showSkels = on => {
+  for (const k of Object.values(skels)) k.grp.visible = on && k.has && cfg.skelSrc !== 'phones';
+  for (const k of Object.values(phoneSk)) k.lines.visible = on && k.has;
+};
 
 // ---- phone view (F): a chest phone's own picture as the background, the camera at that phone's located pose ----
 const phoneCanvas = document.createElement('canvas'), phoneCtx = phoneCanvas.getContext('2d');
@@ -513,12 +554,17 @@ function buildGuide() {
 buildGuide();
 // live check of the tags while setting up: which ids the iPhone sees, and on which side of the picture
 const seenTags = { list: [], at: 0, busy: false, ms: 0 };
+const PLAYER_IDS = Object.values(W.PLAYER_TAG);
 async function checkTags() {
-  if (seenTags.busy || match.phase !== 'setup' || dummy || !video.videoWidth) return;
+  const setup = match.phase === 'setup', chest = cfg.posSrc === 'camera' && tracker;
+  if (seenTags.busy || (!setup && !chest) || dummy || !video.videoWidth) return;
   seenTags.busy = true; const t0 = performance.now();
   try {
-    const d = await detectTags(video, null, { passes: [[1, 2], [1, 6]] });
+    const d = await detectTags(video, setup ? null : PLAYER_IDS, { passes: [[1, 2], [1, 6]] }); // off the main thread (tagworker.js)
     seenTags.list = d.map(o => ({ id: o.id, corners: o.corners, w: d.width, h: d.height })); seenTags.at = now();
+    // chest tags 10 (A) / 11 (B) in the third-person picture tell the pose tracker who is who
+    tracker?.setHints?.(seenTags.list.filter(o => PLAYER_IDS.includes(o.id)).map(o => ({
+      slot: o.id === W.PLAYER_TAG.A ? 'A' : 'B', u: o.corners.reduce((a, c) => a + c[0] / 4, 0), v: o.corners.reduce((a, c) => a + c[1] / 4, 0), t: now() })));
   } catch {} finally { seenTags.busy = false; seenTags.ms = performance.now() - t0; }
 }
 setInterval(checkTags, 600); // detection runs in tagworker.js now: only createImageBitmap here
@@ -621,6 +667,7 @@ function command(c) {
     case 'camera': return startVideo(c.value);
     case 'camMode': cfg.camMode = c.value; break;
     case 'tagMode': cfg.tagMode = +c.value === 2 ? 2 : 4; match.ready = false; save(); return;
+    case 'skelSrc': cfg.skelSrc = ['camera', 'phones', 'both'].includes(c.value) ? c.value : 'both'; break;
     case 'posSrc': cfg.posSrc = c.value; save(); return syncTracker();
     case 'hand': cfg.hand = c.value === 'L' ? 'L' : 'R'; break;
     case 'swap': tracker?.setSwap?.(); return;
@@ -667,7 +714,7 @@ function publish() { // state for admin.html, a few times a second
     link: linkState, host, camMode: cfg.camMode, tagCam: tc && { ids: tc.ids, err: tc.reprojErrPx, fov: tc.fovY, t: tc.pose.t }, camMsg: status.extra,
     video: { w: video.videoWidth, h: video.videoHeight, label: video.srcObject?.getVideoTracks()[0]?.label ?? '', id: video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId }, devices,
     view: cfg.view, drone: drone.mode, shot: drone.shot, fpv: cfg.fpv, fovPhone: intr,
-    posSrc: cfg.posSrc, hand: cfg.hand, tagMode: cfg.tagMode, layout: W.LAYOUT, pose: tracker ? { ms: tracker.ms, hz: tracker.hz, ready: tracker.ready, A: !!tracker.get('A')?.seen, B: !!tracker.get('B')?.seen } : null,
+    posSrc: cfg.posSrc, hand: cfg.hand, skelSrc: cfg.skelSrc, phoneBodies: { A: phoneSk.A.has, B: phoneSk.B.has, aligned: !!roomToWorld, warn: phoneEst?.warn?.slice(0, 2) ?? [] }, tagMode: cfg.tagMode, layout: W.LAYOUT, pose: tracker ? { ms: tracker.ms, hz: tracker.hz, ready: tracker.ready, A: !!tracker.get('A')?.seen, B: !!tracker.get('B')?.seen } : null,
     field: { scanned: fieldScanned, poly: W.FIELD.poly }, setupTags: tagChecks(), tagCheckMs: Math.round(seenTags.ms), toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
 }
 setInterval(publish, 250);
@@ -702,11 +749,11 @@ function frame(ts = 0) {
     p.hud.querySelector('.off').textContent = p.online ? '' : 'offline';
   }
   if (cfg.fpv) { placePhoneCamera(cfg.fpv); if (cfg.anchors) tagAnchors(); }
-  stepCharge(dt); stepShots(dt); fx.step(dt); updateSkels();
+  stepCharge(dt); stepShots(dt); fx.step(dt); updateSkels(); updatePhoneSkels();
   const yawOf = b => Math.atan2(-b.R[6], b.R[0]); // body x axis = forward
   drone.update(dt, Object.fromEntries(Object.values(players).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
   field.update(dt, Object.fromEntries(Object.values(players).map(p => [p.slot,
-    { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, hideBody: skels[p.slot].has }])));
+    { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, hideBody: (skels[p.slot].has && cfg.skelSrc !== 'phones') || phoneSk[p.slot].has }])));
   const mapOn = cfg.minimap && match.phase !== 'setup'; // the setup guide needs that corner
   minimapCanvas.style.display = mapOn ? '' : 'none';
   if (mapOn) minimap.draw(players, shots);

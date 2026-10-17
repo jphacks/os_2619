@@ -128,6 +128,7 @@ function toRay(dc, v) { // minimal rotation taking [0,0,1] to dc, applied to v (
 export function createPoseTracker({ video, getCamera = () => null, hz = 15, worker = true, delegate: want = 'GPU', numPoses = 2 } = {}) {
   const opts = { ...OPTS, numPoses }, dels = want === 'CPU' ? ['CPU'] : ['GPU', 'CPU'];
   const st = { A: empty(), B: empty() }, flt = { A: filters(), B: filters() }, trk = { A: null, B: null }; // trk: { key, t, x }
+  let hints = []; // [{ slot, u, v, t }] chest-tag centres in video pixels, t on this module's clock (performance.now()/1000)
   let timer = null, busy = false, lm = null, wk = null, ready = false, delegate = null, err = null, lastVT = -1;
   const avg = { ms: 0, main: 0, post: 0, lat: 0, n: 0, ticks: [] };
   const ema = (k, v) => (avg[k] = avg.n < 1 ? v : avg[k] + .1 * (v - avg[k]));
@@ -193,8 +194,20 @@ export function createPoseTracker({ video, getCamera = () => null, hz = 15, work
       return 2 * gate + ((s === 'A') === left ? 0 : gate);
     };
     let pick = {};
-    if (ds.length === 2) pick = cost('A', ds[0]) + cost('B', ds[1]) <= cost('A', ds[1]) + cost('B', ds[0]) ? { A: ds[0], B: ds[1] } : { A: ds[1], B: ds[0] };
-    else if (ds.length === 1) pick = cost('A', ds[0]) <= cost('B', ds[0]) ? { A: ds[0] } : { B: ds[0] };
+    // chest tags seen by the third-person camera (setHints): a tag inside a person's torso names that person outright
+    const torso = (m, u, v) => {
+      const q = [m.img.pts.lSh, m.img.pts.rSh, m.img.pts.lHip, m.img.pts.rHip], xs = q.map(p => p[0]), ys = q.map(p => p[1]);
+      const pad = .25 * (Math.max(...xs) - Math.min(...xs)) + 4;
+      return u > Math.min(...xs) - pad && u < Math.max(...xs) + pad && v > Math.min(...ys) - pad && v < Math.max(...ys) + pad;
+    };
+    for (const h of hints) if (t - h.t < 1) { const m = ds.find(d => torso(d, h.u, h.v)); if (m) pick[h.slot] = m; }
+    if (pick.A && pick.A === pick.B) pick = {}; // both tags on one body: ignore the hints this time
+    const rest = ds.filter(d => d !== pick.A && d !== pick.B), free = ['A', 'B'].filter(s => !pick[s]);
+    if (free.length === 1 && rest.length) pick[free[0]] = rest.sort((a, b) => cost(free[0], a) - cost(free[0], b))[0];
+    if (free.length === 2) {
+      if (ds.length === 2) pick = cost('A', ds[0]) + cost('B', ds[1]) <= cost('A', ds[1]) + cost('B', ds[0]) ? { A: ds[0], B: ds[1] } : { A: ds[1], B: ds[0] };
+      else if (ds.length === 1) pick = cost('A', ds[0]) <= cost('B', ds[0]) ? { A: ds[0] } : { B: ds[0] };
+    }
     for (const s of ['A', 'B']) {
       const m = pick[s], o = st[s], F = flt[s];
       if (!m) { o.age = trk[s] ? t - trk[s].t : Infinity; o.seen = o.age <= HOLD; continue; }
@@ -221,6 +234,7 @@ export function createPoseTracker({ video, getCamera = () => null, hz = 15, work
     start() { if (!timer) timer = setInterval(tick, 1000 / hz); return init; },
     stop() { clearInterval(timer); timer = null; },
     get: slot => st[slot],
+    setHints(h) { hints = h; },
     setSwap() { for (const o of [st, flt, trk]) [o.A, o.B] = [o.B, o.A]; },
     dispose() { this.stop(); wk?.terminate(); lm?.close(); },
     get ms() { return avg.ms; },          // inference only (in the worker, or on the main thread when worker = false)
