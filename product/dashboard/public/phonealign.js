@@ -40,6 +40,10 @@ const swap = v => [v[1], v[0], -v[2]];
 const camToWorld = (pose, v) => add(pose.p, qrot(pose.q, swap(v)));  // cv point -> phone's AR world
 const camDir = (pose, v) => qrot(pose.q, swap(v));                   // cv direction -> AR world
 const apply = (T, v) => add(rotY(T.th, v), T.t);
+// How the portrait picture sits on the ARCore camera frame differs by device (sensor orientation 90° / 270°, or the app's rotation):
+// the cv frame (x right, y down, z forward) may be turned about the optical axis by a multiple of 90° against the assumed one. Each phone
+// tries all four against the fixed tags and keeps the one that fits them (see fitField); k = 0 is the assumed mapping.
+const rotCv = (k, v) => k === 0 ? v : k === 1 ? [-v[1], v[0], v[2]] : k === 2 ? [-v[0], -v[1], v[2]] : [v[1], -v[0], v[2]];
 const wrapPi = a => Math.atan2(Math.sin(a), Math.cos(a));
 
 /** Weighted least squares a ≈ rotY(th, b) + t over pairs { a, b, w }. */
@@ -85,7 +89,7 @@ export function createPhoneAlign(opts = {}) {
   const loc = o.localizer ?? createLocalizer();
   const S = {};
   for (const s of ['A', 'B']) S[s] = {
-    ar: [], trail: [], sight: [], T: null, Tf: null, dirty: false, fDirty: false, fixes: 0, lastFix: null, oldApp: false, online: false,
+    ar: [], trail: [], sight: [], T: null, Tf: null, camRot: 0, camErr: [null, null, null, null], dirty: false, fDirty: false, fixes: 0, lastFix: null, oldApp: false, online: false,
     k: null, imu: null, color: null, lastTags: null, calibAt: null, calibPose: null, yaw0: 0,
     rate: { ar: 0, tags: 0, imu: 0, color: 0 }, cnt: { ar: 0, tags: 0, imu: 0, color: 0 }, cntAt: 0, lastT: 0,
   };
@@ -120,22 +124,35 @@ export function createPhoneAlign(opts = {}) {
   const fieldChanged = () => { tagW = null; for (const s of ['A', 'B']) S[s].fDirty = S[s].dirty = true; };
   W.onFieldChange(fieldChanged);
 
-  /** Fit from the phone's own sightings of field tags (known world poses): the accurate way. */
-  function fitField(s) {
-    const st = S[s]; if (!st.sight.length) return null;
-    // The sheets' positions are fixed, but how each paper was turned is only known after a scan: until then only the centres count
-    // (they need two different sheets to pin the turn), and a sheet's printed axes join in only once its turn is known.
-    const tw = tagWorld(), pairs = [], ids = new Set();
+  /** Fit for one camera-frame turn kk (0..3) from the phone's own sightings of the fixed tags (known world poses). */
+  function fitFieldK(s, kk) {
+    const st = S[s], tw = tagWorld(), pairs = [], ids = new Set();
     for (const g of st.sight) {
       const tg = tw[g.id]; if (!tg) continue;
       ids.add(g.id);
-      pairs.push({ a: tg.c, b: g.b, w: g.w });
-      if (tg.known) pairs.push({ a: tg.axis, b: add(g.b, mul(tg.ax === 'x' ? g.bx : g.by, AXIS_M)), w: g.w * 0.5 });
+      const b = camToWorld(g.pose, rotCv(kk, g.p));
+      pairs.push({ a: tg.c, b, w: g.w });
+      if (tg.known) { // the printed axis points join in only once the sheet's turn is known
+        const ax = camDir(g.pose, rotCv(kk, rodr(g.r, tg.ax === 'x' ? [1, 0, 0] : [0, 1, 0])));
+        pairs.push({ a: tg.axis, b: add(b, mul(ax, AXIS_M)), w: g.w * 0.5 });
+      }
     }
     if (ids.size < 2 && ![...ids].some(id => tw[id].known)) return null; // one centre cannot give the turn
     const T = robustFit(pairs);
     if (T) T.n = st.sight.length; // n = tag sightings (fit4 counted pairs)
     return T;
+  }
+  /** The fit with the camera-frame turn that fits the tags best (the others leave large residuals); kept until another is clearly better. */
+  function fitField(s) {
+    const st = S[s]; if (!st.sight.length) return null;
+    const fits = [0, 1, 2, 3].map(kk => fitFieldK(s, kk));
+    st.camErr = fits.map(T => T ? T.rms : null);
+    const ok = fits.map((T, kk) => T && { T, kk }).filter(Boolean);
+    if (!ok.length) return null;
+    ok.sort((x, y) => x.T.rms - y.T.rms);
+    const cur = fits[st.camRot], best = ok[0];
+    if (!cur || (best.kk !== st.camRot && best.T.rms < 0.6 * cur.rms)) st.camRot = best.kk; // switch only on a clear win
+    return fits[st.camRot];
   }
   const fieldT = s => { const st = S[s]; if (st.fDirty) { st.fDirty = false; st.Tf = fitField(s); } return st.Tf; };
 
@@ -173,11 +190,11 @@ export function createPhoneAlign(opts = {}) {
           if (!g.p || !g.r) continue;
           const sc = W.tagScale(g.id, g.sz), p = [g.p[0] * sc, g.p[1] * sc, g.p[2] * sc], d = Math.hypot(p[0], p[1], p[2]);
           if (!(d > 0.1 && d < 10)) continue;
-          const b = camToWorld(pose, p);
-          last.push({ id: g.id, b, d, bx: camDir(pose, rodr(g.r, [1, 0, 0])), by: camDir(pose, rodr(g.r, [0, 1, 0])) });
+          const kk = st.camRot, b = camToWorld(pose, rotCv(kk, p));
+          last.push({ id: g.id, b, d, bx: camDir(pose, rotCv(kk, rodr(g.r, [1, 0, 0]))), by: camDir(pose, rotCv(kk, rodr(g.r, [0, 1, 0]))) });
           if (W.TAGS[g.id]?.pos) { // a field tag: two pairs for the fit (centre; axes kept so the field can change later)
             const w = 1 / Math.max(0.5, d) ** 2;
-            st.sight.push({ t: k.t, id: g.id, b, bx: camDir(pose, rodr(g.r, [1, 0, 0])), by: camDir(pose, rodr(g.r, [0, 1, 0])), w, d });
+            st.sight.push({ t: k.t, id: g.id, pose, p, r: g.r, w, d }); // raw: the camera-frame turn is decided over the whole window
             st.fixes++; st.lastFix = k.t; st.fDirty = st.dirty = true;
           }
 
@@ -199,7 +216,7 @@ export function createPhoneAlign(opts = {}) {
     const st = S[slot];
     const out = { src: null, aligned: false, theta: null, t: null, rms: null, n: 0, used: 0, fixes: st.fixes, lastFix: st.lastFix, world_T_ar: null,
       chest: null, fwd: null, yaw: null, cam: null, trail: [], sightings: [], k: st.k, online: st.online,
-      calibAt: st.calibAt, hz: st.rate, lastT: st.lastT, oldApp: st.oldApp };
+      calibAt: st.calibAt, camRot: st.camRot * 90, camErr: st.camErr, hz: st.rate, lastT: st.lastT, oldApp: st.oldApp };
     if (st.oldApp) { // old app: calibration-relative p/q only -> localize.js
       const L = loc.get(slot);
       out.src = 'localize'; out.aligned = L.anchored; out.fixes = L.fixes; out.lastFix = L.lastFix; out.rms = L.err;

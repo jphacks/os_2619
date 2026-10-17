@@ -27,11 +27,12 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 // ---- settings (localStorage) ----
 const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
-  minimap: true, debug: false, pip: false, mirrorX: true, mirrorY: true, swordFlip: true, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
+  minimap: true, debug: false, pip: false, mirrorX: false, mirrorY: false, swordFlip: false, fovC: 40, viewVer: 2, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
   matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 5, fxStyle: 'smash',
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
+if ((saved.viewVer ?? 0) < 2) { cfg.mirrorX = cfg.mirrorY = cfg.swordFlip = false; cfg.viewVer = 2; } // the left-right / up-down guesses are off until a measured need: the alignment is solved from the tags now
 cfg.visOn = false; // picture recognition (MediaPipe) is off at every start: nothing is loaded or run until it is switched on in the final bar
 if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
 for (const s of ['A', 'B']) if (cfg.stickLen[s] === .8) cfg.stickLen[s] = W.STICK.len; // the old default, saved before the real 1.0 m stick was measured
@@ -207,6 +208,7 @@ drawer.innerHTML = `
   </section>
   <section><h3>タグのスキャン（スマホ C）</h3>${seg('tagMode', { 2: '2枚（ID 0・1）', 4: '4枚（ID 0〜3）' })}
     ${W.FIXED_FIELD ? '' : `<div style="height:6px"></div>${seg('tagMount', { stand: '立てる', floor: '床に置く' })}`}
+    <label class="f"><span>スマホ C の縦画角（床のタグの位置合わせ用）</span><input type="number" id="fovC" min="10" max="120" step="1"><output>°</output></label>
     <label class="f"><span>タグ中心の高さ</span><input type="number" id="tagHeight" min="0.1" max="3" step="0.05"><output>m</output></label>
     <p class="note" id="fovNote"></p>
     <div class="row"><button id="forgetFov">覚えた画角を消す</button><button id="clearScan">スキャン結果を消す</button></div>
@@ -228,6 +230,7 @@ for (const g of drawer.querySelectorAll('[data-seg]')) for (const b of g.querySe
   const k = g.dataset.seg; cfg[k] = k === 'tagMode' ? +b.dataset.v : b.dataset.v; save();
 };
 for (const b of drawer.querySelectorAll('[data-tog]')) b.onclick = () => toggle(b.dataset.tog);
+const fovCEl = $('#fovC'); fovCEl.value = cfg.fovC; fovCEl.onchange = () => { cfg.fovC = Math.max(10, Math.min(120, +fovCEl.value || 40)); save(); };
 const tagH = $('#tagHeight'); tagH.value = cfg.tagHeight; tagH.onchange = () => { cfg.tagHeight = Math.max(.1, Math.min(3, +tagH.value || 1)); save(); };
 $('#forgetFov').onclick = () => { cfg.knownFov = null; save(); };
 $('#clearScan').onclick = () => confirm('スキャンしたフィールドとカメラの位置を消しますか？') && stage.clearScan();

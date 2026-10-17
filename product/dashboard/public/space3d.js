@@ -273,7 +273,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
   const vec = (v, d = 2) => v ? '[' + Array.from(v, x => x.toFixed(d)).join(', ') + ']' : '-';
   const ms = v => v == null ? '-' : (v * 1000).toFixed(0) + ' ms';
   for (const s of SLOTS) section(`スマホ ${s}`, [
-    [s + 'name', '接続'], [s + 'src', '位置の元'], [s + 'chest', '位置 [x,y,z] m'], [s + 'yaw', '向き'], [s + 'fit', '合わせの残差'],
+    [s + 'name', '接続'], [s + 'src', '位置の元'], [s + 'chest', '位置 [x,y,z] m'], [s + 'yaw', '向き'], [s + 'fit', '合わせの残差'], [s + 'camrot', 'カメラの向き補正'],
     [s + 'sword', '剣 根元→先端'], [s + 'swsrc', '剣の向きの元'], [s + 'tags', '見えているタグ'], [s + 'hz', '受信 Hz'], [s + 'lat', '遅延'],
   ]);
   section('スマホ C・フィールド', [['camT', 'カメラ位置'], ['camFov', '縦画角 / 解像度'], ['camErr', 'スキャン誤差'], ['field', 'フィールド'], ['ftags', 'タグ配置'], ['warn', '注意']]);
@@ -288,6 +288,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
       put(s + 'chest', vec(g.chest));
       put(s + 'yaw', g.yaw == null ? '-' : `${(g.yaw / DEG).toFixed(1)}°`);
       put(s + 'fit', g.rms == null ? '-' : `${f1(g.rms * 100)} cm / ${g.n} 回${g.lastFix ? `　最終 ${f1(t - g.lastFix)} 秒前` : ''}`);
+      put(s + 'camrot', g.camErr?.some(v => v != null) ? `${g.camRot}°（残差 cm: ${g.camErr.map((v, i) => `${i * 90}°=${v == null ? '-' : (v * 100).toFixed(1)}`).join(' ')}）` : '-');
       put(s + 'sword', p ? `${vec(p.base.toArray())} → ${vec(p.tip.toArray())}` : '-');
       put(s + 'swsrc', p?.stickSrc ?? '-');
       put(s + 'tags', g.sightings?.length ? g.sightings.map(q => `${q.id}:${q.d.toFixed(2)}m`).join(' ') : '-');

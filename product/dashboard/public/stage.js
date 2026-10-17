@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import * as W from './world.js';
 import { createFx } from './effects.js';
-import { toThreeCamera, detectTags } from './extrinsics.js';
+import { toThreeCamera, detectTags, calibrateCamera } from './extrinsics.js';
 import { createDrone } from './drone.js';
 import { createField, createMinimap } from './field3d.js';
 
@@ -100,6 +100,16 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     if (!video.videoWidth) { S.msg = 'スキャンできない：スマホ C の映像がまだ届いていない'; return; }
     S.msg = `${cfg.tagMode}枚のタグをスキャン中…`;
     let FM; try { FM = await import('./fieldmap.js'); } catch (e) { S.msg = 'スキャン失敗：fieldmap.js を読み込めない ' + e.message; return; }
+    if (W.FIXED_FIELD) { // the fixed middle square: only phone C's pose is unknown
+      const cam = await measureFixed();
+      if (!cam) { S.msg = 'スキャン失敗：床のタグ（ID 0〜3）が 1 枚も見えていない。カメラを高くするか、近づける'; return; }
+      applyField({ poly: W.FIELD.poly.map(p => [...p]), tags: fixedTags() }); saveField();
+      S.tagCam = cam; try { localStorage.setItem(CAM_KEY, JSON.stringify(cam)); } catch {}
+      const good = cam.reprojErrPx < 3; S.ready = S.ready || good;
+      S.msg = good ? `スキャン完了：タグ ${cam.ids.join(',')}　誤差 ${cam.reprojErrPx.toFixed(1)}px　縦画角 ${cam.fovY.toFixed(1)}°${cam.focalFitted ? '（測定）' : '（設定値）'}`
+        : `スキャン不十分：誤差 ${cam.reprojErrPx.toFixed(1)}px が大きい。タグの置き方（時計回り 0→1→2→3、同じ向き、一辺 ${(W.TAG_PITCH * 1000).toFixed(0)} mm）を確かめる`;
+      resize(); return;
+    }
     const need = modeIds(), src = video.__dummy?.canvas ?? video;
     const mount = W.FIXED_FIELD ? 'floor' : cfg.tagMount; // map4's centre square lies on the floor: the standing model would make its own frame from the picture
     const fovY = mount === 'stand' ? cfg.knownFov ?? null : null; // leaning sheets cannot fix the focal from one view
@@ -119,22 +129,23 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
       : `スキャン不十分：${!need.every(id => m.ids.includes(id)) ? `タグが${m.ids.length}枚しか見えていない` : `誤差 ${m.reprojErrPx.toFixed(1)}px が大きい`}。置き方を直してもう一度`;
     resize();
   }
-  // ---- keeping phone C aligned by itself: the same scan, quietly and again and again, only for the fixed layout ----
-  // The sheets never move, so only phone C's pose (and focal) is refreshed, smoothed a little; a failed or poor scan changes nothing.
+  // ---- phone C's pose from the fixed tags: the sheets' world poses are known (world.js), so this is a plain pose-from-known-points
+  // problem on the 16 corners (extrinsics.js: homography start + LM, the focal fitted only when the corners pin it down, else the
+  // vertical fov set in the settings), not a free map of unknown sheets. It stays accurate when the middle square is small and far. ----
   const qOf = R => W.toQuat(R), blendQ = (a, b, k) => { // normalised lerp of [w,x,y,z]
     const s = a.reduce((d, v, i) => d + v * b[i], 0) < 0 ? -1 : 1, q = a.map((v, i) => v + k * (s * b[i] - v)), n = Math.hypot(...q); return q.map(v => v / n);
   };
+  const fixedTags = () => Object.fromEntries(W.CORNER_IDS.map(id => [id, { pos: [...W.TAGS[id].pos], yaw: W.TAGS[id].yaw ?? 0 }]));
+  const measureFixed = () => calibrateCamera(video.__dummy?.canvas ?? video, { fovYGuess: cfg.fovC ?? 40, fitFocal: 'auto', frames: 3, intervalMs: 100 });
   let aligning = false;
   async function autoAlign() {
     if (aligning || !W.FIXED_FIELD || !(video.videoWidth || video.__dummy) || document.hidden) return;
     aligning = true;
     try {
-      const FM = await import('./fieldmap.js');
-      const m = await FM.scanField(video.__dummy?.canvas ?? video, { fovYGuess: S.tagCam?.fovY ?? GUIDE_CAM.fov, mode: cfg.tagMode, mount: 'floor', tagHeight: cfg.tagHeight, frames: 3, intervalMs: 100 });
-      if (!m || !(m.reprojErrPx < 4)) return;
-      const fit = W.toFixedFrame(m.tags, m.cam.pose); if (!fit) return;
-      const cam = { ...m.cam, pose: fit.pose }, old = S.tagCam;
-      if (!S.scanned) { applyField({ poly: W.FIELD.poly.map(p => [...p]), tags: fit.tags }); saveField(); }
+      const cam = await measureFixed();
+      if (!cam || !(cam.reprojErrPx < 3)) return;
+      const old = S.tagCam;
+      if (!S.scanned) { applyField({ poly: W.FIELD.poly.map(p => [...p]), tags: fixedTags() }); saveField(); }
       const near = old?.pose && Math.hypot(...cam.pose.t.map((v, i) => v - old.pose.t[i])) < .5;
       if (near) { // a steady picture: follow it gently instead of jumping with every measurement
         const k = .3, q = blendQ(qOf(old.pose.R), qOf(cam.pose.R), k);
