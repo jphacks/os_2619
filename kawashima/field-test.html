@@ -18,7 +18,7 @@
 <div id="hud"></div>
 <script type="module">
 // Field display + effects with two synthetic players (walk, swing, fire, charge a special).
-// ?t=<s> simulate to t and freeze  ?cam=high|top|side|drone  ?layout=full  ?debug=1 axes  ?bench=N field cost  ?mini=0
+// ?t=<s> simulate to t and freeze  ?cam=high|top|side|drone (or &campos=x,y,z&look=x,y,z)  ?layout=full  ?debug=1 axes  ?bench=N field cost  ?mini=0
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as W from './world.js';
@@ -35,7 +35,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, .05, 100);
 const CAMS = { high: [[0, 5.2, 6.4], [0, .6, 0]], top: [[0, 9.5, .01], [0, 0, 0]], side: [[.6, 1.15, 4.6], [0, 1, 0]], drone: [[-4.2, 3.2, 3.6], [0, .8, 0]] };
-const [cp, ct] = CAMS[P.get('cam')] ?? CAMS.high;
+const [cp, ct] = P.has('campos') ? [P.get('campos').split(',').map(Number), (P.get('look') ?? '0,1,0').split(',').map(Number)] : CAMS[P.get('cam')] ?? CAMS.high;
 camera.position.set(...cp);
 const orbit = new OrbitControls(camera, canvas); orbit.target.set(...ct); orbit.update();
 

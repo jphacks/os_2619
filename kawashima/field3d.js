@@ -30,7 +30,27 @@ function label(text, color, h = .14) {
   });
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false }));
   s.scale.set(h * 256 / 96, h, 1);
+  limitSprite(s, { near: 1.2, behindNear: 1.2 });
   return s;
+}
+
+/**
+ * Per camera, just before drawing: shrink a sprite so it covers at most `maxFrac` of the view height, and fade it out
+ * when the camera is within `near` m (or `behindNear` m when behind `facing`, a world Vector3 or null).
+ */
+const _cp = V(), _sp = V();
+function limitSprite(s, { maxFrac = .12, near = 2, behindNear = 3.5, facing = null } = {}) {
+  const w0 = s.scale.x, h0 = s.scale.y, op0 = s.material.opacity;
+  s.onBeforeRender = (r, sc, cam) => {
+    s.getWorldPosition(_sp); _cp.setFromMatrixPosition(cam.matrixWorld);
+    const d = _cp.distanceTo(_sp);
+    const behind = facing && _cp.sub(_sp).dot(facing) < 0, fadeAt = behind ? behindNear : near; // behind: the bar sits between camera and action
+    const k = cam.isPerspectiveCamera ? Math.min(1, (behind ? .6 : 1) * maxFrac * 2 * d * Math.tan(cam.fov * Math.PI / 360) / cam.zoom / h0) : 1;
+    const a = THREE.MathUtils.clamp((d - fadeAt * .6) / (fadeAt * .4), 0, 1);
+    s.scale.set(w0 * k, h0 * k, 1); s.updateMatrixWorld();
+    s.material.opacity = op0 * a;
+  };
+  s.onAfterRender = () => { s.scale.set(w0, h0, 1); };
 }
 
 // ---- floor: one quad, everything analytic (grid, boundary glow, centre line, start rings, player shadows + HP arcs) ----
@@ -194,6 +214,7 @@ function makeAvatar(slot) {
   const hpTex = new THREE.CanvasTexture(hpCanvas); hpTex.colorSpace = THREE.SRGBColorSpace;
   const hpSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: hpTex, depthWrite: false, depthTest: false })); hpSprite.renderOrder = 10;
   hpSprite.scale.set(1, 88 / 320, 1); hpSprite.center.set(.5, -.15); world.add(hpSprite); // anchored below: stays above the head on screen from any angle
+  const facing = V(1, 0, 0); limitSprite(hpSprite, { facing });
   let hpKey = '';
   function drawHp(hp, online, charge) {
     const key = `${Math.ceil(hp)}|${online}|${Math.round(charge * 10)}`; if (key === hpKey) return; hpKey = key;
@@ -281,6 +302,7 @@ function makeAvatar(slot) {
         glow.color.copy(online ? onColor : offColor).multiplyScalar(1.4);
       }
       drawHp(p.hp ?? 100, online, p.charging ? (p.charge ?? 0) : 0);
+      facing.set(f[0], 0, f[2]).normalize();
       hpSprite.position.set(bp.t[0], ch + .5 + .02 * Math.sin(st.time * 1.7) - st.ko * .3, bp.t[2]);
       return { x: bp.t[0], z: bp.t[2], hp: (p.hp ?? 100) / 100, vis: online ? 1 : .5 };
     },
