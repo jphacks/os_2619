@@ -166,7 +166,10 @@ export function createMap() {
       const tag = v && now - v.t < 0.5 && toM[o] ? R(o, v.p) : null;
       if (a && toM[s]) {
         const f = Rd(s, qrot(a.q, [0, 0, -1]));
-        people[s] = { t: a.t, p: R(s, a.p), fwd: norm([f[0], 0, f[2]]), src: 'AR', tag, trail: slots[s].trail.map(e => R(s, e.p)) };
+        // phone axes in room coordinates: image right, image down, viewing direction (see `swap` for the ARCore mapping)
+        const ax = v => Rd(s, qrot(a.q, v));
+        people[s] = { t: a.t, p: R(s, a.p), fwd: norm([f[0], 0, f[2]]), src: 'AR', tag, trail: slots[s].trail.map(e => R(s, e.p)),
+          axes: { right: ax([0, 1, 0]), down: ax([1, 0, 0]), fwd: ax([0, 0, -1]) } };
         const at = tag && poseAt(s, v.t);
         if (at) people[s].check = dist(R(s, at.p), tag); // AR vs tag disagreement, same instant
       } else if (tag) people[s] = { t: v.t, p: tag, src: `tag seen by ${o}`, tag, trail: [] };

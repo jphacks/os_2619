@@ -330,7 +330,7 @@ function plan(c, e, top) { // top: x right, z down; side: x right, y up
   const [g, w, h] = fit(c);
   g.clearRect(0, 0, w, h);
   const V = p => top ? p[2] : p[1];
-  const pts = e.corners.map(c => c.p);
+  const pts = [];
   for (const p of Object.values(e.people)) pts.push(p.p, ...p.trail);
   for (const t of Object.values(e.tips)) pts.push(t.p);
   if (!pts.length) { g.fillStyle = css('--text-muted'); g.font = '13px system-ui'; g.fillText('waiting for AR tracking', 12, 20); return; }
@@ -344,14 +344,9 @@ function plan(c, e, top) { // top: x right, z down; side: x right, y up
   g.stroke();
   g.font = '11px system-ui'; g.lineCap = g.lineJoin = 'round';
 
-  // floor: tag polygon from above, floor line from the side
+  // floor line from the side
   g.strokeStyle = g.fillStyle = css('--text-muted'); g.lineWidth = 1.5;
-  if (top && e.corners.length > 1) {
-    const ring = [...e.corners].sort((a, b) => Math.atan2(a.p[2], a.p[0]) - Math.atan2(b.p[2], b.p[0]));
-    g.beginPath(); ring.forEach((c, i) => i ? g.lineTo(...P(c.p)) : g.moveTo(...P(c.p))); g.closePath(); g.stroke();
-  }
   if (!top && e.floorKnown) { g.beginPath(); g.moveTo(0, Y(0)); g.lineTo(w, Y(0)); g.stroke(); }
-  for (const c of e.corners) { const [x, y] = P(c.p); g.fillRect(x - 4, y - 4, 8, 8); if (top) g.fillText(`tag ${c.id}`, x + 6, y - 6); }
 
   for (const [s, p] of Object.entries(e.people)) {
     const col = css(who[s]);
@@ -360,7 +355,6 @@ function plan(c, e, top) { // top: x right, z down; side: x right, y up
     const b = e.bodies[s];
     if (b) { g.lineWidth = 1.5; g.beginPath(); for (let i = 0; i < POSE.length; i += 2) { const a = b[POSE[i]], c = b[POSE[i + 1]]; if (a && c) { g.moveTo(...P(a)); g.lineTo(...P(c)); } } g.stroke(); }
     const [x, y] = P(p.p);
-    if (p.tag && p.src === 'AR') { const [tx, ty] = P(p.tag); g.lineWidth = 1; g.strokeRect(tx - 4, ty - 4, 8, 8); } // where the other phone sees the chest tag
     g.beginPath(); g.arc(x, y, 7, 0, 7); g.fill();
     if (top && p.fwd) { g.lineWidth = 2.5; g.beginPath(); g.moveTo(x, y); g.lineTo(x + p.fwd[0] * 0.5 * sc, y + p.fwd[2] * 0.5 * sc); g.stroke(); }
     g.fillStyle = css('--text-primary'); g.font = '600 12px system-ui'; g.fillText(s, x + 9, y + 4); g.font = '11px system-ui';
@@ -390,10 +384,27 @@ const cam3Home = { ...cam3 };
   c.ondblclick = () => Object.assign(cam3, cam3Home);
 }
 
+/** The phone as a box (drawn PHONE_SCALE x life size so it reads at room scale): camera side filled, lens dot at the top, arrow along the viewing direction. */
+const PHONE = [0.07, 0.15, 0.01], PHONE_SCALE = 2.5;
+function phone3d(g, P, p, col) {
+  const { right, down, fwd } = p.axes, [hw, hh, hd] = PHONE.map(v => v * PHONE_SCALE / 2);
+  const at = (a, b, c) => [0, 1, 2].map(i => p.p[i] + right[i] * a * hw - down[i] * b * hh + fwd[i] * c * hd); // b > 0 = towards the phone's top edge
+  const xy = q => P(q).slice(0, 2);
+  const V = {}, key = (a, b, c) => `${a}${b}${c}`;
+  for (const a of [-1, 1]) for (const b of [-1, 1]) for (const c of [-1, 1]) V[key(a, b, c)] = at(a, b, c);
+  const face = c => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => V[key(a, b, c)]); // c = 1 camera side, -1 screen side
+  const poly = (f, alpha) => { g.globalAlpha = alpha; g.beginPath(); f.forEach((q, i) => i ? g.lineTo(...xy(q)) : g.moveTo(...xy(q))); g.closePath(); g.fill(); g.globalAlpha = 1; g.stroke(); };
+  g.fillStyle = g.strokeStyle = col; g.lineWidth = 1.5; g.lineJoin = 'round';
+  poly(face(-1), 0.25); poly(face(1), 0.8);
+  for (const a of [-1, 1]) for (const b of [-1, 1]) { g.beginPath(); g.moveTo(...xy(V[key(a, b, -1)])); g.lineTo(...xy(V[key(a, b, 1)])); g.stroke(); }
+  const [lx, ly] = xy(at(0.5, 0.75, 1)); g.fillStyle = css('--bg'); g.beginPath(); g.arc(lx, ly, 3, 0, 7); g.fill();
+  g.strokeStyle = col; g.lineWidth = 2.5; g.beginPath(); g.moveTo(...xy(p.p)); g.lineTo(...xy(p.p.map((v, i) => v + fwd[i] * 0.5))); g.stroke();
+}
+
 function view3d(c, e) {
   const [g, w, h] = fit(c);
   g.clearRect(0, 0, w, h);
-  const pts = e.corners.map(c => c.p);
+  const pts = [];
   for (const p of Object.values(e.people)) pts.push(p.p, ...p.trail);
   for (const t of Object.values(e.tips)) pts.push(t.p);
   if (!pts.length) { g.fillStyle = css('--text-muted'); g.font = '13px system-ui'; g.fillText('waiting for AR tracking', 12, 20); return; }
@@ -419,20 +430,6 @@ function view3d(c, e) {
   for (let x = gx0; x <= gx1; x++) line([x, 0, gz0], [x, 0, gz1]);
   for (let z = gz0; z <= gz1; z++) line([gx0, 0, z], [gx1, 0, z]);
   g.stroke();
-  // world axes at the origin: x red-ish, y up, z
-  g.lineWidth = 2;
-  for (const [d, col, name] of [[[1, 0, 0], '--series-1', 'x'], [[0, 1, 0], '--text-secondary', 'y'], [[0, 0, 1], '--series-2', 'z']]) {
-    g.strokeStyle = g.fillStyle = css(col); g.beginPath(); line([0, 0, 0], d); g.stroke(); g.fillText(name, ...P(d).slice(0, 2));
-  }
-
-  // floor tags
-  g.strokeStyle = g.fillStyle = css('--text-muted'); g.lineWidth = 1.5;
-  if (e.corners.length > 1) {
-    const ring = [...e.corners].sort((a, b) => Math.atan2(a.p[2], a.p[0]) - Math.atan2(b.p[2], b.p[0]));
-    g.beginPath(); ring.forEach((c, i) => i ? g.lineTo(...P(c.p).slice(0, 2)) : g.moveTo(...P(c.p).slice(0, 2))); g.closePath(); g.stroke();
-  }
-  for (const c of e.corners) { const [x, y] = P(c.p); g.fillRect(x - 4, y - 4, 8, 8); g.fillText(`tag ${c.id}`, x + 6, y - 6); }
-
   // everything with a height gets a drop line and a shadow dot so it can be read against the floor
   const drop = (p, col) => {
     const q = [p[0], 0, p[2]]; g.save(); g.globalAlpha = 0.35; g.strokeStyle = g.fillStyle = col; g.lineWidth = 1;
@@ -445,10 +442,8 @@ function view3d(c, e) {
     const b = e.bodies[s];
     if (b) { g.lineWidth = 1.5; g.beginPath(); for (let i = 0; i < POSE.length; i += 2) { const a = b[POSE[i]], d = b[POSE[i + 1]]; if (a && d) line(a, d); } g.stroke(); }
     drop(p.p, col);
-    const [x, y, sc] = P(p.p);
-    if (p.fwd) { g.lineWidth = 2.5; g.beginPath(); line(p.p, [p.p[0] + p.fwd[0] * 0.5, p.p[1], p.p[2] + p.fwd[2] * 0.5]); g.stroke(); }
-    if (p.tag && p.src === 'AR') { const [tx, ty] = P(p.tag); g.lineWidth = 1; g.strokeRect(tx - 4, ty - 4, 8, 8); }
-    g.beginPath(); g.arc(x, y, Math.max(4, Math.min(10, 0.1 * sc)), 0, 7); g.fill();
+    const [x, y] = P(p.p);
+    if (p.axes) phone3d(g, P, p, col); else { g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill(); }
     g.fillStyle = css('--text-primary'); g.font = '600 12px system-ui'; g.fillText(s, x + 9, y + 4); g.font = '11px system-ui';
   }
   for (const [s, t] of Object.entries(e.tips)) {
@@ -477,11 +472,6 @@ function mapPanel(e) {
   const a = e.align;
   L.push(e.aligned ? `A↔B frames: ${a.pairs} pairs, rms ${cm(a.rms)}, ${a.shared} shared floor tags`
     : 'A↔B not aligned yet: walk around while each phone sees the other\'s chest tag, or let both see one floor tag');
-  if (e.corners.length) {
-    const ring = [...e.corners].sort((x, y) => Math.atan2(x.p[2], x.p[0]) - Math.atan2(y.p[2], y.p[0]));
-    const edges = ring.length > 1 ? ring.map((c, i) => { const d = ring[(i + 1) % ring.length].p; return m(Math.hypot(c.p[0] - d[0], c.p[2] - d[2])); }) : [];
-    L.push(`floor tags ${ring.map(c => c.id).join(', ')}${edges.length > 1 ? ` · edges ${edges.join(' / ')} m` : ''}`);
-  }
   for (const w of e.warn) L.push(`<span class="warn">${esc(w)}</span>`);
   document.querySelector('.mapinfo').innerHTML = L.join('<br>');
 }
