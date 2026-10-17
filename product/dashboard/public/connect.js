@@ -5,7 +5,7 @@
 //  - server: IP and port to type into the app, QR codes for phone C's page and the certificate page
 //  - sidebar: the four detected actions (sensing actions.js) with the last time each fired, stick length, history
 import { ACTIONS } from './actions.js';
-import { norm } from './map.js';
+import * as W from './world.js';
 import { SOURCES } from './video.js';
 
 const WINDOW = 10; // seconds shown in the IMU charts
@@ -226,7 +226,7 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
     const tg = ph.last.tags;
     if (fresh(tg)) for (const t of tg.tags) {
       g.strokeStyle = '#3f3'; g.beginPath(); t.c.forEach(([x, y], i) => i ? g.lineTo(x * w, y * h) : g.moveTo(x * w, y * h)); g.closePath(); g.stroke();
-      g.fillStyle = '#3f3'; g.fillText(`ID ${t.id}${t.p ? ' ' + t.p[2].toFixed(2) + 'm' : ''}`, t.c[0][0] * w, t.c[0][1] * h - 6);
+      g.fillStyle = '#3f3'; g.fillText(`ID ${t.id}${t.p ? ' ' + (t.p[2] * W.tagScale(t.id, t.sz)).toFixed(2) + 'm' : ''}`, t.c[0][0] * w, t.c[0][1] * h - 6);
     }
   }
   function panels(s, ph, rates) {
@@ -240,7 +240,7 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
     } else { b.textContent = '—'; b.className = 'badge ar off'; s.q('.arinfo').textContent = 'データなし'; }
     const tg = ph.last.tags;
     s.q('.tags tbody').innerHTML = (tg?.tags ?? []).map(t => t.p
-      ? `<tr><td>${esc(t.id)}</td>${t.p.map(v => `<td>${v.toFixed(2)}</td>`).join('')}<td>${Math.hypot(...t.p).toFixed(2)}</td></tr>`
+      ? `<tr><td>${esc(t.id)}</td>${t.p.map(v => `<td>${(v * W.tagScale(t.id, t.sz)).toFixed(2)}</td>`).join('')}<td>${(Math.hypot(...t.p) * W.tagScale(t.id, t.sz)).toFixed(2)}</td></tr>`
       : `<tr><td>${esc(t.id)}</td><td colspan=4>姿勢なし</td></tr>`).join('') || '<tr><td colspan=5 class=kv>見えていない</td></tr>';
     s.q('.rates tbody').innerHTML = Object.entries(rates).sort().map(([k, r]) =>
       `<tr><td>${esc(k)}</td><td>${r.hz.toFixed(0)}</td><td>${ph.lat[k] == null ? '–' : (ph.lat[k] * 1000).toFixed(0) + ' ms'}</td></tr>`).join('');

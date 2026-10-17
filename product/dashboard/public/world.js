@@ -122,7 +122,8 @@ export function inField(x, z) {
 }
 /** Factor from a tag message's p to metres. The app measures each tag at its printed size (`sz`: 50 mm for the worn tags 8-11,
  *  200 mm for every fixed one), so p is already metric; an old app sends no `sz` and used one size for all (PHONE_TAG_SIZE). */
-export const tagScale = (id, sz) => (sz ? 1 : (TAGS[id]?.size ?? PHONE_TAG_SIZE) / PHONE_TAG_SIZE);
+export const TAG_DIST_SCALE = 1 / 1.40; // measured: the Android camera reported 1.40 m for a tag 1.00 m away, whatever the id (distances are proportional)
+export const tagScale = (id, sz) => TAG_DIST_SCALE * (sz ? 1 : (TAGS[id]?.size ?? PHONE_TAG_SIZE) / PHONE_TAG_SIZE);
 
 // ---- small pose maths ----
 export const I3 = [1, 0, 0, 0, 1, 0, 0, 0, 1];

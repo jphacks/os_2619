@@ -159,7 +159,7 @@ export function createSim({ seed = 1, drift = 0, noise = 1 } = {}) {
         .map((q, i) => r3(q + 0.5 * noise * gauss() / (i ? CAM.h : CAM.w))));
       const tn = c.map(x => x + 0.01 * noise * gauss());
       const Rn = noise ? mul3(cT.R, fromRodrigues([gauss(), gauss(), gauss()].map(x => x * 0.5 * D2R * noise / Math.sqrt(3)))) : cT.R;
-      list.push({ id, c: corners, p: tn.map(x => r3(x)), sz: TAGS[id].size, r: rodrigues(Rn).map(r6) });
+      list.push({ id, c: corners, p: tn.map(x => r3(x / tagScale(id, TAGS[id].size))), sz: TAGS[id].size, r: rodrigues(Rn).map(r6) });
     }
     return { type: 'tags', k: [CAM.fx / CAM.w, CAM.fy / CAM.h, CAM.cx / CAM.w, CAM.cy / CAM.h], tags: list };
   }
