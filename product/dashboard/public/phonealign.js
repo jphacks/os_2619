@@ -72,7 +72,7 @@ function robustFit(c) {
 }
 
 /**
- * createPhoneAlign({ keep = 20, minAlign = 3, localizer, axis }) -> { ingest(k), get(slot), estimate(now), onFieldChange() }
+ * createPhoneAlign({ keep = 20, minAlign = 3, localizer, axis, headingSign: () => 1 | -1 }) -> { ingest(k), get(slot), estimate(now), onFieldChange() }
  * - ingest(k): every relayed message (k.slot A/B; types ar, tags, imu, color, calib, phones).
  * - get(slot): { src: 'ar'|'localize'|null, aligned, theta, t, rms, n, used, lastFix, world_T_ar, chest, fwd, yaw, cam (world_T_arcam),
  *   trail,
@@ -244,7 +244,7 @@ export function createPhoneAlign(opts = {}) {
     const axis = o.axis?.[s] ?? W.STICK.axis;
     if (st.imu.euler) {
       const d = eulerRot(st.imu.euler, axis), el = Math.asin(Math.max(-1, Math.min(1, d[2])));
-      const hd = Math.atan2(d[1], d[0]) - st.yaw0; // + = turned left (counter-clockwise seen from above)
+      const hd = (o.headingSign?.() ?? 1) * (Math.atan2(d[1], d[0]) - st.yaw0); // + = turned left (counter-clockwise seen from above); headingSign -1 turns the sword's left-right round
       return [Math.cos(el) * Math.cos(hd), Math.sin(el), -Math.cos(el) * Math.sin(hd)];
     }
     if (!st.imu.q) return null;

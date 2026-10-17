@@ -289,15 +289,16 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     // The 3D comes out point-symmetric (turned 180° about the picture's centre) against phone C's picture: turn the whole canvas and the
     // picture texture by 180° once more, so the picture stays as it is and only the 3D turns (the background is its own full-screen
     // plane, the camera does not touch it).
-    const flip = !!cfg.rot180 && !fpv && !dummy && video.videoWidth > 0; // only over a live picture (without one the arena is shown from the guide spot)
-    canvas.style.transform = flip ? 'rotate(180deg)' : '';
-    for (const t of [videoTex, overTex]) if (t) { t.repeat.set(flip ? -1 : 1, flip ? -1 : 1); t.offset.set(flip ? 1 : 0, flip ? 1 : 0); }
+    const live = !fpv && !dummy && video.videoWidth > 0; // only over a live picture (without one the arena is shown from the guide spot)
+    const mx = live && !!cfg.mirrorX, my = live && !!cfg.mirrorY, flip = mx || my; // both = turned 180° about the picture's centre
+    canvas.style.transform = flip ? `scale(${mx ? -1 : 1}, ${my ? -1 : 1})` : '';
+    for (const t of [videoTex, overTex]) if (t) { t.repeat.set(mx ? -1 : 1, my ? -1 : 1); t.offset.set(mx ? 1 : 0, my ? 1 : 0); }
     fx.render();
     if (cfg.pip) { // drone view in the bottom-right corner (no bloom)
       const w = S.w * .28, h = S.h * .28;
       scene.background = field.background; field.group.visible = true; camHelper.visible = cfg.debug;
       overCam.aspect = w / h; overCam.updateProjectionMatrix();
-      const px = flip ? 10 : S.w - w - 10, py = flip ? S.h - h - 10 : 10; // the turned canvas shows the opposite corner
+      const px = mx ? 10 : S.w - w - 10, py = my ? S.h - h - 10 : 10; // the mirrored canvas shows the opposite corner
       renderer.setScissorTest(true); renderer.setScissor(px, py, w, h); renderer.setViewport(px, py, w, h);
       renderer.render(scene, overCam);
       renderer.setScissorTest(false); renderer.setViewport(0, 0, S.w, S.h);

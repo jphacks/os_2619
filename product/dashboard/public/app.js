@@ -27,7 +27,7 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 // ---- settings (localStorage) ----
 const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
-  minimap: true, debug: false, pip: false, rot180: true, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
+  minimap: true, debug: false, pip: false, mirrorX: true, mirrorY: true, swordFlip: true, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
   matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 5, fxStyle: 'smash',
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
@@ -45,7 +45,7 @@ const axis = { A: W.STICK.axis, B: W.STICK.axis }; // the IMU's +Y points to the
 
 // ---- data ----
 const hub = createHub();
-const PA = createPhoneAlign({ axis }); // the stick axis (IMU +Y): detectors and aim share it
+const PA = createPhoneAlign({ axis, headingSign: () => cfg.swordFlip ? -1 : 1 }); // the stick axis (IMU +Y): detectors and aim share it
 const smap = createMap();
 const detectors = createActions();
 const video = Object.assign(document.createElement('video'), { muted: true, playsInline: true });
