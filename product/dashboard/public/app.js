@@ -33,7 +33,7 @@ if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s match
 if ((saved.rulesVer ?? 0) < 2) cfg.aim = 'motion'; // ...and the aim from the tip's motion
 if ((saved.rulesVer ?? 0) < 4) cfg.fxStyle = 'smash'; // the program-drawn set is the one used in the show (10/18)
 cfg.rulesVer = 4;
-cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg } };
+cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg }, size: { ...RULES.size, ...saved.rules?.size } };
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
 const axis = {}; // IMU sensor axis along each stick (sensing: calibrated by holding the stick straight up)
 for (const s of ['A', 'B']) { try { axis[s] = JSON.parse(localStorage.getItem('pd-axis' + s)) ?? [1, 0, 0]; } catch { axis[s] = [1, 0, 0]; } }
@@ -117,7 +117,7 @@ gameCtrl.innerHTML = `
   <h3>試合の進行</h3>
   <div class="phase">
     <button data-phase="setup">準備中<kbd>1</kbd></button>
-    <button data-phase="fight" class="go">試合開始<kbd>3</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
+    <button data-phase="fight" class="go">試合開始<kbd>3</kbd></button><button data-phase="demo" title="試合と同じだが、魔法が全部相手に向かって飛ぶ（ホーミング）">デモ試合開始<kbd>2</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
   </div>
   <div class="row" style="margin-top:6px"><button data-cmd="reset">やり直し<kbd>R</kbd></button><label class="kv">試合時間 <input id="secIn" type="number" min="10" max="600" step="10" style="width:64px"> 秒</label></div>
   <p class="why" id="why"></p>
@@ -136,6 +136,9 @@ gameCtrl.innerHTML = `
     <label>大のダメージ <input data-rule="dmg.l" type="number" min="0" max="100" step="1"></label>
     <label>小の連打の間隔 <input data-rule="rapid" type="number" min="0" max="3" step="0.05"> 秒</label>
     <label>溜め失敗になる移動 <input data-rule="moveFail" type="number" min="5" max="300" step="5" data-scale="100"> cm</label>
+    <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">小の玉の大きさ <input data-rule="size.s" type="number" min="0.2" max="4" step="0.1"> 倍</label>
+    <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">中の玉の大きさ <input data-rule="size.m" type="number" min="0.2" max="4" step="0.1"> 倍</label>
+    <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">大の玉の大きさ <input data-rule="size.l" type="number" min="0.2" max="4" step="0.1"> 倍</label>
     <div class="row"><button id="rulesReset">初期値に戻す</button><span class="muted" id="rulesNote"></span></div>
   </div>
   <h3>エフェクトを試す</h3>
@@ -174,7 +177,7 @@ for (const b of gameCtrl.querySelectorAll('[data-fxcharge]')) {
   b.onpointerup = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: false, fire: true });
   b.onpointerleave = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: false });
 }
-$('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg } }; save(); showRules(); };
+$('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg }, size: { ...RULES.size } }; save(); showRules(); };
 showRules();
 for (const pc of gameCtrl.querySelectorAll('.pc')) for (const b of pc.querySelectorAll('[data-act]')) {
   const slot = pc.dataset.s, a = b.dataset.act;
@@ -215,7 +218,7 @@ drawer.innerHTML = `
     <div class="row"><button id="mute">消音</button><span class="note" id="audioInfo"></span></div>
     <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}</div></section>
   <section><h3>キー操作</h3><table class="keys">
-    <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 3 4</td><td>準備中・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
+    <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ試合開始（ホーミング）・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
     <tr><td>Space / Enter</td><td>A / B が小の攻撃（溜めなし）</td></tr><tr><td>Q / P 長押し</td><td>A / B が溜める（離した時の溜め時間で小・中・大）</td></tr>
     <tr><td>K</td><td>タグでスキャン</td></tr><tr><td>D</td><td>ドローン視点の切り替え</td></tr><tr><td>M / G</td><td>ミニマップ / デバッグ表示</td></tr><tr><td>F</td><td>最終映像を全画面</td></tr><tr><td>S</td><td>設定</td></tr></table></section>`;
 $('#openSettings').onclick = () => drawer.classList.toggle('open');
@@ -242,7 +245,7 @@ for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
 };
 
 // ---- keys ----
-const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 3: { cmd: 'phase', phase: 'fight' }, 4: { cmd: 'pause' }, r: { cmd: 'reset' },
+const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 2: { cmd: 'phase', phase: 'demo' }, 3: { cmd: 'phase', phase: 'fight' }, 4: { cmd: 'pause' }, r: { cmd: 'reset' },
   ' ': { cmd: 'shoot', slot: 'A' }, Enter: { cmd: 'shoot', slot: 'B' } };
 const held = { q: 'A', p: 'B' };
 addEventListener('keydown', e => {
@@ -280,7 +283,7 @@ function updateHud() {
   }
   const showTimer = m.phase === 'fight' || m.phase === 'result';
   setText(hud.querySelector('.timer'), showTimer ? `${Math.floor(Math.ceil(m.left) / 60)}:${String(Math.ceil(m.left) % 60).padStart(2, '0')}` : '');
-  const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : '';
+  const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : m.mode === 'demo' ? 'デモ試合（ホーミング）' : '';
   setText(pp, pt); pp.style.display = pt ? '' : 'none';
   const bt = game.bannerText(), bn = hud.querySelector('.banner');
   bn.style.display = bt ? 'grid' : 'none'; setText(bn, bt);
@@ -294,7 +297,8 @@ function updateSlowUi() {
   const st = vsrc.state; pill('#pillC', video.videoWidth ? true : st.mode === 'remote' && st.cam ? 'half' : false);
   $('#pillC span:last-child').textContent = st.mode === 'remote' ? 'カメラ' : st.mode === 'local' ? 'PCカメラ' : 'ダミー';
   pill('#pillLink', hub.link === 'open');
-  for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.classList.toggle('on', b.dataset.phase === m.phase || (b.dataset.phase === 'fight' && ['countdown', 'fight', 'result'].includes(m.phase)));
+  const playing = ['countdown', 'fight', 'result'].includes(m.phase);
+  for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.classList.toggle('on', b.dataset.phase === 'setup' ? m.phase === 'setup' : playing && b.dataset.phase === (m.mode === 'demo' ? 'demo' : 'fight'));
   gameCtrl.querySelector('[data-cmd=pause]').classList.toggle('on', m.paused);
   for (const b of document.querySelectorAll('[data-tog]')) b.classList.toggle('on', !!cfg[b.dataset.tog]);
   for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.classList.toggle('on', b.dataset.drone === stage.drone.mode);

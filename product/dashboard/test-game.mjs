@@ -17,7 +17,7 @@ function setup({ rules = {}, matchSec = 60, test = false } = {}) {
   let t = 1000, ids = 1;
   const fx = { aura() {}, charge() {}, shot: () => ids++, moveShot() {}, endShot() {}, hit() {} };
   const cfg = { posSrc: 'start', aim: 'motion', hand: 'R', stickLen: { A: .8, B: .8 }, useTruth: true, test,
-    rules: { ...RULES, ...rules, dmg: { ...RULES.dmg, ...rules.dmg } } };
+    rules: { ...RULES, ...rules, dmg: { ...RULES.dmg, ...rules.dmg }, size: { ...RULES.size, ...rules.size } } };
   const g = createGame({ fx, drone: null, cfg, clock: () => t });
   const pos = { A: [-1.2, 0], B: [1.2, 0] };
   const put = (slot, x, z) => { // chest 1.3 m up, stick held at the chest pointing straight at the other start mark
@@ -199,6 +199,39 @@ scenario('ガードと回避のセンサー判定は、ゲームでは何も起�
   S.g.onSensed({ slot: 'B', name: 'Guard' }); S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'left', speed: 1.5 });
   S.swing('A'); S.run(1);
   eq(S.B.hp, 95, 'B の HP（ガードも無敵もなし）');
+});
+
+// ---- デモ試合（ホーミング） ----
+scenario('デモ試合では、横に1m動いた相手にも小が曲がって当たる', () => {
+  const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
+  eq(S.g.match.phase, 'fight', '状態'); eq(S.g.match.mode, 'demo', 'モード');
+  S.walk('B', 0, 1, .3); S.swing('A'); S.run(1.5);
+  eq(S.B.hp, 95, 'B の HP');
+});
+scenario('デモ試合では、下に振り下ろしても相手に飛んで大が当たる', () => {
+  const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
+  S.charge('A'); S.run(5.5);
+  S.sweep('A', .2, () => [-1.0, 1.2, 0], u => { const a = Math.PI / 2 * (1 - u); return [Math.cos(a), Math.sin(a), 0]; });
+  eq(S.B.hp, 40, 'B の HP');
+});
+scenario('デモ試合でやり直すと、デモ試合のまま3秒数える', () => {
+  const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(4); S.g.command({ cmd: 'reset' });
+  eq(S.g.match.phase, 'countdown', '状態'); eq(S.g.match.mode, 'demo', 'モード');
+  S.g.command({ cmd: 'phase', phase: 'fight' }); eq(S.g.match.mode, 'normal', '試合開始で戻るモード');
+});
+
+// ---- 玉の大きさ ----
+scenario('60cmずれた相手に、小は1倍だと外れ、3倍だと当たる（当たりも大きくなる）', () => {
+  for (const [k, hp] of [[1, 100], [3, 95]]) {
+    const S = setup({ rules: { size: { s: k, m: 1, l: 1 } } }); S.fight(); S.walk('B', 0, .6, .3);
+    S.swing('A'); S.run(1.8);
+    eq(S.B.hp, hp, `${k}倍のときの B の HP`);
+  }
+});
+scenario('大の玉を0.5倍にすると、70cmずれた相手には当たらない', () => {
+  const S = setup({ rules: { size: { s: 1, m: 1, l: .5 } } }); S.fight(); S.walk('B', 0, .7, .3);
+  S.chargeShot('A', 5.5);
+  eq(S.B.hp, 100, 'B の HP');
 });
 
 // ---- 決着 ----

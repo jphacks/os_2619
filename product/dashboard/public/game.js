@@ -26,7 +26,7 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷' };
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5 };
+export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, size: { s: 1, m: 1, l: 1 } }; // size: ball size × (looks and hit radius)
 // how each tier looks and flies (provisional effects: size tells the tiers apart)
 const TIER = {
   s: { power: .15, big: .7, speed: 11, radius: .12, hit: .25 },
@@ -57,7 +57,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const players = { A: makePlayer('A'), B: makePlayer('B') };
   const other = p => p === players.A ? players.B : players.A;
   const shots = [];
-  const match = { phase: 'setup', ready: false, paused: false, sec: 60, left: 60, until: 0, fightAt: -9 };
+  // mode 'demo' (デモ試合): the same match, but every shot homes in on the other player (for showing it off)
+  const match = { phase: 'setup', mode: 'normal', ready: false, paused: false, sec: 60, left: 60, until: 0, fightAt: -9 };
   let winner = null;
   const canAct = () => !match.paused && match.phase === 'fight';
   const rules = () => cfg.rules ?? RULES;
@@ -118,15 +119,16 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     if (tier === 's' && now() - p.lastShot < rules().rapid) return false;
     p.lastShot = now();
     const T = TIER[tier], s = sfx();
-    const dummyTarget = !!getDummyFrame();
-    const aim = dummyTarget ? other(p).chest.clone().sub(p.tip).normalize()
+    const dummyTarget = !!getDummyFrame(), homing = dummyTarget || match.mode === 'demo';
+    const aim = homing ? other(p).chest.clone().sub(p.tip).normalize()
       : cfg.aim === 'eye' ? p.tip.clone().sub(p.chest.clone().add(V(0, .35, 0))).normalize()
         : (cfg.aim ?? 'motion') === 'motion' ? motionAim(p) ?? p.dir.clone() : p.dir.clone();
     p.shots++; if (tier === 'l') p.specials++;
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
     if (tier === 'l') { s?.special(p.element, panOf(p.tip)); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
     else { s?.shot(p.element, panOf(p.tip), T.power); drone?.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() }); }
-    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big, { tier }), owner: p, element: p.element, tier, pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now(), dummyTarget });
+    const k = sizeOf(tier);
+    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now(), dummyTarget, homing });
     log(p.slot, tier === 'l' ? 'special' : 'shot', `${TIER_JA[tier]}の攻撃${tier === 's' ? '' : `（溜め ${p.chargeT.toFixed(1)} 秒）`}`);
     return true;
   }
@@ -150,10 +152,12 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     const d = tr[end].p.clone().sub(tr[j].p);
     return d.lengthSq() > 1e-6 ? d.normalize() : null;
   }
+  const sizeOf = tier => Math.max(.2, Math.min(4, +(rules().size?.[tier] ?? 1) || 1));
   function fxShot(p, tier) { // try-out: aimed at the other player's chest so it always shows the hit too
     const T = TIER[tier], foe = other(p), aim = foe.chest.clone().sub(p.tip).normalize();
     if (tier === 'l') sfx()?.special(p.element, panOf(p.tip)); else sfx()?.shot(p.element, panOf(p.tip), T.power);
-    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big, { tier }), owner: p, element: p.element, tier, test: true, pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now() });
+    const k = sizeOf(tier);
+    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, test: true, homing: match.mode === 'demo', pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now() });
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
   }
   function damage(foe, from, tier) {
@@ -167,7 +171,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function stepShots(dt) {
     for (let i = shots.length - 1; i >= 0; i--) {
       const s = shots[i], foe = other(s.owner), T = TIER[s.tier];
-      if (s.dummyTarget && getDummyFrame()) {
+      if (s.homing || (s.dummyTarget && getDummyFrame())) { // homing (デモ試合 / dummy room): steer straight at the chest every frame
         const distance = s.pos.distanceTo(foe.chest);
         s.vel.copy(foe.chest).sub(s.pos).normalize().multiplyScalar(T.speed);
         s.pos.addScaledVector(s.vel, Math.min(dt, distance / T.speed));
@@ -175,7 +179,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       fx.moveShot(s.id, s.pos);
       // hit: distance to the opponent's vertical body segment (capsule radius .3 + the shot's own radius)
       const a = foe.chest.clone().setY(foe.chest.y - 1.05), b = foe.chest.clone().setY(foe.chest.y + .15);
-      const hit = (match.phase === 'fight' || s.test) && new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .3 + T.radius;
+      const hit = (match.phase === 'fight' || s.test) && new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .3 + T.radius * (s.size ?? 1);
       if (hit) {
         fx.hit(s.owner.element, s.pos.clone(), T.hit, { tier: s.tier }); sfx()?.hit(s.owner.element, panOf(s.pos), T.hit);
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
@@ -236,11 +240,12 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     for (const s of shots) fx.endShot(s.id); shots.length = 0; winner = null;
     for (const p of Object.values(players)) p.preview = null;
   }
+  /** ph: 'setup' | 'fight' | 'demo' (デモ試合: a fight where every shot homes in) */
   function setPhase(ph) {
-    if (ph === 'demo') ph = 'setup'; // the demo is gone (10/17)
+    if (ph === 'demo' || ph === 'fight') match.mode = ph === 'demo' ? 'demo' : 'normal';
     reset(); match.paused = false;
-    if (ph === 'fight') { match.phase = 'countdown'; match.until = now() + 3; match.left = match.sec; } else { match.phase = ph; match.left = match.sec; }
-    log(null, 'phase', { setup: '準備中にした', fight: '試合開始（3 秒前）' }[ph] ?? ph);
+    if (ph === 'fight' || ph === 'demo') { match.phase = 'countdown'; match.until = now() + 3; match.left = match.sec; } else { match.phase = ph; match.left = match.sec; }
+    log(null, 'phase', { setup: '準備中にした', fight: '試合開始（3 秒前）', demo: 'デモ試合開始（3 秒前・魔法は全部ホーミング）' }[ph] ?? ph);
   }
   function finish(w) {
     winner = w; match.phase = 'result';
@@ -260,7 +265,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     switch (c.cmd) {
       case 'phase': return setPhase(c.phase);
       case 'pause': if (match.phase === 'fight') { match.paused = !match.paused; log(null, 'phase', match.paused ? '一時停止' : '再開'); } return;
-      case 'reset': return setPhase(match.phase === 'result' || match.phase === 'countdown' ? 'fight' : match.phase); // again from the top
+      case 'reset': return setPhase(match.phase === 'result' || match.phase === 'countdown' || match.phase === 'fight' ? (match.mode === 'demo' ? 'demo' : 'fight') : match.phase); // again from the top, same mode
       case 'matchSec': match.sec = Math.max(10, +c.value || 60); if (match.phase !== 'fight') match.left = match.sec; return;
       case 'shoot': if (p) shoot(p, c.tier ?? 's'); return;
       case 'special': // test button: really charge (小 → 中 → 大, moving still fails it), then swing just past the 大 line

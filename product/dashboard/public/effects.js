@@ -831,10 +831,11 @@ export function createFx(renderer, scene, camera, opts = {}) {
     charge(element, tip, level, key = element, opt = {}) { const st = request(charges, key, element); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, level)); st.opt = opt; },
     /** The textured set's body aura + tip sphere directly (charge-effects.js); the 'textured' style also reaches it through aura(). */
     charging(element, chest, tip, level, key = element) { charging.request(element, chest, tip, level, key); },
-    /** big: overall size of the projectile (1 = the usual shot; the game's 小・中・大 tiers pass different sizes). opt: { tier } */
+    /** big: overall size of the projectile (1 = the usual shot; the game's 小・中・大 tiers pass different sizes). opt: { tier, scale } — scale:
+     *  the dashboard's ball size for styles that draw their own sizes (fx-smash.js); 'classic' gets it through big. */
     shot(element, pos, dir, power = .5, big = 1, opt = {}) {
       const id = nextId++;
-      shots.set(id, { id, el: element, pos: pos.clone(), prev: pos.clone(), from: pos.clone(), dir: dir.clone().normalize(), power, big, tier: opt.tier ?? null, age: 0, travel: 0, acc: {}, regen: 0, seed: R(),
+      shots.set(id, { id, el: element, pos: pos.clone(), prev: pos.clone(), from: pos.clone(), dir: dir.clone().normalize(), power, big, tier: opt.tier ?? null, scale: opt.scale ?? 1, age: 0, travel: 0, acc: {}, regen: 0, seed: R(),
         bolts: Array.from({ length: 6 }, () => new Bolt(96)), st: style });
       style.start?.(shots.get(id));
       return id;

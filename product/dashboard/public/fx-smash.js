@@ -22,13 +22,46 @@ import * as fireMod from './fx-smash-fire.js';
 import * as thunderMod from './fx-smash-thunder.js';
 import * as chargeMod from './fx-smash-charge.js';
 
-export function createSmashStyle(kit) {
+// Projectile size (the dashboard's 玉の大きさ, s.scale): the move modules draw at fixed sizes, so while a projectile is being
+// drawn the primitives they call are wrapped to scale every position about the projectile's centre, every size and every
+// speed by s.scale. Impacts and the charge look are drawn unscaled.
+function scaledKit(kit) {
+  const Z = { k: 1, c: new kit.THREE.Vector3() }, tP = new kit.THREE.Vector3(), tQ = new kit.THREE.Vector3();
+  const at = (v, o) => o.copy(v).sub(Z.c).multiplyScalar(Z.k).add(Z.c);
+  const sk = {
+    ...kit, _scale: Z,
+    emit(x, y, z, vx, vy, vz, life, s0, s1, drag, grav, col, kind, inten, turb, extra, ageOff) {
+      const k = Z.k;
+      if (k !== 1) { const c = Z.c; x = c.x + (x - c.x) * k; y = c.y + (y - c.y) * k; z = c.z + (z - c.z) * k; vx *= k; vy *= k; vz *= k; s0 *= k; s1 *= k; }
+      kit.emit(x, y, z, vx, vy, vz, life, s0, s1, drag, grav, col, kind, inten, turb, extra, ageOff);
+    },
+    spr(kind, p, sx, sy, rot, seed, col, inten, param) { if (Z.k !== 1) { p = at(p, tP); sx *= Z.k; sy *= Z.k; } kit.spr(kind, p, sx, sy, rot, seed, col, inten, param); },
+    sprFloor(kind, p, rad, col, inten, param, seed) { if (Z.k !== 1) { p = at(p, tP); rad *= Z.k; } kit.sprFloor(kind, p, rad, col, inten, param, seed); },
+    segV(a, b, w, inten, col) { if (Z.k !== 1) { a = at(a, tP); b = at(b, tQ); w *= Z.k; } kit.segV(a, b, w, inten, col); },
+    seg(ax, ay, az, bx, by, bz, w, inten, col) {
+      if (Z.k !== 1) { const k = Z.k, c = Z.c; ax = c.x + (ax - c.x) * k; ay = c.y + (ay - c.y) * k; az = c.z + (az - c.z) * k; bx = c.x + (bx - c.x) * k; by = c.y + (by - c.y) * k; bz = c.z + (bz - c.z) * k; w *= k; }
+      kit.seg(ax, ay, az, bx, by, bz, w, inten, col);
+    },
+    gen(b, a, c, ...rest) { if (Z.k !== 1) { a = at(a, tP); c = at(c, tQ); } kit.gen(b, a, c, ...rest); }, // bolts keep the scaled points
+    drawBolt(b, w, inten, col) { kit.drawBolt(b, Z.k !== 1 ? w * Z.k : w, inten, col); },
+    trailFire(s, dt, prev, pos, pw, big = 1) { const k = Z.k; Z.k = 1; kit.trailFire(s, dt, prev, pos, pw, big * k); Z.k = k; }, // along the real path
+    headFire(p, sz, seed, inten) { kit.headFire(Z.k !== 1 ? at(p, tP) : p, sz * Z.k, seed, inten); },
+  };
+  return sk;
+}
+
+export function createSmashStyle(kit0) {
+  const kit = scaledKit(kit0), Z = kit._scale;
   const make = (mod, name) => { try { return mod[name]?.(kit) ?? {}; } catch (e) { console.warn('fx-smash', name, e); return {}; } };
   const by = { fire: make(fireMod, 'createFireMoves'), thunder: make(thunderMod, 'createThunderMoves') };
-  const ch = make(chargeMod, 'createChargeMoves'), C = kit.classic;
+  const ch = make(chargeMod, 'createChargeMoves'), C = kit0.classic;
   const tierPower = { s: .25, m: .6, l: 1 };
   return {
-    shot(s, dt) { const m = by[s.el]; if (m.shot) m.shot(s, dt); else C.shot(s, dt); },
+    shot(s, dt) {
+      const m = by[s.el]; if (!m.shot) return C.shot(s, dt);
+      Z.k = s.scale ?? 1; Z.c.copy(s.pos);
+      try { m.shot(s, dt); } finally { Z.k = 1; }
+    },
     end(s, reason) { const m = by[s.el]; if (m.end) m.end(s, reason); else C.end(s, reason); },
     // no tier: not a projectile (a charge that fizzled): the small classic burst
     hit(el, pos, power, opt = {}) { const m = by[el]; if (m.hit && opt.tier) m.hit(pos, opt.tier, power); else C.hit(el, pos, opt.tier ? tierPower[opt.tier] : power); },
