@@ -26,7 +26,7 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷' };
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, size: { s: 1, m: 1, l: 1 } }; // size: ball size × (looks and hit radius)
+export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, chargeHold: .6, size: { s: 1, m: 1, l: 1 } }; // size: ball size × (looks and hit radius)
 // how each tier looks and flies (provisional effects: size tells the tiers apart)
 const TIER = {
   s: { power: .15, big: .7, speed: 11, radius: .12, hit: .25 },
@@ -193,7 +193,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   // ---- moves ----
   function startCharge(p) {
     if (!canAct() || p.charging) return;
-    Object.assign(p, { charging: true, charge: 0, chargeT: 0, tier: 's', chargeFrom: p.chest.clone(), autoRelease: null });
+    Object.assign(p, { charging: true, chargeSeen: now(), charge: 0, chargeT: 0, tier: 's', chargeFrom: p.chest.clone(), autoRelease: null });
     showAct(p, '溜め'); log(p.slot, 'charge', '溜め開始');
   }
   /** Swing while charging: the tier comes from how long it was held. */
@@ -212,7 +212,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   /** A detector event from actions.js ({ slot, name, dir, power, speed }). Guard / Dodge are not part of the game. */
   function onSensed(ev) {
     const p = players[ev.slot]; if (!p || !canAct()) return;
-    if (ev.name === 'Charge') startCharge(p);
+    if (ev.name === 'Charge') { p.chargeSeen = now(); startCharge(p); }
     else if (ev.name === 'Swing') attack(p);
   }
   function stepCharge(dt) {
@@ -221,6 +221,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       // feet must stay put: the chest may sway, but more than moveFail m (horizontal) from where the charge began drops it
       const moved = p.chargeFrom ? Math.hypot(p.chest.x - p.chargeFrom.x, p.chest.z - p.chargeFrom.z) : 0;
       if (moved > R.moveFail) { failCharge(p, `${Math.round(moved * 100)} cm 動いた`); continue; }
+      if (R.chargeHold > 0 && p.autoRelease == null && now() - p.chargeSeen > R.chargeHold) { failCharge(p, '棒の動きが止まった'); continue; } // keep moving to keep charging
       p.chargeT += dt;
       p.charge = Math.min(1, p.chargeT / R.t2);
       const t = tierOf(p.chargeT);

@@ -61,7 +61,7 @@ hub.on(k => {
   connect.ingest(k); game.ingest(k);
   if (k.type === 'truth') vsrc.dummy?.setTruth(k.slot, k); // fake-world.mjs: the dummy room shows the simulated players
   if (k.type === 'imu' || k.type === 'ar' || k.type === 'calib')
-    for (const ev of detectors.ingest(k, axis[k.slot])) { connect.logAction(ev); game.onSensed(ev); }
+    for (const ev of detectors.ingest(k, axis[k.slot])) { if (!ev.keep) connect.logAction(ev); game.onSensed(ev); }
 });
 
 // ---- screens ----

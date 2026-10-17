@@ -17,7 +17,7 @@ function setup({ rules = {}, matchSec = 60, test = false } = {}) {
   let t = 1000, ids = 1;
   const fx = { aura() {}, charge() {}, shot: () => ids++, moveShot() {}, endShot() {}, hit() {} };
   const cfg = { posSrc: 'start', aim: 'motion', hand: 'R', stickLen: { A: .8, B: .8 }, useTruth: true, test,
-    rules: { ...RULES, ...rules, dmg: { ...RULES.dmg, ...rules.dmg }, size: { ...RULES.size, ...rules.size } } };
+    rules: { ...RULES, chargeHold: 0, ...rules, dmg: { ...RULES.dmg, ...rules.dmg }, size: { ...RULES.size, ...rules.size } } };
   const g = createGame({ fx, drone: null, cfg, clock: () => t });
   const pos = { A: [-1.2, 0], B: [1.2, 0] };
   const put = (slot, x, z) => { // chest 1.3 m up, stick held at the chest pointing straight at the other start mark
@@ -278,6 +278,15 @@ scenario('テストモードでは当たってもHPが減らない', () => {
 });
 
 // ---- report ----
+// ---- 溜めは棒を動かし続けている間だけ ----
+scenario('溜めの検知が途切れると、溜めがやめになる（動かし続ければ続く）', () => {
+  const S = setup({ rules: { chargeHold: .6 } }); S.fight();
+  S.charge('A'); for (let i = 0; i < 20; i++) { S.run(.1); S.charge('A'); }
+  eq(S.A.charging, true, '動かしている間');
+  S.run(1);
+  eq(S.A.charging, false, '止めたあと');
+});
+
 const w = Math.max(...results.map(r => r.name.length));
 for (const r of results) console.log(`${r.ok ? '✓' : '✗'} ${r.name.padEnd(w, '　')}${r.note ? '  ' + r.note : ''}`);
 const bad = results.filter(r => !r.ok).length;
