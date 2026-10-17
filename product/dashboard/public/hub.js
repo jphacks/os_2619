@@ -1,12 +1,11 @@
-// Link to server.mjs /ws as a dashboard (sensing protocol): every phone packet goes to the listeners, chest-camera JPEGs
-// (binary, first byte = slot) are decoded into one ImageBitmap per slot, and per-type rates / latencies are kept for the
+// Link to server.mjs /ws as a dashboard (sensing protocol): every phone packet goes to the listeners, and per-type rates / latencies are kept for the
 // connection screen. Packet times `t` are PC seconds (the phones sync to the server clock).
 export const SLOTS = ['A', 'B'];
 const nowS = () => Date.now() / 1000;
 
 export function createHub() {
   const listeners = new Set();
-  const slot = s => ({ online: false, name: '', addr: '', last: {}, rate: {}, lat: {}, img: null, decoding: false, imgAt: 0 });
+  const slot = s => ({ online: false, name: '', addr: '', last: {}, rate: {}, lat: {} });
   const st = { A: slot('A'), B: slot('B') };
   const hub = { link: 'connecting', phones: st, on: f => listeners.add(f), off: f => listeners.delete(f) };
 
@@ -22,18 +21,8 @@ export function createHub() {
     return st[s].rate;
   };
 
-  function video(buf) {
-    const s = st[String.fromCharCode(new Uint8Array(buf, 0, 1)[0])]; if (!s) return;
-    count(s, 'video');
-    if (s.decoding) return; // drop frames rather than fall behind
-    s.decoding = true;
-    createImageBitmap(new Blob([buf.slice(1)], { type: 'image/jpeg' }))
-      .then(b => { s.img?.close(); s.img = b; s.imgAt = nowS(); }).catch(() => {}).finally(() => { s.decoding = false; });
-  }
-
   function connect() {
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-    ws.binaryType = 'arraybuffer';
     ws.onopen = () => { ws.send(JSON.stringify({ type: 'hello', role: 'dashboard', id: 'product-' + Math.random().toString(36).slice(2, 8) })); hub.link = 'open'; };
     ws.onclose = () => {
       hub.link = 'closed';
@@ -42,13 +31,13 @@ export function createHub() {
       setTimeout(connect, 1000);
     };
     ws.onmessage = m => {
-      if (m.data instanceof ArrayBuffer) return video(m.data);
+      if (typeof m.data !== 'string') return;
       let k; try { k = JSON.parse(m.data); } catch { return; }
       if (k.type === 'phones') {
         for (const [id, s] of Object.entries(st)) {
           const p = k.list.find(q => q.slot === id);
           s.online = !!p; s.name = p?.name ?? ''; s.addr = p?.addr ?? '';
-          if (!p) { s.last = {}; s.img?.close(); s.img = null; }
+          if (!p) s.last = {};
         }
       } else {
         const s = st[k.slot]; if (!s) return;

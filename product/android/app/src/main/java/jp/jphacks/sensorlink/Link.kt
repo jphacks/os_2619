@@ -7,19 +7,22 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.util.concurrent.TimeUnit
+import javax.net.SocketFactory
 
 /**
- * Two WebSockets to the PC: one for small, low-latency JSON packets and one for JPEG video,
- * so a large frame never delays sensor data. Reconnects every second while enabled.
+ * One WebSocket to the PC for small, low-latency JSON packets (no picture: the PC never used it for the game).
+ * Reconnects every second while enabled. On a slow link (a hotspot that carries ~50 KB/s) every byte that waits in a
+ * buffer is latency, so both the app's queue and the kernel's send buffer are kept small and stale packets are dropped.
  */
 class Link(private val id: String, private val name: String) {
-    private val http = OkHttpClient.Builder().connectTimeout(2, TimeUnit.SECONDS).build()
+    private val http = OkHttpClient.Builder().connectTimeout(2, TimeUnit.SECONDS).socketFactory(SmallBuffers).build()
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var data: WebSocket? = null
-    @Volatile private var video: WebSocket? = null
     private var gen = 0
     private var url = ""
     private var bestRtt = Double.MAX_VALUE
@@ -42,15 +45,14 @@ class Link(private val id: String, private val name: String) {
 
     fun close() {
         gen++
-        data?.close(1000, null); video?.close(1000, null)
-        data = null; video = null
+        data?.close(1000, null)
+        data = null
         status = "not connected"; slot = "-"
     }
 
     private fun open(g: Int) {
         status = "connecting to $url"
         data = http.newWebSocket(Request.Builder().url(url).build(), Listener(g, "phone"))
-        video = http.newWebSocket(Request.Builder().url(url).build(), Listener(g, "video"))
         pingLoop(g)
     }
 
@@ -63,7 +65,7 @@ class Link(private val id: String, private val name: String) {
     private inner class Listener(val g: Int, val role: String) : WebSocketListener() {
         override fun onOpen(ws: WebSocket, response: Response) {
             ws.send(JSONObject().put("type", "hello").put("role", role).put("id", id).put("name", name).toString())
-            if (role == "phone") status = "connected"
+            status = "open, waiting for the PC" // "connected" only once the PC answers: an open socket alone proved nothing (MTU)
         }
 
         override fun onMessage(ws: WebSocket, text: String) {
@@ -78,7 +80,7 @@ class Link(private val id: String, private val name: String) {
                     if (rtt <= bestRtt) { bestRtt = rtt; offset = k.getDouble("ts") - (t0 + t1) / 2 }
                     rttMs = rtt * 1000
                 }
-                "welcome" -> slot = k.optString("slot", "-")
+                "welcome" -> { slot = k.optString("slot", "-"); status = "connected" }
                 "full" -> status = "PC already has 2 phones"
             }
         }
@@ -88,23 +90,38 @@ class Link(private val id: String, private val name: String) {
 
         private fun retry(why: String) {
             if (g != gen) return
-            // drop both sockets and start over, so data and video always come back together
             gen++
-            data?.cancel(); video?.cancel()
+            data?.cancel()
             status = "$why, retrying"; slot = "-"
             val next = gen
             main.postDelayed({ if (next == gen) open(next) }, 1000)
         }
     }
 
-    /** Sensor packet. Dropped instead of queued if the link is backed up: stale data is useless. */
+    /**
+     * Sensor packet. Dropped instead of queued if the link is backed up: stale data is useless. 4 KB is ~0.15 s of the
+     * ~25 KB/s the sensors make (64 KB was 1-3 s behind on a slow hotspot, and the pings waited behind it too).
+     */
     fun send(json: JSONObject) {
         val ws = data ?: return
-        if (ws.queueSize() < 64 * 1024) ws.send(json.toString())
+        if (ws.queueSize() < QUEUE) ws.send(json.toString())
     }
 
-    /** True if the video socket is idle, i.e. a new frame would go out right away. */
-    fun videoReady() = video?.let { it.queueSize() == 0L && status == "connected" } ?: false
+    private companion object {
+        const val QUEUE = 4 * 1024L
+        const val SNDBUF = 8 * 1024 // the kernel doubles it; left alone it grows to hundreds of KB
+    }
 
-    fun sendVideo(jpeg: ByteArray) { video?.send(jpeg.toByteString()) }
+    /** Plain sockets with a small send buffer and no Nagle delay (many small packets, each wanted now). */
+    private object SmallBuffers : SocketFactory() {
+        private val base = SocketFactory.getDefault()
+        private fun Socket.tune() = apply { sendBufferSize = SNDBUF; tcpNoDelay = true }
+        override fun createSocket() = base.createSocket().tune()
+        override fun createSocket(host: String, port: Int) = Socket().tune().apply { connect(InetSocketAddress(host, port)) }
+        override fun createSocket(host: String, port: Int, local: InetAddress, localPort: Int) =
+            Socket().tune().apply { bind(InetSocketAddress(local, localPort)); connect(InetSocketAddress(host, port)) }
+        override fun createSocket(host: InetAddress, port: Int) = Socket().tune().apply { connect(InetSocketAddress(host, port)) }
+        override fun createSocket(address: InetAddress, port: Int, local: InetAddress, localPort: Int) =
+            Socket().tune().apply { bind(InetSocketAddress(local, localPort)); connect(InetSocketAddress(address, port)) }
+    }
 }

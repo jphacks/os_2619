@@ -190,16 +190,8 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     }
   }
 
-  // ---- chest phone view (A / B): that phone's picture behind, the camera at its located pose ----
-  const phoneCanvas = document.createElement('canvas'), phoneCtx = phoneCanvas.getContext('2d');
-  const phoneTex = new THREE.CanvasTexture(phoneCanvas); phoneTex.colorSpace = THREE.SRGBColorSpace;
-  let phoneImgAt = 0;
-  function phonePicture(slot) {
-    const p = hub.phones[slot]; if (!p?.img || p.imgAt === phoneImgAt) return;
-    phoneImgAt = p.imgAt;
-    if (phoneCanvas.width !== p.img.width || phoneCanvas.height !== p.img.height) { phoneCanvas.width = p.img.width; phoneCanvas.height = p.img.height; phoneTex.dispose(); resize(); }
-    phoneCtx.drawImage(p.img, 0, 0); phoneTex.needsUpdate = true;
-  }
+  // ---- chest phone view (A / B): the camera at that phone's located pose, the 3D alone (phones A / B send no picture) ----
+  const phoneAspect = slot => { const k = PA.get(slot)?.k ?? [1.04, .78]; return k[1] / k[0]; }; // w / h = (fy / h) / (fx / w)
   function placePhoneCamera(slot) {
     const L = PA.get(slot); if (!L?.cam) return false;
     const P = W.compose(L.cam, W.arcam_T_cv), R = P.R;
@@ -230,14 +222,14 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
   function resize() {
     if (!S.box) return;
     const bw = S.box.clientWidth, bh = S.box.clientHeight; if (!bw || !bh) return;
-    const fpv = S.mode === 'final' && cfg.fpv && phoneCanvas.width;
+    const fpv = S.mode === 'final' && cfg.fpv;
     // game screen with the fixed camera: phone C's picture shape, so the framing is the final render's
     S.fixed = S.mode === 'game' && drone.mode === 'fixed';
     const picture = video.videoWidth ? video.videoWidth / video.videoHeight : 16 / 9;
-    S.aspect = S.mode === 'game' && !S.fixed ? bw / bh : S.fixed ? picture : fpv ? phoneCanvas.width / phoneCanvas.height : (video.videoWidth ? video.videoWidth / video.videoHeight : 16 / 9);
+    S.aspect = S.mode === 'game' && !S.fixed ? bw / bh : S.fixed ? picture : fpv ? phoneAspect(cfg.fpv) : (video.videoWidth ? video.videoWidth / video.videoHeight : 16 / 9);
     const w = Math.min(bw, bh * S.aspect), h = w / S.aspect;
     el.style.width = w + 'px'; el.style.height = h + 'px';
-    const srcW = S.mode === 'final' ? (fpv ? phoneCanvas.width : video.videoWidth || 1920) : w * devicePixelRatio;
+    const srcW = S.mode === 'final' ? (fpv ? w * devicePixelRatio : video.videoWidth || 1920) : w * devicePixelRatio;
     renderer.setPixelRatio(Math.min(devicePixelRatio, Math.max(1, srcW / w))); // no more pixels than the picture
     fx.setSize(w, h);
     S.w = w; S.h = h;
@@ -284,7 +276,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
       return;
     }
     const fpv = cfg.fpv && placePhoneCamera(cfg.fpv);
-    if (fpv) phonePicture(cfg.fpv); else if (cfg.fpv) applyCam();
+    if (cfg.fpv && !fpv) applyCam();
     const dummy = video.__dummy;
     if (dummy) {
       if (dummyCanvas !== dummy.canvas) {
@@ -297,7 +289,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     const guiding = setup && !fpv;
     drawGuide2d(guiding);
     // Use the canvas sampled for game placement, avoiding captureStream/video's extra frame of delay.
-    scene.background = fpv ? phoneTex : dummyTex ?? (video.videoWidth ? videoTex : null);
+    scene.background = fpv ? null : dummyTex ?? (video.videoWidth ? videoTex : null);
     const over = !fpv && scene.background && overlay?.compose(dummyCanvas ?? video, dummyCanvas?.width ?? video.videoWidth, dummyCanvas?.height ?? video.videoHeight, dt);
     if (over) { // a new texture when the picture size changes: three keeps a texture's storage at its first size
       if (overTex?.image !== over || overTex.w !== over.width || overTex.h !== over.height) { overTex?.dispose(); overTex = Object.assign(new THREE.CanvasTexture(over), { w: over.width, h: over.height }); overTex.colorSpace = THREE.SRGBColorSpace; }

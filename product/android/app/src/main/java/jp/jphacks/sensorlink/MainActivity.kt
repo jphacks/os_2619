@@ -45,7 +45,6 @@ import org.opencv.core.Core
 import org.opencv.core.CvType
 import org.opencv.core.Mat
 import org.opencv.imgproc.Imgproc
-import java.io.ByteArrayOutputStream
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -94,9 +93,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
 
     private val convertW = Worker("convert")
     private val tagW = Worker("tags")
-    private val videoW = Worker("video")
     private var tagDet: TagDetector? = null
-    private var lastVideoMs = 0L
     // lazy: Mat() needs the OpenCV native lib, which is only loaded in onCreate (after field initialisers run)
     private val yuv by lazy { Mat() }; private val rgbaL by lazy { Mat() }; private val rgbaU by lazy { Mat() }
 
@@ -187,7 +184,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     override fun onDestroy() {
         super.onDestroy()
         link.close(); imu.disconnect()
-        listOf(convertW, tagW, videoW).forEach { it.shutdown() }
+        listOf(convertW, tagW).forEach { it.shutdown() }
         session?.close()
     }
 
@@ -272,15 +269,6 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             tags = r
             link.send(JSONObject().put("type", "tags").put("t", fr.t).put("tags", r)
                 .put("k", JSONArray().put(r4(fr.fx / fr.bmp.width)).put(r4(fr.fy / fr.bmp.height)).put(r4(fr.cx / fr.bmp.width)).put(r4(fr.cy / fr.bmp.height))))
-        }
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastVideoMs >= 33 && link.videoReady()) {
-            lastVideoMs = now
-            videoW.offer {
-                val out = ByteArrayOutputStream(64 * 1024)
-                fr.bmp.compress(Bitmap.CompressFormat.JPEG, 60, out)
-                link.sendVideo(out.toByteArray())
-            }
         }
     }
 

@@ -1,4 +1,4 @@
-// Self-check of server.mjs: the sensing relay protocol on /ws (slots, relay with slot tag, video framing, full server,
+// Self-check of server.mjs: the sensing relay protocol on /ws (slots, relay with slot tag, no phone video, full server,
 // slot reuse on reconnect), phone C on /cam, static files, and http + https on the same port.
 // Then the pure-logic modules: actions.js and phonealign.js against fake-world.mjs (a physically consistent sim).
 import assert from 'node:assert/strict';
@@ -33,11 +33,9 @@ b.ws.send(JSON.stringify({ type: 'imu', t: 1, euler: [1, 2, 3] }));
 const imu = await wait(() => dash.inbox.find(k => k.type === 'imu'));
 assert.equal(imu.slot, 'B'); assert.deepEqual(imu.euler, [1, 2, 3]);
 
-const v = await open({ type: 'hello', role: 'video', id: 'p1' });
-await new Promise(r => setTimeout(r, 50));
-v.ws.send(Buffer.from([0xff, 0xd8, 1, 2]));
-const frame = await wait(() => dash.inbox.find(k => Buffer.isBuffer(k)));
-assert.deepEqual([...frame], [0x41, 0xff, 0xd8, 1, 2]); // 'A' + jpeg bytes
+a.ws.send(Buffer.from([0xff, 0xd8, 1, 2])); // phones A / B send no picture: binary from them goes nowhere
+await new Promise(r => setTimeout(r, 100));
+assert.ok(!dash.inbox.some(k => Buffer.isBuffer(k)));
 
 a.ws.send(JSON.stringify({ type: 'ping', t0: 5 }));
 const pong = await wait(() => a.inbox.find(k => k.type === 'pong'));
@@ -98,7 +96,7 @@ await import('./test-thunder.mjs');
 await import('./test-dummy.mjs');
 await import('./test-final-controls.mjs');
 
-for (const x of [dash, a, c, v, a2, d, disp, cam]) x.ws.terminate();
+for (const x of [dash, a, c, a2, d, disp, cam]) x.ws.terminate();
 server.close();
 await import('./test-logic.mjs');
 process.exit(0);
