@@ -32,9 +32,9 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
       </div>
     </div>
     <div class="final-control-row">
-      <strong class="final-control-title">キーボード操作</strong>
+      <strong class="final-control-title">プレイヤーの動き</strong>
       <div class="final-control-items">
-        <div id="finalPlay" class="row"></div>
+        <div id="finalPlay" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"></div>
         <div class="final-shared-controls">
           <button id="scanBtn" class="go">タグでスキャン<kbd>K</kbd></button>
           <span class="kv" id="tagCheck"></span><span class="msg" id="finalMsg"></span>
@@ -80,7 +80,7 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
     const s = charge[slot], seconds = secondsAt(s, time), tier = finalChargeTier(seconds);
     const label = bar.querySelector(`[data-charge-status="${slot}"]`);
     // the keyboard player's key goes to the match (playable.js), not to this preview
-    if (playable?.owns(slot)) { label.textContent = `${slot === 'A' ? '炎' : '電気'}：${slot}キーは試合の溜め（キーボード操作中）`; label.classList.toggle('ok', playable.charging); return; }
+    if (playable?.keyboard(slot)) { label.textContent = `${slot === 'A' ? '炎' : '電気'}：${slot}キーは試合の溜め（キーボード操作中）`; label.classList.toggle('ok', playable.charging); return; }
     label.textContent = `${slot === 'A' ? '炎' : '電気'}：${keyFor(slot)}キー ${s.held ? `チャージ中 ${seconds.toFixed(1)}秒 ${tierJa[tier]}` : '長押しでチャージ、離して発射'}`;
     label.classList.toggle('ok', s.held || seconds > 0);
   };

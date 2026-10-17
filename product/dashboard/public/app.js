@@ -56,7 +56,7 @@ const hudFlash = { el: null };
 const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), getDummyFrame: () => vsrc.dummy?.frame });
 stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: プログラム版 (smash, default) / 画像素材版 (textured) / いつもの (classic)
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
-// keyboard player (screens 3 / 4, dummy room only): drives one slot through the dummy's truth input and game.command
+// A / B: keyboard / random / still (screens 3 / 4, dummy room only), through the dummy's truth input and game.command
 const playable = createPlayable({ vsrc, game, cfg, save, isActive: () => screen === 'game' || screen === 'final' });
 let phones = [];
 playable.onChange(() => game.setOnline(playable.withSelf(phones)));
@@ -117,8 +117,8 @@ gameCtrl.innerHTML = `
       <div class="facts"></div>
       <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
   </div>
-  <h3>キーボードで操作（ダミー映像）</h3>
-  <div id="playGame" class="row"></div>
+  <h3>プレイヤーの動き（ダミー映像）</h3>
+  <div id="playGame"></div>
   <h3>ゲームの数値（試遊で調整）</h3>
   <div class="rules">
     <label>中になる溜め時間 <input data-rule="t1" type="number" min="0.1" max="20" step="0.1"> 秒</label>
