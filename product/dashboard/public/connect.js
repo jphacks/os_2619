@@ -3,7 +3,7 @@
 //    gyro / acceleration charts, calibrated IMU axes, ARCore state + top-down track, AprilTag table
 //  - phone C (cam.html in the browser): live picture, WebRTC / JPEG, fps, bitrate, delay; video source switch
 //  - server: IP and port to type into the app, QR codes for phone C's page and the certificate page
-//  - sidebar: the four detected actions (sensing actions.js) with the last time each fired, stick axis, stick length, history
+//  - sidebar: the four detected actions (sensing actions.js) with the last time each fired, stick length, history
 import { ACTIONS } from './actions.js';
 import { norm } from './map.js';
 import { SOURCES } from './video.js';
@@ -32,7 +32,7 @@ export function detailJa(ev) {
   return d;
 }
 
-export function createConnect({ cards, side, hub, vsrc, cfg, axis, onAxis, onStick, onVideoSrc }) {
+export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc }) {
   const slots = {};
   const tpl = s => `
     <section class="card phone ${s}">
@@ -96,19 +96,12 @@ export function createConnect({ cards, side, hub, vsrc, cfg, axis, onAxis, onSti
     <section class="card"><header><h2>動作の判定</h2><span class="sub">棒の IMU と胸のスマホから</span></header>
       <ul class="actions"></ul>
       <h3>棒の軸</h3>
-      <div class="kv axis">棒を真上に向けて押す：<button data-s="A">A</button> <button data-s="B">B</button><div class="axisinfo" style="font-size:12px;margin-top:4px"></div></div>
+      <div class="kv">IMU の +Y が棒の先端の向き（固定）</div>
       <h3>棒の長さ（m）</h3>
       <div class="kv sticks"><label>A <input type="number" min="0.1" step="0.05" data-s="A"></label><label>B <input type="number" min="0.1" step="0.05" data-s="B"></label></div>
     </section>
     <section class="card"><header><h2>履歴</h2><span class="sub">新しい順</span></header><ul class="history"><li class="kv empty">まだありません</li></ul></section>`;
   const sq = c => side.querySelector(c);
-  const axisInfo = () => sq('.axisinfo').textContent = ['A', 'B'].map(s => `${s} [${axis[s].map(v => v.toFixed(2)).join(', ')}]`).join(' · ');
-  for (const b of side.querySelectorAll('.axis button')) b.onclick = () => {
-    const k = hub.phones[b.dataset.s].last.imu; if (!k) return alert(`${b.dataset.s} の IMU データがありません`);
-    onAxis(b.dataset.s, norm(k.acc)); // at rest the accelerometer reads +g along whichever sensor axis points up
-    axisInfo();
-  };
-  axisInfo();
   for (const inp of side.querySelectorAll('.sticks input')) {
     inp.value = cfg.stickLen[inp.dataset.s];
     inp.oninput = () => { if (+inp.value > 0) onStick(inp.dataset.s, +inp.value); };

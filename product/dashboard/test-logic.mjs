@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createActions, eulerRot } from './public/actions.js';
 import { createPhoneAlign } from './public/phonealign.js';
 import { createSim, due, DT } from './fake-world.mjs';
-import { PLAYER_TAG } from './public/world.js';
+import { PLAYER_TAG, STICK } from './public/world.js';
 
 // actions: a fast downward swing of a stick whose sensor X is along it fires one Swing
 {
@@ -46,9 +46,9 @@ import { PLAYER_TAG } from './public/world.js';
   console.log(`phonealign ok: worst chest error ${(worst * 100).toFixed(1)} cm over ${n} estimates`);
 }
 
-// stick direction (phonealign, euler + the connection screen's axis, as actions.js) vs the simulated stick, after Calibrate
+// stick direction (phonealign, euler + the fixed +Y axis, as actions.js) vs the simulated stick, after Calibrate
 {
-  const sim = createSim({ seed: 5, noise: 1 }), axis = { A: [1, 0, 0], B: [1, 0, 0] }, PA = createPhoneAlign({ axis }), t0 = 2000;
+  const sim = createSim({ seed: 5, noise: 1 }), axis = { A: STICK.axis, B: STICK.axis }, PA = createPhoneAlign({ axis }), t0 = 2000;
   let worst = 0, n = 0, sum = 0;
   while (sim.n * DT < 15) {
     const k = sim.n, t = sim.step(), when = due(k), stamp = t0 + t;

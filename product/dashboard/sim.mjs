@@ -47,7 +47,7 @@ export function packets(s, t, vision = true) {
   const tag = (id, P, x, y, z) => {
     if (inCam(P)[2] < 0.3 || dot(z, norm(sub(me.chest, P))) < 0.26) return; // behind or more than 75° oblique
     const h = TAG / 2, c = [[-h, h], [h, h], [h, -h], [-h, -h]].map(([a, b]) => proj(add(P, add(mul(x, a), mul(y, b)))));
-    if (c.every(inImg)) tags.push({ id, c, p: inCam(P), r: rodrigues(quat(dirCam(x), dirCam(y), dirCam(z))) });
+    if (c.every(inImg)) tags.push({ id, sz: TAG, c, p: inCam(P), r: rodrigues(quat(dirCam(x), dirCam(y), dirCam(z))) });
   };
   for (const [id, P] of Object.entries(CORNERS)) tag(+id, P, [1, 0, 0], [0, 0, -1], UP);
   tag(CHEST[other(s)], o.tag, cross(UP, o.fwd), UP, o.fwd);

@@ -23,6 +23,9 @@ class Frame(val bmp: Bitmap, val t: Double, val fx: Double, val fy: Double, val 
 fun r4(x: Double) = round(x * 1e4) / 1e4
 fun r4(x: Float) = r4(x.toDouble())
 
+/** Printed black-square sizes (m): the chest tags worn on the phones (ids 8-11) are 50 mm, every other tag is fixed in the room and 200 mm. */
+fun tagSizeOf(id: Int) = if (id in 8..11) 0.05 else 0.2
+
 /** AprilTag tag36h11 via OpenCV's aruco module, pose by solvePnP. Positions in the OpenCV camera frame (x right, y down, z forward), metres. */
 class TagDetector {
     private val det = ArucoDetector(
@@ -32,31 +35,33 @@ class TagDetector {
     private val rgba = Mat()
     private val gray = Mat()
 
-    fun detect(f: Frame, tagSize: Double): JSONArray {
+    fun detect(f: Frame): JSONArray {
         Utils.bitmapToMat(f.bmp, rgba)
         Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
         val corners = ArrayList<Mat>()
         val ids = Mat()
         det.detectMarkers(gray, corners, ids)
         val out = JSONArray()
-        val h = tagSize / 2
-        val obj = MatOfPoint3f(Point3(-h, h, 0.0), Point3(h, h, 0.0), Point3(h, -h, 0.0), Point3(-h, -h, 0.0))
         val k = Mat(3, 3, CvType.CV_64F).apply { put(0, 0, f.fx, 0.0, f.cx, 0.0, f.fy, f.cy, 0.0, 0.0, 1.0) }
         for (i in 0 until ids.rows()) {
             val c = FloatArray(8).also { corners[i].get(0, 0, it) }
+            val id = ids.get(i, 0)[0].toInt()
+            val size = tagSizeOf(id)
+            val h = size / 2
+            val obj = MatOfPoint3f(Point3(-h, h, 0.0), Point3(h, h, 0.0), Point3(h, -h, 0.0), Point3(-h, -h, 0.0))
             val rvec = Mat(); val tvec = Mat()
             val ok = Calib3d.solvePnP(obj, MatOfPoint2f(*Array(4) { org.opencv.core.Point(c[2 * it].toDouble(), c[2 * it + 1].toDouble()) }),
                 k, MatOfDouble(), rvec, tvec, false, Calib3d.SOLVEPNP_IPPE_SQUARE)
-            val tag = JSONObject().put("id", ids.get(i, 0)[0].toInt())
+            val tag = JSONObject().put("id", id).put("sz", size)
                 .put("c", JSONArray().apply { for (j in 0 until 4) put(JSONArray().put(r4(c[2 * j] / f.bmp.width)).put(r4(c[2 * j + 1] / f.bmp.height))) })
             if (ok) {
                 tag.put("p", JSONArray().put(r4(tvec.get(0, 0)[0])).put(r4(tvec.get(1, 0)[0])).put(r4(tvec.get(2, 0)[0])))
                 tag.put("r", JSONArray().put(r4(rvec.get(0, 0)[0])).put(r4(rvec.get(1, 0)[0])).put(r4(rvec.get(2, 0)[0])))
             }
             out.put(tag)
-            rvec.release(); tvec.release(); corners[i].release()
+            rvec.release(); tvec.release(); obj.release(); corners[i].release()
         }
-        ids.release(); k.release(); obj.release()
+        ids.release(); k.release()
         return out
     }
 }

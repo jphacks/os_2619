@@ -1,6 +1,6 @@
 // Action detection per player from their packets: the stick IMU (imu) and the chest phone's AR pose (ar).
 // Pure logic, no DOM: the dashboard and test-actions.mjs both use it.
-// Stick direction: `axis` is the IMU sensor axis along the stick (set from the accelerometer while the stick is held straight up),
+// Stick direction: `axis` is the IMU sensor axis along the stick: +Y, pointing to the tip (fixed in the product),
 // rotated into the IMU world (z up) by the WitMotion euler angles. Heading is relative to the IMU yaw at the last Calibrate.
 import { cross, dot, norm, qrot } from './map.js';
 
@@ -30,9 +30,9 @@ export function createActions() {
 
   /** Feeds one packet; returns the actions it completes as { t, slot, name, detail, ...data }.
    *  Swing adds dir ('down-left' ...) and power 0..1 (stick speed, 1 at 1000°/s); Dodge adds dir and speed (m/s). */
-  function ingest(k, axis = [1, 0, 0]) {
+  function ingest(k, axis = [0, 1, 0]) {
     const S = st(k.slot), out = [], emit = (name, detail, t = k.t, data = {}) => out.push({ t, slot: k.slot, name, detail, ...data });
-    if (k.type === 'calib' && S.last) S.yaw0 = S.last.euler[2];
+    if (k.type === 'calib' && S.last) { const d0 = eulerRot(S.last.euler, axis); S.yaw0 = Math.atan2(d0[1], d0[0]) / D; } // heading of the stick itself when Calibrate was pressed
     if (k.type === 'imu') {
       const d = eulerRot(k.euler, axis), w = Math.hypot(...k.gyro);
       const pos = { d, el: Math.asin(Math.max(-1, Math.min(1, d[2]))), hd: wrap(Math.atan2(d[1], d[0]) - S.yaw0 * D) };

@@ -83,9 +83,9 @@ export function createLocalizer(opts = {}) {
     const seen = [];
     for (const g of k.tags ?? []) {
       if (!g.p || !g.r || !TAGS[g.id]) continue;
-      const cv_T_tag = pose(fromRodrigues(g.r), g.p.map(v => v * tagScale(g.id)));
+      const cv_T_tag = pose(fromRodrigues(g.r), g.p.map(v => v * tagScale(g.id, g.sz)));
       if (CORNER_IDS.includes(g.id)) {
-        const d = Math.max(Math.hypot(...cv_T_tag.t), 0.3), r = d * 0.25 / TAGS[g.id].size; // error grows with distance / tag size
+        const d = Math.max(Math.hypot(...cv_T_tag.t), 0.3), r = d * 0.2 / TAGS[g.id].size; // error grows with distance / tag size
         seen.push({ id: g.id, cv_T_tag, d, r, w: 1 / (r * r) });
       } else if (isChestTag(g.id)) { // worn tags 8-11: always the other player's
         const pos = apply(cvOf(s, calib), cv_T_tag.t);

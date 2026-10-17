@@ -19,7 +19,7 @@ Two Android phones, each with its own WitMotion WT9011DCL IMU over Bluetooth, st
 
 ## Space map
 
-The top card fuses both phones into one room. Setup it expects: A and B wear the phones on the chest, each chest mount carries an AprilTag, the floor corners carry AprilTags, each person swings a stick of known length with a coloured tip, and each phone has the **opponent's** tip colour picked. All tags are the size set on the phones.
+The top card fuses both phones into one room. Setup it expects: A and B wear the phones on the chest, each chest mount carries an AprilTag, the floor corners carry AprilTags, each person swings a stick of known length with a coloured tip, and each phone has the **opponent's** tip colour picked. Tag sizes are fixed in the app: 50 mm for the worn tags (ids 8-11), 200 mm for every other tag.
 
 - Tags whose face points up are floor tags; any other tag a phone sees is the opponent's chest mount. No tag IDs to configure.
 - B's ARCore world is fitted onto A's (yaw + shift, both gravity-aligned) from chest sightings paired with the other phone's own AR position at the same instant, plus any floor tag both phones have seen. Walk around a little at the start so the fit has spread.
@@ -47,7 +47,7 @@ Build: open `android/` in Android Studio, or `cd android && ./gradlew assembleDe
 Install: `adb install -r app/build/outputs/apk/debug/app-debug.apk`. Needs an ARCore-supported phone, Android 8+.
 
 On the phone:
-- **LAN**: PC IP, port (8000), AprilTag size. *Connect / reconnect* saves and reconnects; it also retries every second on its own. Status line shows slot (A/B) and RTT.
+- **LAN**: PC IP, port (8000). *Connect / reconnect* saves and reconnects; it also retries every second on its own. Status line shows slot (A/B) and RTT.
 - **IMU**: scans BLE, WitMotion devices (`WT…`) listed first; tap to pair. The phone remembers it and reconnects automatically. Sets the sensor to 100 Hz.
 - **Calibrate**: current IMU orientation becomes identity (`q`), current AR pose becomes the origin. Hold still in the start pose.
 - **Tap the picture** to pick the colour to track (average of a 7×7 patch). Saturated colours work best.

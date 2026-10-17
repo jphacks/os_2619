@@ -32,12 +32,11 @@ if ((saved.rulesVer ?? 0) < 2) cfg.aim = 'motion'; // ...and the aim from the ti
 cfg.rulesVer = 2;
 cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg } };
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
-const axis = {}; // IMU sensor axis along each stick (sensing: calibrated by holding the stick straight up)
-for (const s of ['A', 'B']) { try { axis[s] = JSON.parse(localStorage.getItem('pd-axis' + s)) ?? [1, 0, 0]; } catch { axis[s] = [1, 0, 0]; } }
+const axis = { A: W.STICK.axis, B: W.STICK.axis }; // the IMU's +Y points to the stick tip, on both sticks
 
 // ---- data ----
 const hub = createHub();
-const PA = createPhoneAlign({ axis }); // the stick axis from the connection screen: detectors and aim share it
+const PA = createPhoneAlign({ axis }); // the stick axis (IMU +Y): detectors and aim share it
 const smap = createMap();
 const detectors = createActions();
 const video = Object.assign(document.createElement('video'), { muted: true, playsInline: true });
@@ -62,8 +61,7 @@ hub.on(k => {
 });
 
 // ---- screens ----
-const connect = createConnect({ cards: $('#phoneCards'), side: $('#connectSide'), hub, vsrc, cfg, axis,
-  onAxis: (s, v) => { axis[s] = v; try { localStorage.setItem('pd-axis' + s, JSON.stringify(v)); } catch {} },
+const connect = createConnect({ cards: $('#phoneCards'), side: $('#connectSide'), hub, vsrc, cfg,
   onStick: (s, v) => { cfg.stickLen[s] = v; save(); },
   onVideoSrc: v => { cfg.videoSrc = v; save(); vsrc.set(v); } });
 const space = createSpace({ view: $('#spaceView'), legendEl: $('#spaceLegend'), panelEl: $('#spacePanel'), hub, PA, getStage: () => stage, getGame: () => game, getMap: () => smap, cfg });

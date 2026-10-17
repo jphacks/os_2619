@@ -7,7 +7,7 @@
 // - tag:   x right, y up (as you look at the printed tag), z out of the face toward the viewer. Matches the
 //          solvePnP object points in sensing Vision.kt: corners (-h,h), (h,h), (h,-h), (-h,-h).
 // - cv:    the phone's upright portrait image, OpenCV convention: x right, y down, z forward. `tags[].p` / `r` give
-//          cv_T_tag (Rodrigues r). p is computed with the phone's single tag-size setting: rescale per id (see tagScale).
+//          cv_T_tag (Rodrigues r). p is metric when the tag carries `sz` (printed size: 50 mm chest tags 8-11, 200 mm fixed tags); an old app used one size for all: see tagScale.
 // - arcam: ARCore camera pose frame (sensor native landscape, back camera at 90°): x, y, -z forward.
 //          The portrait image is the sensor image rotated 90° clockwise, so x_cv = y_ar, y_cv = x_ar, z_cv = -z_ar.
 //          `ar.p` / `ar.q` ([x,y,z,w]) give calib_T_arcam: the current camera pose in the camera frame at calibration.
@@ -17,8 +17,8 @@
 export const ARENA = { half: 2 };   // 4 m x 4 m
 export const CHEST_H = 1.3;          // chest phone / chest tag height, m
 export const START = { A: { pos: [-1.2, 0, 0], yaw: 0 }, B: { pos: [1.2, 0, 0], yaw: Math.PI } }; // yaw 0 = facing +x
-export const PHONE_TAG_SIZE = 0.1;   // the size typed into the phones (m); every tags[].p is scaled by this
-export const STICK = { len: 0.8, axis: [1, 0, 0], up: [0, 0, 1], hand: { fwd: 0.3, right: 0.2, up: -0.3 } };
+export const PHONE_TAG_SIZE = 0.1;   // old app only: the one size typed into the phone; tags with `sz` (new app) are already metric
+export const STICK = { len: 0.8, axis: [0, 1, 0], up: [0, 0, 1], hand: { fwd: 0.3, right: 0.2, up: -0.3 } };
 
 // Tag layouts. Pick one with ?layout= (browser) or LAYOUT= (node); default 'map4'.
 // - map4:  four sheets (ids 0-3, any size listed here) lying anywhere on the floor, roughly the corners of the play area.
@@ -36,34 +36,34 @@ export const STICK = { len: 0.8, axis: [1, 0, 0], up: [0, 0, 1], hand: { fwd: 0.
 const H = ARENA.half;
 const LAYOUTS = {
   full: {
-    0: { size: 0.25, pos: [-H, CHEST_H, -H] },
-    1: { size: 0.25, pos: [H, CHEST_H, -H] },
-    2: { size: 0.25, pos: [H, CHEST_H, H] },
-    3: { size: 0.25, pos: [-H, CHEST_H, H] },
-    4: { size: 0.25, pos: [H, CHEST_H, 0] },
-    5: { size: 0.25, pos: [-H, CHEST_H, 0] },
-    10: { size: 0.18, player: 'A' },
-    11: { size: 0.18, player: 'B' },
+    0: { size: 0.2, pos: [-H, CHEST_H, -H] },
+    1: { size: 0.2, pos: [H, CHEST_H, -H] },
+    2: { size: 0.2, pos: [H, CHEST_H, H] },
+    3: { size: 0.2, pos: [-H, CHEST_H, H] },
+    4: { size: 0.2, pos: [H, CHEST_H, 0] },
+    5: { size: 0.2, pos: [-H, CHEST_H, 0] },
+    10: { size: 0.05, player: 'A' },
+    11: { size: 0.05, player: 'B' },
   },
   today: {
     0: { size: 0.2, pos: [H, CHEST_H, 0], flip: true },
     1: { size: 0.2, pos: [-H, CHEST_H, 0], flip: true },
-    10: { size: 0.18, player: 'A' }, // not printed yet: kept so the dummy room and the simulator still use them
-    11: { size: 0.18, player: 'B' },
+    10: { size: 0.05, player: 'A' }, // not printed yet: kept so the dummy room and the simulator still use them
+    11: { size: 0.05, player: 'B' },
   },
   map4: {
     0: { size: 0.2, pos: [1.5, 0, 1.5], floor: true, yaw: 0 },
     1: { size: 0.2, pos: [-1.5, 0, 1.5], floor: true, yaw: 0 },
-    2: { size: 0.25, pos: [-1.5, 0, -1.5], floor: true, yaw: 0 },
-    3: { size: 0.25, pos: [1.5, 0, -1.5], floor: true, yaw: 0 },
-    10: { size: 0.18, player: 'A' },
-    11: { size: 0.18, player: 'B' },
+    2: { size: 0.2, pos: [-1.5, 0, -1.5], floor: true, yaw: 0 },
+    3: { size: 0.2, pos: [1.5, 0, -1.5], floor: true, yaw: 0 },
+    10: { size: 0.05, player: 'A' },
+    11: { size: 0.05, player: 'B' },
   },
   floor: {
     0: { size: 0.2, pos: [1.5, 0, 1], floor: true, flip: true },
     1: { size: 0.2, pos: [-1.5, 0, 1], floor: true, flip: true },
-    10: { size: 0.18, player: 'A' },
-    11: { size: 0.18, player: 'B' },
+    10: { size: 0.05, player: 'A' },
+    11: { size: 0.05, player: 'B' },
   },
 };
 const pick = (typeof location !== 'undefined' && new URLSearchParams(location.search).get('layout'))
@@ -76,7 +76,7 @@ export const PLAYER_TAG = { A: 10, B: 11 }; // the ids drawn / simulated on A an
 // A phone never sees its own, so a chest tag in view is always the opponent's.
 export const CHEST_IDS = [8, 9, 10, 11];
 export const isChestTag = id => id >= 8 && id <= 11;
-for (const id of CHEST_IDS) if (!TAGS[id]) TAGS[id] = { size: 0.18, chest: true }; // size for tagScale; never a pos, never a field tag
+for (const id of CHEST_IDS) if (!TAGS[id]) TAGS[id] = { size: 0.05, chest: true }; // size for tagScale; never a pos, never a field tag
 // floor layout: the scan measures how far apart the two sheets really are (app.js) and keeps it, so the
 // sheets only need to lie level and face the same way, not sit exactly 3 m apart
 export const FLOOR_IDS = CORNER_IDS.filter(id => TAGS[id].floor);
@@ -120,7 +120,9 @@ export function inField(x, z) {
   }
   return inside;
 }
-export const tagScale = id => (TAGS[id]?.size ?? PHONE_TAG_SIZE) / PHONE_TAG_SIZE;
+/** Factor from a tag message's p to metres. The app measures each tag at its printed size (`sz`: 50 mm for the worn tags 8-11,
+ *  200 mm for every fixed one), so p is already metric; an old app sends no `sz` and used one size for all (PHONE_TAG_SIZE). */
+export const tagScale = (id, sz) => (sz ? 1 : (TAGS[id]?.size ?? PHONE_TAG_SIZE) / PHONE_TAG_SIZE);
 
 // ---- small pose maths ----
 export const I3 = [1, 0, 0, 0, 1, 0, 0, 0, 1];

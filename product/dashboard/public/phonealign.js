@@ -191,7 +191,7 @@ export function createPhoneAlign(opts = {}) {
         const last = [];
         for (const g of k.tags ?? []) {
           if (!g.p || !g.r) continue;
-          const sc = W.tagScale(g.id), p = [g.p[0] * sc, g.p[1] * sc, g.p[2] * sc], d = Math.hypot(p[0], p[1], p[2]);
+          const sc = W.tagScale(g.id, g.sz), p = [g.p[0] * sc, g.p[1] * sc, g.p[2] * sc], d = Math.hypot(p[0], p[1], p[2]);
           if (!(d > 0.1 && d < 10)) continue;
           const b = camToWorld(pose, p);
           last.push({ id: g.id, b, d, bx: camDir(pose, rodr(g.r, [1, 0, 0])), by: camDir(pose, rodr(g.r, [0, 1, 0])) });
@@ -212,7 +212,7 @@ export function createPhoneAlign(opts = {}) {
       case 'imu': st.imu = k; return;
       case 'color': if (k.side !== 'me') st.color = k; return; // 'opp' (or the old app's single target)
       case 'calib': { // IMU tare + AR origin reset on the phone; the raw ARCore world does not move, so the fit stays
-        st.calibAt = k.t; st.calibPose = latest(s); st.yaw0 = st.imu?.euler?.[2] ?? 0; st.imu = null; return; // heading 0 = facing at Calibrate (as actions.js)
+        st.calibAt = k.t; st.calibPose = latest(s); st.yaw0 = st.imu?.euler ? Math.atan2(...stickH(st.imu.euler, s)) : 0; st.imu = null; return; // heading 0 = where the stick pointed at Calibrate (as actions.js)
       }
     }
   }
@@ -270,16 +270,18 @@ export function createPhoneAlign(opts = {}) {
 
   const IMU_SIDE = cross(W.STICK.axis, W.STICK.up);
   const rotQw = ([w, x, y, z], v) => qrot([x, y, z, w], v); // imu.q is [w,x,y,z]
+  const stickH = (euler, s) => { const d = eulerRot(euler, o.axis?.[s] ?? W.STICK.axis); return [d[1], d[0]]; }; // atan2 args: horizontal heading of the stick
+
   /** Stick direction in the body frame at calibration (x forward, y up, z right).
    *  With euler (WitMotion, gravity-referenced, z up): the same sums as the sensing team's detectors (actions.js), using the
-   *  stick axis set on the connection screen (opts.axis[s], held straight up) - so the swing that is detected and the
+   *  fixed stick axis (IMU +Y; opts.axis[s] may override it) - so the swing that is detected and the
    *  direction it fires along come from one definition. Elevation is absolute; heading is relative to the yaw at Calibrate.
    *  Without euler: imu.q, tared with the stick forward and level, and the default axis. */
   function stickBody(s, st) {
     const axis = o.axis?.[s] ?? W.STICK.axis;
     if (st.imu.euler) {
       const d = eulerRot(st.imu.euler, axis), el = Math.asin(Math.max(-1, Math.min(1, d[2])));
-      const hd = Math.atan2(d[1], d[0]) - st.yaw0 * Math.PI / 180; // + = turned left (counter-clockwise seen from above)
+      const hd = Math.atan2(d[1], d[0]) - st.yaw0; // + = turned left (counter-clockwise seen from above)
       return [Math.cos(el) * Math.cos(hd), Math.sin(el), -Math.cos(el) * Math.sin(hd)];
     }
     if (!st.imu.q) return null;

@@ -268,7 +268,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         overlay.postInvalidate()
 
         tagW.offer {
-            val r = (tagDet ?: TagDetector().also { tagDet = it }).detect(fr, prefs.getFloat("tag", 0.1f).toDouble())
+            val r = (tagDet ?: TagDetector().also { tagDet = it }).detect(fr)
             tags = r
             link.send(JSONObject().put("type", "tags").put("t", fr.t).put("tags", r)
                 .put("k", JSONArray().put(r4(fr.fx / fr.bmp.width)).put(r4(fr.fy / fr.bmp.height)).put(r4(fr.cx / fr.bmp.width)).put(r4(fr.cy / fr.bmp.height))))
@@ -316,19 +316,16 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         fun field(hint: String, v: String, type: Int) = EditText(this).apply { this.hint = hint; setText(v); inputType = type }
         val host = field("PC IP address", prefs.getString("host", "192.168.0.10")!!, InputType.TYPE_CLASS_TEXT)
         val port = field("port", prefs.getInt("port", 8000).toString(), InputType.TYPE_CLASS_NUMBER)
-        val tag = field("AprilTag size (m, black square)", prefs.getFloat("tag", 0.1f).toString(),
-            InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(48, 16, 48, 0)
             addView(TextView(context).apply { text = "${link.status}\nslot ${link.slot}, rtt %.0f ms".format(link.rttMs) })
-            listOf("PC IP" to host, "Port" to port, "Tag size (m)" to tag).forEach { (l, e) -> addView(TextView(context).apply { text = l }); addView(e) }
+            listOf("PC IP" to host, "Port" to port).forEach { (l, e) -> addView(TextView(context).apply { text = l }); addView(e) }
         }
         AlertDialog.Builder(this).setTitle("LAN connection").setView(box)
             .setPositiveButton("Connect / reconnect") { _, _ ->
                 val pt = port.text.toString().toIntOrNull()?.takeIf { it in 1..65535 }
-                val ts = tag.text.toString().toFloatOrNull()?.takeIf { it > 0 }
-                if (pt == null || ts == null || host.text.isBlank()) { Toast.makeText(this, "invalid port or tag size", Toast.LENGTH_SHORT).show(); return@setPositiveButton }
-                prefs.edit().putString("host", host.text.toString().trim()).putInt("port", pt).putFloat("tag", ts).apply()
+                if (pt == null || host.text.isBlank()) { Toast.makeText(this, "invalid port", Toast.LENGTH_SHORT).show(); return@setPositiveButton }
+                prefs.edit().putString("host", host.text.toString().trim()).putInt("port", pt).apply()
                 link.connect(host.text.toString().trim(), pt)
             }
             .setNeutralButton("Disconnect") { _, _ -> link.close() }
