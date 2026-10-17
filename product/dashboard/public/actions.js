@@ -7,7 +7,7 @@ import { cross, dot, norm, qrot } from './map.js';
 const D = Math.PI / 180;
 export const ACTIONS = [
   { name: 'Charge', how: 'gyro only: the turning direction changes 4+ times within 1 s (stick circled or shaken at the base), slower than a swing' },
-  { name: 'Swing', how: 'stick turns faster than 300°/s and stops; direction plus start and stop position' },
+  { name: 'Swing', how: 'stick turns faster than 300°/s through more than 60° and stops dead (from over 250°/s to under 100°/s within 0.12 s); direction plus start and stop position' },
   { name: 'Dodge', how: 'chest phone moves faster than 1.2 m/s; left / right / back / forward' },
   { name: 'Guard', how: 'stick within 20° of horizontal and still (under 60°/s) for 1 s' },
 ];
@@ -71,10 +71,12 @@ export function createActions() {
       if (!S.sw && w > 300 && (S.still || S.prev)) S.sw = S.still && k.t - S.still.t < .5 ? { t: S.still.t, from: S.still } : { t: S.prev.t, from: S.prev }; // right out of a charge shake there is no calm moment: start from the sample before
       if (w < 120) S.still = { ...pos, t: k.t };
       S.prev = { ...pos, t: k.t };
+      if (S.sw && w > 250) S.sw.fastAt = k.t; // still moving fast: the stop must come right after this (ピタッと)
       if (S.sw && w < 100) {
         const a = S.sw.from, dur = k.t - S.sw.t, ang = Math.acos(Math.max(-1, Math.min(1, dot(a.d, d))));
         const twirl = a.el > 60 * D && pos.el > 60 * D; // stays overhead: that's charging, not a swing
-        if (ang > 40 * D && dur < 1.2 && !twirl) {
+        const dead = k.t - (S.sw.fastAt ?? S.sw.t) <= .12; // a sudden stop, not a slow wind-down (10/18: swing down and stop = fire)
+        if (ang > 60 * D && dur < 1.2 && !twirl && dead) {
           const v = pos.el - a.el, h = wrap(pos.hd - a.hd) * Math.cos((pos.el + a.el) / 2), m = Math.hypot(v, h);
           const dir = [Math.abs(v) > 0.4 * m ? (v > 0 ? 'up' : 'down') : '', Math.abs(h) > 0.4 * m ? (h > 0 ? 'left' : 'right') : ''].filter(Boolean).join('-');
           emit('Swing', `${dir}, ${deg(ang)}° in ${(dur * 1000).toFixed(0)} ms · from ${where(a)} · stop ${where(pos)}`, k.t, { dir, power: Math.min(1, ang / dur / (1000 * D)) });

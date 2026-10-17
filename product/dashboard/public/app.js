@@ -135,6 +135,8 @@ gameCtrl.innerHTML = `
   <div class="rules">
     <label>中になる溜め時間 <input data-rule="t1" type="number" min="0.1" max="20" step="0.1"> 秒</label>
     <label>大になる溜め時間 <input data-rule="t2" type="number" min="0.2" max="30" step="0.1"> 秒</label>
+    <label>HP（試合開始時） <input data-rule="hp" type="number" min="1" max="1000" step="1"></label>
+    <label title="小・中・大すべての弾の速さ。1 が今の速さ">弾の速さ <input data-rule="speed" type="range" min="0.3" max="2" step="0.05" style="width:110px;vertical-align:middle"> <span id="speedOut" class="num"></span> 倍</label>
     <label>小のダメージ <input data-rule="dmg.s" type="number" min="0" max="100" step="1"></label>
     <label>中のダメージ <input data-rule="dmg.m" type="number" min="0" max="100" step="1"></label>
     <label>大のダメージ <input data-rule="dmg.l" type="number" min="0" max="100" step="1"></label>
@@ -167,8 +169,10 @@ const ruleGet = k => k.split('.').reduce((o, x) => o?.[x], cfg.rules), ruleSet =
 function showRules() {
   for (const i of ruleIns) i.value = +(ruleGet(i.dataset.rule) * (+i.dataset.scale || 1)).toFixed(2);
   const r = cfg.rules;
+  $('#speedOut').textContent = (+r.speed || 1).toFixed(2);
   $('#rulesNote').textContent = r.t2 > r.t1 ? `0〜${r.t1}秒 小 / ${r.t1}〜${r.t2}秒 中 / ${r.t2}秒〜 大` : '大になる時間は中より長くする';
 }
+for (const i of ruleIns) if (i.type === 'range') i.oninput = () => i.onchange(); // the slider applies while it is dragged
 for (const i of ruleIns) i.onchange = () => {
   const v = +i.value; if (!Number.isFinite(v)) return showRules();
   ruleSet(i.dataset.rule, Math.max(+i.min, Math.min(+i.max, v)) / (+i.dataset.scale || 1));
@@ -278,7 +282,7 @@ function updateHud() {
   const m = game.match;
   for (const p of Object.values(game.players)) {
     const h = hudP[p.slot];
-    h.hp.style.width = p.hp + '%'; setText(h.hpn, String(Math.round(p.hp)));
+    h.hp.style.width = 100 * p.hp / (p.hpMax || 100) + '%'; setText(h.hpn, String(Math.round(p.hp)));
     h.chi.style.width = (p.charging ? p.charge * 100 : 0) + '%';
     for (const t of ['m', 'l']) h.ch.classList.toggle(t, p.charging && p.tier === t);
     h.tick.style.left = (100 * Math.min(1, cfg.rules.t1 / cfg.rules.t2)) + '%';

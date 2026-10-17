@@ -42,6 +42,11 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
       <strong class="final-control-title">プレイヤーの動き</strong>
       <div class="final-control-items">
         <div id="finalPlay" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"></div>
+      </div>
+    </div>
+    <div class="final-control-row">
+      <strong class="final-control-title">スキャン・表示</strong>
+      <div class="final-control-items">
         <div class="final-shared-controls">
           <button id="scanBtn" class="go">タグでスキャン<kbd>K</kbd></button>
           <span class="kv" id="tagCheck"></span><span class="msg" id="finalMsg"></span>

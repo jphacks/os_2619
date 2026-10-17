@@ -28,7 +28,7 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷' };
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, chargeHold: 1.5, guardHold: .3, size: { s: 1, m: 1, l: 1 } }; // size: ball size × (looks and hit radius)
+export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, chargeHold: 1.5, guardHold: .3, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: 1 }; // size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × (all tiers)
 // how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
 // a little larger than the ball looks so near misses still count (10/18: .12 / .28 / .5 were too strict)
 const TIER = {
@@ -53,7 +53,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   };
 
   function makePlayer(slot) {
-    return { slot, element: ELEMENT[slot], hp: 100, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, chargeFrom: null, tier: null, act: null, guarding: false, guardSince: null, guardBtn: false,
+    return { slot, element: ELEMENT[slot], hp: cfg.rules?.hp ?? RULES.hp, hpMax: cfg.rules?.hp ?? RULES.hp, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, chargeFrom: null, tier: null, act: null, guarding: false, guardSince: null, guardBtn: false,
       body: W.bodyPose(W.START[slot].pos, W.START[slot].yaw), chest: V(), base: V(), tip: V(), dir: V(1, 0, 0), trail: [], lastShot: -9, src: 'start', stickSrc: '-',
       shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 };
   }
@@ -66,6 +66,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   let winner = null;
   const canAct = () => !match.paused && match.phase === 'fight';
   const rules = () => cfg.rules ?? RULES;
+  const CHARGE_LIVE = .4; // s after a Charge event the circling counts as still going (actions.js sends one every ~.15 s while it does)
+  const speedOf = T => T.speed * (rules().speed ?? 1); // m/s, the dashboard's ball-speed slider applied
   const tierOf = t => t < rules().t1 ? 's' : t < rules().t2 ? 'm' : 'l';
   const IMU_SIDE = cross(W.STICK.axis, W.STICK.up);
 
@@ -113,7 +115,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       if (charging) fx.charge(p.element, p.tip, level, p.element, { tier, chargeT });
       s?.aura(p.slot, p.element, match.paused ? 0 : p.charging ? .6 + .4 * p.charge : .4, panOf(p.chest));
     } else s?.aura(p.slot, p.element, 0, 0);
-    if (p.guarding) fx.guard(p.element, p.base.clone().lerp(p.tip, .5), 1);
+    if (p.guarding) { const f = W.app3(p.body.R, [1, 0, 0]); fx.guard(p.element, p.base.clone().lerp(p.tip, .5), 1, undefined, V(f[0], 0, f[2]).normalize()); } // facing: the shield stands square to it
   }
   /** Guard pose: the stick within 25° of level and within 30° of square to the body's facing (held across the body). */
   function guardPose(p) {
@@ -147,7 +149,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     const k = sizeOf(tier);
     // steer: the dummy room keeps turning a shot onto the chest it was drawn at; デモ試合 never does (aimed once, then straight)
     const steer = dummyTarget && match.mode !== 'demo';
-    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now(), dummyTarget, homing, steer });
+    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, pos: p.tip.clone(), vel: aim.multiplyScalar(speedOf(T)), born: now(), dummyTarget, homing, steer });
     log(p.slot, tier === 'l' ? 'special' : 'shot', `${TIER_JA[tier]}の攻撃${tier === 's' ? '' : `（溜め ${p.chargeT.toFixed(1)} 秒）`}`);
     return true;
   }
@@ -176,7 +178,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     const T = TIER[tier], foe = other(p), aim = foe.chest.clone().sub(p.tip).normalize();
     if (tier === 'l') sfx()?.special(p.element, panOf(p.tip)); else sfx()?.shot(p.element, panOf(p.tip), T.power);
     const k = sizeOf(tier);
-    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, test: true, homing: match.mode === 'demo', pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now() });
+    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, test: true, homing: match.mode === 'demo', pos: p.tip.clone(), vel: aim.multiplyScalar(speedOf(T)), born: now() });
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
   }
   function damage(foe, from, tier) {
@@ -192,8 +194,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       const s = shots[i], foe = other(s.owner), T = TIER[s.tier];
       if (s.steer && getDummyFrame()) { // dummy room (not デモ試合): steer at the chest every frame
         const distance = s.pos.distanceTo(foe.chest);
-        s.vel.copy(foe.chest).sub(s.pos).normalize().multiplyScalar(T.speed);
-        s.pos.addScaledVector(s.vel, Math.min(dt, distance / T.speed));
+        s.vel.copy(foe.chest).sub(s.pos).normalize().multiplyScalar(speedOf(T));
+        s.pos.addScaledVector(s.vel, Math.min(dt, distance / speedOf(T)));
       } else s.pos.addScaledVector(s.vel, dt);
       fx.moveShot(s.id, s.pos);
       // hit: distance to the opponent's vertical body segment (capsule radius .3 + the shot's own radius)
@@ -206,7 +208,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
           const back = s.owner.chest.clone().sub(s.pos).normalize();
           fx.endShot(s.id, 'timeout');
           s.id = fx.shot(s.element, s.pos.clone(), back.clone(), T.power, T.big * (s.size ?? 1), { tier: s.tier, scale: s.size ?? 1 });
-          s.vel.copy(back).multiplyScalar(T.speed); s.owner = foe; s.born = now(); s.steer = false;
+          s.vel.copy(back).multiplyScalar(speedOf(T)); s.owner = foe; s.born = now(); s.steer = false;
           foe.reflects = (foe.reflects ?? 0) + 1; showAct(foe, '反射！'); log(foe.slot, 'guard', `${other(foe).slot} の小を反射`);
           continue;
         }
@@ -217,7 +219,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
         if (!s.test) damage(foe, s.owner, s.tier); // try-out shots only show
       }
-      const end = hit ? 'hit' : s.pos.y < 0 ? 'floor' : now() - s.born > 1.6 ? 'timeout' : null; // y < 0: into the floor
+      const end = hit ? 'hit' : s.pos.y < 0 ? 'floor' : now() - s.born > 1.6 / Math.max(.3, rules().speed ?? 1) ? 'timeout' : null; // y < 0: into the floor; slower balls live longer, so they still reach
       if (end) { fx.endShot(s.id, end); shots.splice(i, 1); }
     }
   }
@@ -266,7 +268,11 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       const moved = p.chargeFrom ? Math.hypot(p.chest.x - p.chargeFrom.x, p.chest.z - p.chargeFrom.z) : 0;
       if (moved > R.moveFail) { failCharge(p, `${Math.round(moved * 100)} cm 動いた`); continue; }
       if (R.chargeHold > 0 && p.autoRelease == null && p.tier !== 'l' && now() - p.chargeSeen > R.chargeHold) { failCharge(p, '棒の動きが止まった'); continue; } // short pauses are fine; a long stop drops it (a full charge just waits for the swing)
-      p.chargeT += dt;
+      // the charge only grows while the stick is being circled (Charge events keep coming); once the circling stops it is held
+      // as it is, for chargeHold s, waiting for the swing down that fires it (10/18: circle, stop, swing down = fire).
+      // Without the stop rule (chargeHold 0) or for the 大 test button it grows with time as before.
+      const live = R.chargeHold <= 0 || p.autoRelease != null || now() - p.chargeSeen < CHARGE_LIVE;
+      if (live) p.chargeT += dt;
       p.charge = Math.min(1, p.chargeT / R.t2);
       const t = tierOf(p.chargeT);
       if (t !== p.tier) {
@@ -280,7 +286,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
 
   // ---- match flow: setup -> countdown -> fight -> result ----
   function reset() {
-    for (const p of Object.values(players)) Object.assign(p, { guarding: false, guardSince: null, hp: 100, charge: 0, chargeT: 0, charging: false, tier: null, autoRelease: null, act: null, lastShot: -9, shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 });
+    for (const p of Object.values(players)) Object.assign(p, { guarding: false, guardSince: null, hp: rules().hp ?? RULES.hp, hpMax: rules().hp ?? RULES.hp, charge: 0, chargeT: 0, charging: false, tier: null, autoRelease: null, act: null, lastShot: -9, shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 });
     for (const s of shots) fx.endShot(s.id); shots.length = 0; winner = null;
     for (const p of Object.values(players)) p.preview = null;
   }
@@ -297,6 +303,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     log(w?.slot ?? null, 'win', w ? `${w.slot} の勝ち` : '引き分け');
   }
   function stepMatch(dt) {
+    // a new HP setting shows at once while setting up; during a match it waits for the next one (reset)
+    if (match.phase === 'setup') for (const p of Object.values(players)) if (p.hpMax !== (rules().hp ?? RULES.hp)) p.hp = p.hpMax = rules().hp ?? RULES.hp;
     if (match.phase === 'countdown' && now() >= match.until) { match.phase = 'fight'; match.left = match.sec; match.fightAt = now(); }
     if (match.phase !== 'fight' || match.paused) return;
     match.left = Math.max(0, match.left - dt);

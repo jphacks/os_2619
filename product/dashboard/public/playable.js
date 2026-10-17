@@ -1,6 +1,6 @@
 // How each of A / B moves in the dummy room (screens 3 ゲーム / 4 最終映像):
 //   keyboard キーボード操作  arrows walk on the floor (camera-ish axes: → +x, ↑ −z); the slot's own key (A / B) held = charge,
-//                            released = fire. Only one slot can be on the keyboard at a time.
+//                            released = fire; Space held = guard (game.command 'guard'). Only one slot on the keyboard at a time.
 //   random   ランダム動作    the dummy room's own made-up motion (or fake-world, when it is sending), as before
 //   still    静止            stands where it was, facing the other player, stick held still in front
 // It only uses the existing contact points: the pose goes in through the dummy room's setTruth (the same path fake-world
@@ -10,7 +10,7 @@ import * as W from './world.js';
 
 const SPEED = 1.6;          // m/s
 const SWING = .28;          // s, the swing down after releasing
-const KEEP = .5;            // s between the Charge events a held key sends (game.js drops a charge after RULES.chargeHold = 1.5 s without one)
+const KEEP = .2;            // s between the Charge events a held key sends: under game.js CHARGE_LIVE (.4 s), so the charge keeps growing while held
 const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 export const CONTROL_JA = { keyboard: 'キーボード操作', random: 'ランダム動作', still: '静止' };
 const SLOTS = ['A', 'B'];
@@ -19,7 +19,7 @@ export function createPlayable({ vsrc, game, cfg, save, isActive }) {
   const held = new Set();
   // cfg.control = { A: mode, B: mode }; the old single cfg.playable ('A' | 'B' | null) means that slot on the keyboard
   const saved = cfg.control ?? { A: cfg.playable === 'A' ? 'keyboard' : 'random', B: cfg.playable === 'B' ? 'keyboard' : 'random' };
-  const st = Object.fromEntries(SLOTS.map(s => [s, { mode: CONTROL_JA[saved[s]] ? saved[s] : 'random', chest: null, yaw: 0, charging: false, swingAt: -9, chargeAt: 0 }]));
+  const st = Object.fromEntries(SLOTS.map(s => [s, { mode: CONTROL_JA[saved[s]] ? saved[s] : 'random', chest: null, yaw: 0, charging: false, guarding: false, swingAt: -9, chargeAt: 0 }]));
   if (st.A.mode === 'keyboard' && st.B.mode === 'keyboard') st.B.mode = 'random';
   const listeners = new Set();
   const note = () => { for (const f of listeners) f(); };
@@ -31,6 +31,7 @@ export function createPlayable({ vsrc, game, cfg, save, isActive }) {
     if (mode === 'keyboard' && st[other(slot)].mode === 'keyboard') return; // one keyboard player at most
     const s = st[slot];
     if (s.charging) charge(slot, false);
+    if (s.guarding) guard(slot, false);
     s.mode = mode; s.chest = null;
     if (mode === 'keyboard' || keyboardSlot() === null) held.clear();
     cfg.control = { A: st.A.mode, B: st.B.mode }; delete cfg.playable; save?.();
@@ -43,20 +44,23 @@ export function createPlayable({ vsrc, game, cfg, save, isActive }) {
     else s.swingAt = performance.now() / 1000;
     game.command({ cmd: 'charge', slot, on });
   }
+  function guard(slot, on) { st[slot].guarding = on; game.command({ cmd: 'guard', slot, on }); }
   const usable = () => !!keyboardSlot() && !!vsrc.dummy && isActive();
 
   addEventListener('keydown', e => {
     if (!usable() || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
     const k = keyboardSlot();
     if (ARROWS[e.key]) { e.preventDefault(); held.add(e.key); return; }
+    if (e.key === ' ') { e.preventDefault(); e.stopImmediatePropagation(); if (!st[k].guarding) guard(k, true); return; } // Space: guard (instead of app.js's 'A shoots')
     if (e.key.toLowerCase() === k.toLowerCase()) { e.preventDefault(); e.stopImmediatePropagation(); if (!e.repeat && !st[k].charging) charge(k, true); }
   }, true);
   addEventListener('keyup', e => {
     if (ARROWS[e.key]) { held.delete(e.key); return; }
     const k = keyboardSlot();
+    if (k && st[k].guarding && e.key === ' ') { e.stopImmediatePropagation(); guard(k, false); return; }
     if (k && st[k].charging && e.key.toLowerCase() === k.toLowerCase()) { e.stopImmediatePropagation(); charge(k, false); }
   }, true);
-  addEventListener('blur', () => { held.clear(); const k = keyboardSlot(); if (k && st[k].charging) charge(k, false); });
+  addEventListener('blur', () => { held.clear(); const k = keyboardSlot(); if (k && st[k].charging) charge(k, false); if (k && st[k].guarding) guard(k, false); });
 
   /** Body pose → the dummy room's truth format (chest, yaw, base, tip, dir, swinging), like dummy-motion.js. */
   function pose(slot, time, foe) {
@@ -68,6 +72,7 @@ export function createPlayable({ vsrc, game, cfg, save, isActive }) {
     const sw = time - s.swingAt, swinging = !still && sw >= 0 && sw < SWING;
     let el, az;
     if (still) { el = .25; az = 0; }
+    else if (s.guarding && !s.charging) { el = .02; az = -1.45; } // held level across the body (game.js guardPose: within 25° of level, 30° of square)
     else if (s.charging) { const k = Math.min(1, (time - s.chargeAt) / 5); el = 1.15 + .04 * (1 + 2 * k) * Math.sin(time * (8 + 10 * k)); az = .05 * Math.sin(time * 3); } // raised, trembling more as it grows
     else if (swinging) { const u = sw / SWING; el = 1.2 - 1.7 * u; az = 0; }  // down toward the opponent
     else { el = .25 + .12 * Math.sin(1.6 * time); az = .15 * Math.sin(.9 * time); } // idle sway
@@ -96,7 +101,7 @@ export function createPlayable({ vsrc, game, cfg, save, isActive }) {
           b.title = b.disabled ? `${k} がキーボード操作中` : '';
         }
         hint.textContent = !vsrc.dummy && (k || SLOTS.some(s => st[s].mode === 'still')) ? 'ダミー映像（?dummy）のときだけ効く'
-          : k ? `十字キーで ${k} を移動、${k}キー長押しで溜め・離して撃つ（試合中のみ当たる）` : '';
+          : k ? `十字キーで ${k} を移動、${k}キー長押しで溜め・離して撃つ、スペース長押しでガード（試合中のみ）` : '';
       };
       for (const b of el.querySelectorAll('[data-control]')) b.onclick = () => { setMode(b.dataset.s, b.dataset.control); b.blur(); };
       listeners.add(show); show();

@@ -17,7 +17,13 @@ import { STICK } from './public/world.js';
   run(0.5, () => ({ euler: [0, 30, 0], gyro: [0, 0, 0] }));
   assert.deepEqual(ev.map(e => e.name), ['Swing']);
   assert.equal(ev[0].dir, 'down');
-  console.log('actions ok');
+  // the same 90° swing winding down slowly (450 -> 0 °/s over 0.4 s) is not a shot: only a sudden stop fires
+  ev.length = 0;
+  run(0.5, () => ({ euler: [0, -60, 0], gyro: [0, 0, 0] }));
+  run(0.4, u => ({ euler: [0, -60 + 90 * (1 - (1 - u) ** 2), 0], gyro: [0, 450 * (1 - u), 0] }));
+  run(0.5, () => ({ euler: [0, 30, 0], gyro: [0, 0, 0] }));
+  assert.deepEqual(ev.map(e => e.name), [], 'a slow stop fired: ' + ev.map(e => e.detail).join(' / '));
+  console.log('actions ok (a sudden stop fires, a slow wind-down does not)');
 }
 
 // phonealign: 20 s of the fake world (raw ARCore frames with their own yaw / origin) -> chest positions in the field world

@@ -333,6 +333,21 @@ scenario('数値を変えるとすぐ反映される（小のダメージ12、�
   S.cfg.rules.dmg.s = 12; S.swing('A'); S.run(1); eq(S.B.hp, 88, '小12のあとの B の HP');
   S.cfg.rules.t1 = 1; S.chargeShot('A', 1.5); eq(S.B.hp, 68, '1.5秒溜め（中）のあとの B の HP');
 });
+scenario('HPの設定は準備中にすぐ反映され、試合はその値から始まる', () => {
+  const S = setup(); S.cfg.rules.hp = 200; S.run(.1);
+  eq(S.B.hp, 200, '準備中の B の HP'); eq(S.B.hpMax, 200, 'B の最大 HP');
+  S.fight(); S.swing('A'); S.run(1); eq(S.B.hp, 195, '小のあとの B の HP');
+});
+scenario('弾の速さ0.5倍だと、同じ距離に当たるまで2倍かかる', () => {
+  const time = speed => { // seconds until the 小 hits B standing 4 m away
+    const S = setup({ rules: { speed } }); S.put('B', 4, 0); S.fight(); S.swing('A');
+    for (let t = 0; t < 3; t += 1 / 60) { S.run(1 / 60); if (S.B.hp < 100) return t; }
+    return Infinity;
+  };
+  const t1 = time(1), t5 = time(.5);
+  expect(Math.abs(t5 / t1 - 2) < .15, `通常 ${t1.toFixed(2)} 秒、0.5倍 ${t5.toFixed(2)} 秒`);
+  return `通常 ${t1.toFixed(2)} 秒 / 0.5倍 ${t5.toFixed(2)} 秒`;
+});
 scenario('テストモードでは当たってもHPが減らない', () => {
   const S = setup({ test: true }); S.fight(); S.swing('A'); S.run(1);
   eq(S.A.hits, 1, '命中数'); eq(S.B.hp, 100, 'B の HP');
@@ -351,6 +366,18 @@ scenario('溜めの検知が途切れると、溜めがやめになる（動か�
   S.charge('A'); for (let i = 0; i < 55; i++) { S.run(.1); S.charge('A'); }
   eq(S.A.tier, 'l', '溜め切り'); S.run(4);
   eq(S.A.charging, true, '溜め切ったら止めていても待つ');
+});
+scenario('回すのをやめると溜めはその量で止まって保持され、振り下ろしでその段階が出る', () => {
+  const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); // the real rule
+  const circle = sec => { for (let t = 0; t < sec; t += .15) { S.charge('A'); S.run(.15); } };
+  circle(1.5); const held = S.A.chargeT; // 1.5 s of circling: still 小
+  S.run(1); // stopped circling, 1 s before the swing down
+  expect(Math.abs(S.A.chargeT - held) < .45, `止めている間に溜めが ${held.toFixed(2)} → ${S.A.chargeT.toFixed(2)} 秒に増えた`);
+  eq(S.A.charging, true, '保持中の溜め');
+  S.swing('A'); S.run(1.5);
+  eq(S.B.hp, 95, '保持した小で撃ったあとの B の HP（時間だけなら中になっていた）');
+  circle(2.6); S.run(.8); S.swing('A'); S.run(1.5);
+  eq(S.B.hp, 75, '2.6秒回して止め、振り下ろした中のあとの B の HP');
 });
 
 const w = Math.max(...results.map(r => r.name.length));

@@ -314,7 +314,7 @@ function makeAvatar(slot) {
       suit.color.copy(online ? onColor : offColor); suit.emissive.copy(online ? onColor : offColor); suit.emissiveIntensity = online ? .12 : 0;
       glow.color.copy(online ? onColor : offColor).multiplyScalar(1.4);
     }
-    drawHp(p.hp ?? 100, online, p.charging ? (p.charge ?? 0) : 0);
+    drawHp(100 * (p.hp ?? 100) / (p.hpMax || 100), online, p.charging ? (p.charge ?? 0) : 0);
   }
 
   // The pose from phone C's picture (p.skel = { joints, vis }, world joints from avatarpose.js): every bone is put where the
@@ -359,7 +359,7 @@ function makeAvatar(slot) {
     finish(p, base, tipP);
     facing.set(fv.x, 0, fv.z).normalize();
     hpSprite.position.set(sm[0].x, Math.max(sm[0].y + .38, 1.2), sm[0].z);
-    return { x: hpM.x, z: hpM.z, hp: (p.hp ?? 100) / 100, vis: p.online !== false ? 1 : .5 };
+    return { x: hpM.x, z: hpM.z, hp: (p.hp ?? 100) / (p.hpMax || 100), vis: p.online !== false ? 1 : .5 };
   }
 
   return {
@@ -413,7 +413,7 @@ function makeAvatar(slot) {
       finish(p, p.base, p.tip);
       facing.set(f[0], 0, f[2]).normalize();
       hpSprite.position.set(bp.t[0], ch + .5 + .02 * Math.sin(st.time * 1.7) - st.ko * .3, bp.t[2]);
-      return { x: bp.t[0], z: bp.t[2], hp: (p.hp ?? 100) / 100, vis: p.online !== false ? 1 : .5 };
+      return { x: bp.t[0], z: bp.t[2], hp: (p.hp ?? 100) / (p.hpMax || 100), vis: p.online !== false ? 1 : .5 };
     },
   };
 }
@@ -573,7 +573,7 @@ export function createMinimap(canvas) {
         g.fillStyle = c; g.beginPath(); // facing wedge
         g.moveTo(x + ux * r * 1.9, y + uz * r * 1.9); g.lineTo(x - uz * r * .7, y + ux * r * .7); g.lineTo(x + uz * r * .7, y - ux * r * .7); g.fill();
         g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 1.5 * u; g.stroke();
-        const hp = Math.max(0, Math.min(1, (p.hp ?? 100) / 100));
+        const hp = Math.max(0, Math.min(1, (p.hp ?? 100) / (p.hpMax || 100)));
         g.strokeStyle = 'rgba(255,255,255,.18)'; g.lineWidth = 3 * u; g.beginPath(); g.arc(x, y, r + 5 * u, 0, 7); g.stroke();
         g.strokeStyle = hp < .3 ? '#ff4a4a' : c; g.beginPath(); g.arc(x, y, r + 5 * u, -Math.PI / 2, -Math.PI / 2 + hp * Math.PI * 2); g.stroke();
         g.fillStyle = '#0b0e16'; g.fillText(s, x, y + .5 * u);
