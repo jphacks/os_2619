@@ -254,3 +254,120 @@ test('mode 2 needs both sheets 0 and 1; mode 4 still refuses 2', () => {
   assert.equal(solveFieldMap(sc.dets.slice(0, 1), ...IMG, { mode: 2 }), null);
   assert.equal(solveFieldMap(sc.dets, ...IMG), null);
 });
+
+// ---- mount 'stand': sheets taped upright, facing roughly toward the camera ----
+const SPIN_PRINT = { 0: 2, 1: 2, 2: 0, 3: 0 }; // Print Studio sheets (0/1) read upside down by OpenCV, make_tags.py (2/3) upright
+function sceneStand({ mode = 4, across = uni(1.5, 6), base = uni(.8, 1.5), hJit = .02, height = uni(.8, 2.5), back = uni(2, 6), fov = uni(25, 75),
+  noise = .3, minPx = 6, spins = SPIN_PRINT, face = 70, wall = false } = {}) {
+  const depth = mode === 2 ? across * uni(-.1, .1) : across * uni(.5, 1.1), tags = {}, ids = mode === 2 ? [0, 1] : [0, 1, 2, 3];
+  const corner = mode === 2 ? [[1, 0], [-1, 0]] : [[1, 1], [-1, 1], [-1, -1], [1, -1]];
+  const perm = [...ids].sort(() => rand() - .5);
+  const eye = [uni(-.5, .5), height, (mode === 2 ? 0 : depth / 2) + back];
+  perm.forEach((id, k) => {
+    const [sx, sz] = corner[k];
+    const pos = wall ? [sx * across / 2 + sz * across / 6, base + uni(-hJit, hJit), 0] // one wall facing the camera, in a row
+      : [sx * across / 2 + uni(-.1, .1) * across, base + uni(-hJit, hJit), sz * (mode === 2 ? depth : depth / 2) + uni(-.1, .1) * across];
+    const toCam = Math.atan2(eye[0] - pos[0], eye[2] - pos[2]);
+    tags[id] = { pos, yaw: wall ? 0 : toCam + uni(-face, face) * DEG, spin: typeof spins === 'function' ? spins(id) : spins[id], stand: true };
+  });
+  const cam = lookAt(eye, [uni(-.3, .3), base * uni(.3, 1), mode === 2 ? 0 : uni(-.3, .3)], uni(-3, 3) * DEG), f = IMG[1] / 2 / Math.tan(fov * DEG / 2);
+  const dets = [];
+  for (const id of ids) {
+    Object.assign(W.TAGS[id], tags[id], { floor: false, flip: false }); // world.js stand convention makes the truth
+    const tp = W.worldTagPose(id), h = W.TAGS[id].size / 2, n = [tp.R[2], tp.R[5], tp.R[8]];
+    const v = norm(eye.map((x, i) => x - tp.t[i])); if (n[0] * v[0] + n[1] * v[1] + n[2] * v[2] < Math.cos(80 * DEG)) return null;
+    const uv = OBJ.map(([ox, oy]) => project(cam, f, W.apply(tp, [ox * h, oy * h, 0])));
+    if (uv.some(([u, v, d]) => d <= 0 || u < 5 || v < 5 || u > IMG[0] - 5 || v > IMG[1] - 5)) return null;
+    const e = k => Math.hypot(uv[k][0] - uv[(k + 1) % 4][0], uv[k][1] - uv[(k + 1) % 4][1]);
+    const area = Math.abs(uv.reduce((s, p, k) => s + p[0] * uv[(k + 1) % 4][1] - uv[(k + 1) % 4][0] * p[1], 0)) / 2;
+    if (area / Math.max(e(0), e(1), e(2), e(3)) < minPx) return null;
+    dets.push({ id, corners: uv.map(([u, v]) => [u + noise * gauss(), v + noise * gauss()]) });
+  }
+  return { tags, cam, f, fov, dets, across, height, back, base, sep: across };
+}
+const needS = o => { for (let i = 0; i < 4000; i++) { const s = sceneStand(o); if (s) return s; } throw new Error('no standing scene fits'); };
+const solveS = (sc, o = {}) => solveFieldMap(sc.dets, ...IMG, { mount: 'stand', tagHeight: sc.base, ...o });
+const worldReproj = (sc, res) => { // feed the result to world.js, reproject the detections
+  W.setField(res); let worst = 0;
+  for (const d of sc.dets) {
+    const tp = W.worldTagPose(d.id), h = W.TAGS[d.id].size / 2;
+    OBJ.forEach(([ox, oy], k) => { const p = projectWorld(res.cam, W.apply(tp, [ox * h, oy * h, 0])); worst = Math.max(worst, Math.hypot(p[0] - d.corners[k][0], p[1] - d.corners[k][1])); });
+  }
+  return worst;
+};
+const table = (title, E, rows) => {
+  const pr = (k, s, u) => `${k.padEnd(18)} ${s.med.toFixed(2).padStart(7)} ${s.p90.toFixed(2).padStart(7)} ${s.max.toFixed(2).padStart(7)}  ${u}`;
+  console.log(`\n${title}\n${'error'.padEnd(18)}     med     p90     max`);
+  for (const [k, scale, label, u] of rows) console.log(pr(label, stats(E[k].map(v => v * scale)), u));
+};
+
+test('stand, 4 sheets: positions, heights, yaws, spins, focal and camera recovered', () => {
+  seed = 101;
+  const E = { pos: [], h: [], yaw: [], fov: [], cam: [], t: [] }; let n = 0, loose = 0, spinOK = 0, spinN = 0, worstRe = 0;
+  while (n < 60) {
+    const sc = needS({ spins: n % 3 === 2 ? () => Math.floor(rand() * 4) : SPIN_PRINT }); n++; // every third scene: sheets taped any way round
+    const t0 = performance.now(), res = solveS(sc); E.t.push(performance.now() - t0);
+    assert.ok(res, 'solved');
+    for (const id of res.ids) { spinN++; if (res.tags[id].spin === sc.tags[id].spin && res.tags[id].stand) spinOK++; }
+    if (res.warnings.some(w => /loosely/.test(w))) loose++;
+    const e = errors(sc, res);
+    E.pos.push(e.pos); E.yaw.push(e.yaw); E.fov.push(e.fov); E.cam.push(e.cam);
+    E.h.push(Math.max(...res.ids.map(id => Math.abs(res.tags[id].pos[1] - sc.tags[id].pos[1]))));
+    worstRe = Math.max(worstRe, worldReproj(sc, res));
+  }
+  table(`stand, 4 sheets: ${n} scenes, ${loose} with a loosely fixed focal (prior-pulled); spins recovered ${spinOK}/${spinN}; world.js reprojection max ${worstRe.toFixed(2)} px`, E,
+    [['pos', 100, 'sheet position', 'cm (x, z after alignment; worst sheet)'], ['h', 100, 'sheet height', 'cm (worst sheet)'], ['yaw', 1, 'sheet yaw', 'deg (worst sheet)'],
+      ['fov', 1, 'vertical fov', 'deg'], ['cam', 100, 'camera position', 'cm'], ['t', 1, 'solve time', 'ms']]);
+  assert.equal(spinOK, spinN, 'every spin recovered');
+  assert.ok(worstRe < 1.5);
+  // standing sheets are placed in depth by their apparent size alone (no common plane): a few cm, not the floor's 1-2
+  assert.ok(stats(E.pos).med < .08 && stats(E.fov).med < 1.5 && stats(E.h).med < .03);
+});
+
+test('stand, 2 sheets: distance, yaws, spins, focal and camera recovered', () => {
+  seed = 111;
+  const E = { sep: [], yaw: [], fov: [], cam: [], t: [] }; let n = 0, loose = 0, spinOK = 0;
+  while (n < 60) {
+    const sc = needS({ mode: 2, across: uni(1, 5) }); n++;
+    const t0 = performance.now(), res = solveS(sc, { mode: 2 }); E.t.push(performance.now() - t0);
+    assert.ok(res && res.poly.length === 4);
+    spinOK += +(res.tags[0].spin === 2 && res.tags[1].spin === 2);
+    if (res.warnings.some(w => /loosely/.test(w))) loose++;
+    const e = errors2(sc, res); for (const k of ['sep', 'yaw', 'fov', 'cam']) E[k].push(e[k]);
+  }
+  table(`stand, 2 sheets: ${n} scenes, ${loose} with a loosely fixed focal (prior-pulled); spins recovered ${spinOK}/${n}`, E,
+    [['sep', 100, 'sheet distance', 'cm'], ['yaw', 1, 'sheet yaw', 'deg (worst sheet)'], ['fov', 1, 'vertical fov', 'deg'], ['cam', 100, 'camera position', 'cm'], ['t', 1, 'solve time', 'ms']]);
+  assert.equal(spinOK, n);
+  assert.ok(stats(E.sep).med < .05);
+});
+
+test("stand, 2 sheets like today: 1.66 m apart, camera 0.9 m high, 2.5 m back, fov 28°", () => {
+  seed = 121;
+  const E = { sep: [], fov: [], cam: [] }; let fitted = 0;
+  for (let i = 0; i < 20; i++) {
+    const sc = needS({ mode: 2, across: 1.66, height: .9, back: 2.5, fov: 28, base: 1 });
+    const res = solveS(sc, { mode: 2 }), e = errors2(sc, res); fitted += +!res.warnings.some(w => /loosely/.test(w));
+    for (const k in E) E[k].push(e[k]);
+  }
+  const sS = stats(E.sep.map(v => v * 100)), sF = stats(E.fov), sC = stats(E.cam.map(v => v * 100));
+  console.log(`stand today-like (20 draws, ${fitted} with a firmly fixed focal): distance med ${sS.med.toFixed(2)} p90 ${sS.p90.toFixed(2)} cm, fov med ${sF.med.toFixed(2)} p90 ${sF.p90.toFixed(2)}°, camera med ${sC.med.toFixed(1)} p90 ${sC.p90.toFixed(1)} cm`);
+  assert.ok(sS.med < 3);
+});
+
+test('stand: uneven heights are warned; one wall facing the camera gives no garbage; floor default unchanged', () => {
+  seed = 131;
+  const sc = needS({ hJit: .15 }), res = solveS(sc);
+  const ys = sc.dets.map(d => sc.tags[d.id].pos[1]), spread = Math.max(...ys) - Math.min(...ys);
+  console.log(`height spread ${spread.toFixed(2)} m -> reported ${res.heightSpread.toFixed(2)} m, warning: ${res.warnings.find(w => /高さ/.test(w)) ?? 'none'}`);
+  assert.ok(Math.abs(res.heightSpread - spread) < .03 && (spread > .17 ? res.warnings.some(w => /タグの高さがそろっていない/.test(w)) : true));
+  for (let i = 0; i < 4; i++) {
+    const sw = needS({ wall: true, across: uni(1.5, 3), back: uni(2, 4) }), rw = solveS(sw), e = errors(sw, rw);
+    const loose = rw.warnings.some(w => /loosely/.test(w));
+    console.log(`one wall: fov ${rw.fovY.toFixed(1)}° (true ${sw.fov.toFixed(1)}), pos ${(e.pos * 100).toFixed(1)} cm, ${rw.warnings.join('; ') || 'no warning'}`);
+    assert.ok(e.pos < .15 && (e.fov < 5 || loose), 'sane positions; a wrong focal only with a warning');
+  }
+  const sf = need({ across: 3 }); // floor sheets as before
+  for (const id of [0, 1, 2, 3]) Object.assign(W.TAGS[id], { floor: true, stand: false });
+  const rf = solveFieldMap(sf.dets, ...IMG);
+  assert.ok(rf && Object.values(rf.tags).every(t => !t.stand && t.pos[1] === 0));
+});

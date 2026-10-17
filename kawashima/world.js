@@ -90,12 +90,14 @@ export const FIELD = { // until a scan: map4's placeholder sheets, else the AREN
 const fieldListeners = new Set();
 export const onFieldChange = cb => { fieldListeners.add(cb); return () => fieldListeners.delete(cb); };
 /**
- * setField({ poly, tags }) — poly: [[x, z] x N] the outline; tags: { id: { pos: [x, 0, z], yaw } } measured floor sheets.
+ * setField({ poly, tags }) — poly: [[x, z] x N] the outline; tags: { id: { pos: [x, 0, z], yaw } } measured floor sheets,
+ * or { id: { pos: [x, y, z], yaw, spin, stand: true } } measured upright sheets (see worldTagPose).
  * World frame convention for a scanned field: origin at the outline's centroid, y up, +x from A's side (left in the
  * third-person picture) to B's side (right), so A starts at -x facing +x as before.
  */
 export function setField({ poly, tags = {} }) {
-  for (const [id, t] of Object.entries(tags)) if (TAGS[id]) Object.assign(TAGS[id], { pos: [...t.pos], yaw: t.yaw ?? 0, floor: true, flip: false });
+  for (const [id, t] of Object.entries(tags)) if (TAGS[id]) // a measured sheet: lying (floor) or upright (stand: true, spin)
+    Object.assign(TAGS[id], { pos: [...t.pos], yaw: t.yaw ?? 0, floor: !t.stand, stand: !!t.stand, spin: t.spin ?? 0, flip: false });
   FIELD.poly = poly.map(p => [...p]);
   const xs = poly.map(p => p[0]), zs = poly.map(p => p[1]);
   const minX = Math.min(...xs), maxX = Math.max(...xs);
@@ -158,6 +160,13 @@ export const arcam_T_cv = pose(CV_FROM_AR);
 export function worldTagPose(id, body) {
   const tag = TAGS[id];
   if (!tag.pos) return chestTagPose(body);
+  if (tag.stand) { // taped upright (fieldmap stand scan): normal horizontal, facing `yaw` (0: facing +z, toward the
+    // third-person camera's side); base axes x = [cos, 0, -sin], y = up, z = [sin, 0, cos], then the tag frame turned
+    // spin·90° about its normal so the OpenCV tag axes match the print as mounted (Print Studio sheets upright: spin 2)
+    const c = Math.cos(tag.yaw ?? 0), s = Math.sin(tag.yaw ?? 0), [ck, sk] = [[1, 0], [0, 1], [-1, 0], [0, -1]][((tag.spin ?? 0) % 4 + 4) % 4];
+    const xb = [c, 0, -s];
+    return pose(fromCols([ck * xb[0], sk, ck * xb[2]], [-sk * xb[0], ck, -sk * xb[2]], [s, 0, c]), tag.pos);
+  }
   if (tag.floor) { // lying face up, turned `yaw` about world up (yaw 0: the sheet's top edge points to -z, away from the camera)
     const a = (tag.yaw ?? 0) + (tag.flip ? Math.PI : 0), c = Math.cos(a), s = Math.sin(a);
     return pose(fromCols([c, 0, -s], [-s, 0, -c], [0, 1, 0]), tag.pos);
