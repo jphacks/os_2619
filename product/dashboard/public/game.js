@@ -5,7 +5,9 @@
 //   Swing without charging → 小 (weak, can be repeated every `rapid` s)
 //   Charge (circle the stick) → charging; Swing releases it: under t1 s 小, t1..t2 s 中, t2 s and more 大 (special move)
 //   moving the chest more than `moveFail` m while charging drops the charge
-//   every tier is a projectile along the aim: dodging is just moving out of its way (no guard, no invulnerable dodge)
+//   every tier is a projectile along the aim: dodging is just moving out of its way (no invulnerable dodge)
+//   guard (10/18): the stick held level across the body (真一文字・とおせんぼ) for guardHold s, or the guard button: a 小 that
+//   reaches the guard bounces back at its shooter; 中 and 大 go through it (full damage)
 //   aim 'motion' (default): where the stick tip was travelling just before it stopped (GAME_DESIGN.md); 'stick': where the
 //   stick points; 'eye': from the eyes through the tip. Buttons / keys (no swing) fall back to 'stick'.
 // Hits are 3D: shot sphere vs the opponent's vertical body segment. Effects go to effects.js (fx), sound to audio.js (sfx).
@@ -26,7 +28,7 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷' };
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, chargeHold: 1.5, size: { s: 1, m: 1, l: 1 } }; // size: ball size × (looks and hit radius)
+export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, chargeHold: 1.5, guardHold: .3, size: { s: 1, m: 1, l: 1 } }; // size: ball size × (looks and hit radius)
 // how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
 // a little larger than the ball looks so near misses still count (10/18: .12 / .28 / .5 were too strict)
 const TIER = {
@@ -51,7 +53,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   };
 
   function makePlayer(slot) {
-    return { slot, element: ELEMENT[slot], hp: 100, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, chargeFrom: null, tier: null, act: null,
+    return { slot, element: ELEMENT[slot], hp: 100, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, chargeFrom: null, tier: null, act: null, guarding: false, guardSince: null, guardBtn: false,
       body: W.bodyPose(W.START[slot].pos, W.START[slot].yaw), chest: V(), base: V(), tip: V(), dir: V(1, 0, 0), trail: [], lastShot: -9, src: 'start', stickSrc: '-',
       shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 };
   }
@@ -111,6 +113,21 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       if (charging) fx.charge(p.element, p.tip, level, p.element, { tier, chargeT });
       s?.aura(p.slot, p.element, match.paused ? 0 : p.charging ? .6 + .4 * p.charge : .4, panOf(p.chest));
     } else s?.aura(p.slot, p.element, 0, 0);
+    if (p.guarding) fx.guard(p.element, p.base.clone().lerp(p.tip, .5), 1);
+  }
+  /** Guard pose: the stick within 25° of level and within 30° of square to the body's facing (held across the body). */
+  function guardPose(p) {
+    const f = W.app3(p.body.R, [1, 0, 0]);
+    return Math.abs(p.dir.y) < Math.sin(25 * Math.PI / 180) && Math.abs(p.dir.x * f[0] + p.dir.z * f[2]) < Math.sin(30 * Math.PI / 180);
+  }
+  function stepGuard() {
+    for (const p of Object.values(players)) {
+      const pose = canAct() && !p.charging && (p.guardBtn || guardPose(p));
+      p.guardSince = pose ? p.guardSince ?? now() : null;
+      const on = pose && (p.guardBtn || now() - p.guardSince >= rules().guardHold);
+      if (on && !p.guarding) { showAct(p, 'ガード'); log(p.slot, 'guard', 'ガード'); sfx()?.guard('up', panOf(p.chest)); }
+      p.guarding = on;
+    }
   }
 
   /** Fires one projectile of tier 's' | 'm' | 'l' along the aim. 小 is limited to one every rules().rapid s. */
@@ -182,8 +199,21 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       // hit: distance to the opponent's vertical body segment (capsule radius .3 + the shot's own radius)
       const a = foe.chest.clone().setY(foe.chest.y - 1.05), b = foe.chest.clone().setY(foe.chest.y + .15);
       const hit = (match.phase === 'fight' || s.test) && new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .3 + T.radius * (s.size ?? 1);
+      if (hit && foe.guarding) { // 小 bounces back at its shooter; 中 / 大 go through the guard and hit
+        fx.block(foe.element, s.pos.clone());
+        if (s.tier === 's') {
+          sfx()?.guard('reflect', panOf(s.pos));
+          const back = s.owner.chest.clone().sub(s.pos).normalize();
+          fx.endShot(s.id, 'timeout');
+          s.id = fx.shot(s.element, s.pos.clone(), back.clone(), T.power, T.big * (s.size ?? 1), { tier: s.tier, scale: s.size ?? 1 });
+          s.vel.copy(back).multiplyScalar(T.speed); s.owner = foe; s.born = now(); s.steer = false;
+          foe.reflects = (foe.reflects ?? 0) + 1; showAct(foe, '反射！'); log(foe.slot, 'guard', `${other(foe).slot} の小を反射`);
+          continue;
+        }
+        sfx()?.guard('break', panOf(s.pos)); log(foe.slot, 'guard', `${TIER_JA[s.tier]}にガードを貫通された`);
+      }
       if (hit) {
-        fx.hit(s.owner.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.owner.element, panOf(s.pos), T.hit, s.tier);
+        fx.hit(s.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.element, panOf(s.pos), T.hit, s.tier);
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
         if (!s.test) damage(foe, s.owner, s.tier); // try-out shots only show
       }
@@ -212,7 +242,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     p.charging = false; p.charge = 0; p.chargeT = 0; p.tier = null; p.autoRelease = null; p.fails++;
     fx.hit(p.element, p.tip.clone(), .1); showAct(p, '溜め失敗'); log(p.slot, 'charge', `溜め失敗（${why}）`);
   }
-  /** A detector event from actions.js ({ slot, name, dir, power, speed }). Guard / Dodge are not part of the game. */
+  /** A detector event from actions.js ({ slot, name, dir, power, speed }). Dodge is not part of the game; Guard comes from
+   *  the stick pose every frame (stepGuard: the detector's 1 s hold is too slow for a block). */
   function onSensed(ev) {
     const p = players[ev.slot]; if (!p || !canAct()) return;
     if (ev.name === 'Charge') { // only while the stick is not below horizontal (its IMU elevation; exactly level only happens in scripted tests);
@@ -249,7 +280,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
 
   // ---- match flow: setup -> countdown -> fight -> result ----
   function reset() {
-    for (const p of Object.values(players)) Object.assign(p, { hp: 100, charge: 0, chargeT: 0, charging: false, tier: null, autoRelease: null, act: null, lastShot: -9, shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 });
+    for (const p of Object.values(players)) Object.assign(p, { guarding: false, guardSince: null, hp: 100, charge: 0, chargeT: 0, charging: false, tier: null, autoRelease: null, act: null, lastShot: -9, shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 });
     for (const s of shots) fx.endShot(s.id); shots.length = 0; winner = null;
     for (const p of Object.values(players)) p.preview = null;
   }
@@ -284,6 +315,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       case 'special': // test button: really charge (小 → 中 → 大, moving still fails it), then swing just past the 大 line
         if (!p || !canAct()) return;
         startCharge(p); p.autoRelease = rules().t2 + .3; return;
+      case 'guard': if (p) p.guardBtn = !!c.on; return; // test button: guard while held
       case 'charge': if (!p) return;
         if (c.on) startCharge(p); else release(p);
         return;
@@ -303,7 +335,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       place(p, est, sensorOnly); effects(p);
       p.trail.push({ t: now(), p: p.tip.clone().sub(p.chest) }); while (p.trail.length && p.trail[0].t < now() - .5) p.trail.shift(); // for motionAim
     }
-    stepCharge(dt); stepShots(dt);
+    stepCharge(dt); stepGuard(); stepShots(dt);
     const s = sfx();
     if (s) {
       for (const p of Object.values(players)) s.charge(p.slot, p.charging && canAct(), p.charge, panOf(p.tip), p.tier ?? 's');
