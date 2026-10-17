@@ -16,7 +16,7 @@ const DT = 1 / 60;
 function setup({ rules = {}, matchSec = 60, test = false } = {}) {
   let t = 1000, ids = 1;
   const fx = { aura() {}, charge() {}, shot: () => ids++, moveShot() {}, endShot() {}, hit() {} };
-  const cfg = { posSrc: 'start', aim: 'stick', hand: 'R', stickLen: { A: .8, B: .8 }, useTruth: true, test,
+  const cfg = { posSrc: 'start', aim: 'motion', hand: 'R', stickLen: { A: .8, B: .8 }, useTruth: true, test,
     rules: { ...RULES, ...rules, dmg: { ...RULES.dmg, ...rules.dmg } } };
   const g = createGame({ fx, drone: null, cfg, clock: () => t });
   const pos = { A: [-1.2, 0], B: [1.2, 0] };
@@ -40,6 +40,13 @@ function setup({ rules = {}, matchSec = 60, test = false } = {}) {
     walk(slot, dx, dz, sec = .5) {
       const [x0, z0] = pos[slot], n = Math.round(sec / DT);
       for (let i = 1; i <= n; i++) { put(slot, x0 + dx * i / n, z0 + dz * i / n); run(DT); }
+    },
+    /** move A's stick over `sec`: base(u) and dir(u) for u 0..1 (field coords), then a Swing as the stick stops */
+    sweep(slot, sec, base, dir) {
+      const n = Math.round(sec / DT), x = pos[slot];
+      g.ingest({ type: 'truth', slot, chest: [x[0], 1.3, x[1]], yaw: slot === 'A' ? 0 : Math.PI, base: base(0), dir: dir(0) }); run(.6); // wind up, still
+      for (let i = 0; i <= n; i++) { const u = i / n; g.ingest({ type: 'truth', slot, chest: [x[0], 1.3, x[1]], yaw: slot === 'A' ? 0 : Math.PI, base: base(u), dir: dir(u) }); run(DT); }
+      S.swing(slot); run(1.5);
     },
     log: () => g.events.map(e => `${e.slot ?? '-'} ${e.text}`).reverse(),
   };
@@ -123,6 +130,35 @@ scenario('大ボタンを押すと、実際に溜めて小→中→大と上が�
 scenario('大ボタンで溜めている途中に動くと失敗し、撃たない', () => {
   const S = setup(); S.fight(); S.g.command({ cmd: 'special', slot: 'A' }); S.run(2); S.walk('A', 0, .6); S.run(5);
   eq(S.A.fails, 1, '失敗数'); eq(S.A.shots, 0, '発射数'); eq(S.B.hp, 100, 'B の HP');
+});
+
+// ---- 撃つ方向（止める直前の棒の先の動き） ----
+scenario('棒を前に突き出して止めると、突き出した向きに飛んで当たる', () => {
+  const S = setup(); S.fight();
+  S.sweep('A', .15, u => [-1.4 + .4 * u, 1.2, 0], () => [1, 0, 0]); // the whole stick moves 40 cm toward B
+  eq(S.B.hp, 95, 'B の HP');
+});
+scenario('横に払って相手の方を向いて止めると、払った向き（横）に飛んで外れる', () => {
+  const S = setup(); S.fight();
+  // stick swings from pointing left (-z) round to pointing at B (+x): the tip is moving toward +z when it stops
+  S.sweep('A', .2, () => [-1.0, 1.2, 0], u => { const a = -Math.PI / 2 * (1 - u); return [Math.cos(a), 0, Math.sin(a)]; });
+  eq(S.B.hp, 100, 'B の HP');
+  const sh = S.g.events.find(e => e.kind === 'shot'); expect(sh, '撃っていない');
+});
+scenario('同じ払い方でも、狙いを「止めたときの棒の向き」にすると当たる', () => {
+  const S = setup(); S.fight(); S.cfg.aim = 'stick';
+  S.sweep('A', .2, () => [-1.0, 1.2, 0], u => { const a = -Math.PI / 2 * (1 - u); return [Math.cos(a), 0, Math.sin(a)]; });
+  eq(S.B.hp, 95, 'B の HP');
+});
+scenario('振り下ろして止めると、下向きに飛んで床で消える', () => {
+  const S = setup(); S.fight();
+  // stick from straight up down to level forward: at the stop the tip is moving straight down
+  S.sweep('A', .2, () => [-1.0, 1.2, 0], u => { const a = Math.PI / 2 * (1 - u); return [Math.cos(a), Math.sin(a), 0]; });
+  eq(S.B.hp, 100, 'B の HP'); eq(S.g.shots.length, 0, '残っている弾');
+});
+scenario('ボタンで撃つとき（棒が動いていない）は、棒の向きに飛ぶ', () => {
+  const S = setup(); S.fight(); S.g.command({ cmd: 'shoot', slot: 'A' }); S.run(1);
+  eq(S.B.hp, 95, 'B の HP');
 });
 
 // ---- 溜めのリスク ----

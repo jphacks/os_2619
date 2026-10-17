@@ -6,6 +6,8 @@
 //   Charge (circle the stick) → charging; Swing releases it: under t1 s 小, t1..t2 s 中, t2 s and more 大 (special move)
 //   moving the chest more than `moveFail` m while charging drops the charge
 //   every tier is a projectile along the aim: dodging is just moving out of its way (no guard, no invulnerable dodge)
+//   aim 'motion' (default): where the stick tip was travelling just before it stopped (GAME_DESIGN.md); 'stick': where the
+//   stick points; 'eye': from the eyes through the tip. Buttons / keys (no swing) fall back to 'stick'.
 // Hits are 3D: shot sphere vs the opponent's vertical body segment. Effects go to effects.js (fx), sound to audio.js (sfx).
 import * as THREE from 'three';
 import * as W from './world.js';
@@ -49,7 +51,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
 
   function makePlayer(slot) {
     return { slot, element: ELEMENT[slot], hp: 100, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, chargeFrom: null, tier: null, act: null,
-      body: W.bodyPose(W.START[slot].pos, W.START[slot].yaw), chest: V(), base: V(), tip: V(), dir: V(1, 0, 0), lastShot: -9, src: 'start', stickSrc: '-',
+      body: W.bodyPose(W.START[slot].pos, W.START[slot].yaw), chest: V(), base: V(), tip: V(), dir: V(1, 0, 0), trail: [], lastShot: -9, src: 'start', stickSrc: '-',
       shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 };
   }
   const players = { A: makePlayer('A'), B: makePlayer('B') };
@@ -103,7 +105,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     if (tier === 's' && now() - p.lastShot < rules().rapid) return false;
     p.lastShot = now();
     const T = TIER[tier], s = sfx();
-    const aim = cfg.aim === 'eye' ? p.tip.clone().sub(p.chest.clone().add(V(0, .35, 0))).normalize() : p.dir.clone();
+    const aim = cfg.aim === 'eye' ? p.tip.clone().sub(p.chest.clone().add(V(0, .35, 0))).normalize()
+      : (cfg.aim ?? 'motion') === 'motion' ? motionAim(p) ?? p.dir.clone() : p.dir.clone();
     p.shots++; if (tier === 'l') p.specials++;
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
     if (tier === 'l') { s?.special(p.element, panOf(p.tip)); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
@@ -111,6 +114,26 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big), owner: p, element: p.element, tier, pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now() });
     log(p.slot, tier === 'l' ? 'special' : 'shot', `${TIER_JA[tier]}の攻撃${tier === 's' ? '' : `（溜め ${p.chargeT.toFixed(1)} 秒）`}`);
     return true;
+  }
+  /** Direction the stick tip was moving just before it stopped: the last stretch of the swing still above half its top
+   *  speed, measured over ~0.08 s. The tip is taken relative to the chest, so walking is not a swing; one-frame jumps
+   *  faster than a tip can move (a re-localised phone, a lost IMU packet) are ignored. null when the tip did not really
+   *  move (a button press, a slow drift). */
+  function motionAim(p) {
+    const tr = p.trail; if (tr.length < 4) return null;
+    const sp = [];
+    for (let i = 1; i < tr.length; i++) {
+      const dt = tr[i].t - tr[i - 1].t; if (dt <= 0) continue;
+      const v = tr[i].p.distanceTo(tr[i - 1].p) / dt;
+      if (v < 25) sp.push({ i, v }); // m/s; a fast sword tip is ~15
+    }
+    if (!sp.length) return null;
+    const vmax = Math.max(0, ...sp.map(x => x.v));
+    if (vmax < (cfg.motionMin ?? 1)) return null; // m/s
+    const end = sp.filter(x => x.v >= .5 * vmax).at(-1).i;
+    let j = end; while (j > 0 && tr[end].t - tr[j].t < .08 && tr[j].p.distanceTo(tr[j - 1].p) / Math.max(1e-3, tr[j].t - tr[j - 1].t) < 25) j--;
+    const d = tr[end].p.clone().sub(tr[j].p);
+    return d.lengthSq() > 1e-6 ? d.normalize() : null;
   }
   function damage(foe, from, tier) {
     const n = Math.round(+rules().dmg[tier] || 0);
@@ -133,7 +156,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
         damage(foe, s.owner, s.tier);
       }
-      if (hit || now() - s.born > 1.6) { fx.endShot(s.id); shots.splice(i, 1); }
+      if (hit || s.pos.y < 0 || now() - s.born > 1.6) { fx.endShot(s.id); shots.splice(i, 1); } // y < 0: into the floor
     }
   }
   function showAct(p, text) { p.act = { text, at: now() }; }
@@ -224,7 +247,10 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
 
   function step(dt, raw, est, tracker) {
     stepMatch(raw);
-    for (const p of Object.values(players)) { place(p, est, tracker); effects(p); }
+    for (const p of Object.values(players)) {
+      place(p, est, tracker); effects(p);
+      p.trail.push({ t: now(), p: p.tip.clone().sub(p.chest) }); while (p.trail.length && p.trail[0].t < now() - .5) p.trail.shift(); // for motionAim
+    }
     stepCharge(dt); stepShots(dt);
     const s = sfx();
     if (s) {

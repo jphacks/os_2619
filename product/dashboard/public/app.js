@@ -21,13 +21,15 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 
 // ---- settings (localStorage) ----
 const DEFAULTS = {
-  posSrc: 'auto', hand: 'R', aim: 'stick', stickLen: { A: W.STICK.len, B: W.STICK.len }, skeleton: false, skelSrc: 'both',
+  posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len }, skeleton: false, skelSrc: 'both',
   minimap: true, debug: false, pip: false, fpv: null, drone: 'auto', videoSrc: 'remote', tagMode: 4, tagMount: 'stand', tagHeight: 1.0, knownFov: null,
-  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 1,
+  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 2,
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
-if ((saved.rulesVer ?? 0) < 1) { cfg.matchSec = 60; cfg.rulesVer = 1; } // the 10/17 rules: 60 s matches
+if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
+if ((saved.rulesVer ?? 0) < 2) cfg.aim = 'motion'; // ...and the aim from the tip's motion
+cfg.rulesVer = 2;
 cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg } };
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
 const axis = {}; // IMU sensor axis along each stick (sensing: calibrated by holding the stick straight up)
@@ -35,7 +37,7 @@ for (const s of ['A', 'B']) { try { axis[s] = JSON.parse(localStorage.getItem('p
 
 // ---- data ----
 const hub = createHub();
-const PA = createPhoneAlign();
+const PA = createPhoneAlign({ axis }); // the stick axis from the connection screen: detectors and aim share it
 const smap = createMap();
 const detectors = createActions();
 const video = Object.assign(document.createElement('video'), { muted: true, playsInline: true });
@@ -201,7 +203,7 @@ drawer.innerHTML = `
     <div class="row"><button id="forgetFov">覚えた画角を消す</button><button id="clearScan">スキャン結果を消す</button></div>
     <p class="note">人がいない状態で、フィールドの角に置いたタグがスマホ C の映像に全部入るようにしてからスキャンする。床のタグなら 2 枚のとき左が A 側。</p></section>
   <section><h3>ゲーム</h3>
-    <label class="f"><span>狙い</span><select id="aimSel"><option value="stick">棒の向き</option><option value="eye">目から棒先へ</option></select><span></span></label>
+    <label class="f"><span>狙い</span><select id="aimSel"><option value="motion">止める直前の棒の先の動き</option><option value="stick">止めたときの棒の向き</option><option value="eye">目から棒先へ</option></select><span></span></label>
     <div class="row"><button data-tog="test">テスト（HP が減らない）</button><button data-tog="useTruth">正解位置（シミュレーター）</button></div></section>
   <section><h3>音</h3>
     ${['master:全体', 'bgm:BGM', 'sfx:効果音', 'amb:環境音'].map(x => { const [k, n] = x.split(':'); return `<label class="f"><span>${n}</span><input type="range" min="0" max="1" step="0.01" data-vol="${k}"><output data-volout="${k}"></output></label>`; }).join('')}
