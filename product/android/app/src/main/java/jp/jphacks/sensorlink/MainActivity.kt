@@ -338,7 +338,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
 
     fun statusLines() = listOf(
         "LAN: ${link.status}  slot ${link.slot}  rtt %.0f ms".format(link.rttMs),
-        "IMU: ${imu.status}" + (imu.last?.let { "  %.0f Hz  r %.0f p %.0f y %.0f".format(imu.hz, it.euler[0], it.euler[1], it.euler[2]) } ?: ""),
+        "IMU: ${imu.status}" + (imu.last?.let { "  %.0f Hz  p %.0f r %.0f y %.0f".format(imu.hz, it.euler[0], it.euler[1], it.euler[2]) } ?: ""),
         arError ?: arText,
         "Hz  cam %.0f  tag %.0f".format(convertW.hz, tagW.hz),
         "tags: " + (tags?.let { a -> (0 until a.length()).joinToString { a.getJSONObject(it).getInt("id").toString() } } ?: ""),

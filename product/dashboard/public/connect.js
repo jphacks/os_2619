@@ -45,7 +45,7 @@ export function createConnect({ cards, side, hub, vsrc, cfg, axis, onAxis, onSti
         </div>
         <div>
           <h3>IMU の姿勢（°）</h3>
-          <div class="crow"><div><div class="legend euler"></div><canvas class="chart euler" aria-label="ロール・ピッチ・ヨー 直近 10 秒"></canvas></div>
+          <div class="crow"><div><div class="legend euler"></div><canvas class="chart euler" aria-label="ピッチ・ロール・ヨー 直近 10 秒"></canvas></div>
             <canvas class="square orient" aria-label="キャリブ後の IMU の軸"></canvas></div>
           <h3>IMU 角速度（°/秒）</h3>
           <div class="legend gyro"></div><canvas class="chart gyro" aria-label="角速度 直近 10 秒"></canvas>
@@ -62,7 +62,8 @@ export function createConnect({ cards, side, hub, vsrc, cfg, axis, onAxis, onSti
     cards.insertAdjacentHTML('beforeend', tpl(s));
     const el = cards.lastElementChild, q = c => el.querySelector(c);
     slots[s] = { el, q, imu: [], traj: [] };
-    for (const [k, names] of [['euler', ['ロール', 'ピッチ', 'ヨー']], ['gyro', ['x', 'y', 'z']], ['acc', ['x', 'y', 'z']]])
+    // euler[0] is WitMotion's "roll" (about sensor X), but on the mounted sensor that reads as pitch, so the labels are swapped
+    for (const [k, names] of [['euler', ['ピッチ', 'ロール', 'ヨー']], ['gyro', ['x', 'y', 'z']], ['acc', ['x', 'y', 'z']]])
       q('.legend.' + k).innerHTML = names.map((n, i) => `<span><i style="background:var(--s${i + 1})"></i>${n} <b data-i="${i}">–</b></span>`).join('');
   }
 
