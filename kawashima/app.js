@@ -49,6 +49,8 @@ const DEFAULTS = {
                     // 'phones' (chest phones: ARCore + tags, localize.js) or 'start' (fixed at the start marks)
   hand: 'R',        // which wrist holds the stick when positions come from the camera
   tagMode: 4,       // map4 layout: scan with 2 sheets (ids 0 / 1 mark the A / B ends) or 4 sheets (ids 0-3 at the corners)
+  tagMount: 'stand',// the sheets lie on the floor ('floor') or stand upright ('stand': floor height from tagHeight)
+  tagHeight: 1.0,   // standing sheets: height of every sheet's centre above the floor (m), the one number the user sets
   skeleton: false,
   skelSrc: 'both',  // skeletons in 3D from 'camera' (third-person video), 'phones' (opponent's chest camera) or 'both'  // the camera-tracked skeletons over the video too (they always show in the 3D views)
 };
@@ -341,7 +343,7 @@ async function scanMap() {
   status.extra = '4枚のタグをスキャン中…';
   let FM; try { FM = await import('./fieldmap.js'); } catch (e) { status.extra = 'スキャン失敗：fieldmap.js を読み込めない ' + e.message; return; }
   const need = modeIds();
-  const m = await FM.scanField(dummy?.canvas ?? video, { fovYGuess: cfg.tagCam?.fovY ?? cfg.cam.fov, mode: cfg.tagMode });
+  const m = await FM.scanField(dummy?.canvas ?? video, { fovYGuess: cfg.tagCam?.fovY ?? cfg.cam.fov, mode: cfg.tagMode, mount: cfg.tagMount, tagHeight: cfg.tagHeight });
   if (!m) { status.extra = `スキャン失敗：床のタグ（ID ${need.join('・')}）が${cfg.tagMode === 2 ? '2枚' : '3枚以上'}見えていない。カメラを高くするか、遠いタグを近づける`; return; }
   applyField({ poly: m.poly, tags: m.tags }); saveField();
   cfg.tagCam = m.cam; cfg.camMode = 'tags'; save(); applyCam();
@@ -552,7 +554,7 @@ function buildGuide() {
     const pole = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V(p.t[0], 0, p.t[2]), V(p.t[0], p.t[1] - h, p.t[2])]), onTop(new THREE.LineDashedMaterial({ color: 0x3ddc84, dashSize: .08, gapSize: .06 })));
     pole.computeLineDistances();
     const side = p.t[0] < 0 ? '左' : '右', face = p.t[0] < 0 ? '右' : '左';
-    const lb = label(`ID ${id} をここに\n${side}端・中心の高さ ${p.t[1]}m・${face}向き`, '#9ff0c0', .085);
+    const lb = label(W.LAYOUT === 'map4' ? `ID ${id}` : `ID ${id} をここに\n${side}端・中心の高さ ${p.t[1]}m・${face}向き`, '#9ff0c0', .085);
     lb.position.set(p.t[0] * .72, p.t[1] - h - .2, p.t[2]);
     const foot = strip(V(p.t[0] - .15, 0, p.t[2]), V(p.t[0] + .15, 0, p.t[2]), 0x3ddc84, .3);
     pole.renderOrder = 11;
@@ -610,7 +612,7 @@ function updateGuideText() {
   if (now() - guideTextAt < .4) return; guideTextAt = now();
   const tc = cfg.camMode === 'tags' && cfg.tagCam, checks = tagChecks();
   const row = c => {
-    const where = W.LAYOUT !== 'map4' ? tagPlace(c.id) : cfg.tagMode === 2 ? '好きな場所の床。左に置いた方が A の端になる' : '好きな場所の床（4枚でだいたい四角形の角になるように）';
+    const where = W.LAYOUT !== 'map4' ? tagPlace(c.id) : (cfg.tagMount === 'stand' ? `好きな場所に立てる（中心の高さ ${cfg.tagHeight}m）。` : '好きな場所の床。') + (cfg.tagMode === 2 ? '左に置いた方が A の端になる' : '4枚でだいたい四角形の角になるように');
     const st = !c.seen ? '<b class="ng">見えていない</b>' : c.want && c.side !== c.want ? `<b class="warn">画面の${SIDE[c.side]}に見えている：左右が逆かも</b>` : c.px < 14 ? '<b class="warn">小さすぎる：iPhoneを近づける</b>' : '<b class="ok">OK</b>';
     return `<li>ID ${c.id}：${where}　${st}</li>`;
   };
@@ -675,6 +677,8 @@ function command(c) {
     case 'camera': return startVideo(c.value);
     case 'camMode': cfg.camMode = c.value; break;
     case 'tagMode': cfg.tagMode = +c.value === 2 ? 2 : 4; match.ready = false; save(); return;
+    case 'tagMount': cfg.tagMount = c.value === 'floor' ? 'floor' : 'stand'; match.ready = false; save(); return;
+    case 'tagHeight': cfg.tagHeight = Math.max(.1, Math.min(3, +c.value || 1)); match.ready = false; save(); return;
     case 'skelSrc': cfg.skelSrc = ['camera', 'phones', 'both'].includes(c.value) ? c.value : 'both'; break;
     case 'posSrc': cfg.posSrc = c.value; save(); return syncTracker();
     case 'hand': cfg.hand = c.value === 'L' ? 'L' : 'R'; break;
@@ -732,7 +736,7 @@ function publish() { // state for admin.html, a few times a second
     video: { w: video.videoWidth, h: video.videoHeight, label: video.srcObject?.getVideoTracks()[0]?.label ?? '', id: video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId }, devices,
     view: cfg.view, drone: drone.mode, shot: drone.shot, fpv: cfg.fpv, fovPhone: intr,
     audio: sfx && { unlocked: sfx.unlocked, loaded: sfx.loaded, muted: sfx.muted, vol: sfx.volumes },
-    posSrc: cfg.posSrc, hand: cfg.hand, skelSrc: cfg.skelSrc, phoneBodies: { A: phoneSk.A.has, B: phoneSk.B.has, aligned: !!roomToWorld, warn: phoneEst?.warn?.slice(0, 2) ?? [] }, tagMode: cfg.tagMode, layout: W.LAYOUT, pose: tracker ? { ms: tracker.ms, hz: tracker.hz, ready: tracker.ready, A: !!tracker.get('A')?.seen, B: !!tracker.get('B')?.seen } : null,
+    posSrc: cfg.posSrc, hand: cfg.hand, skelSrc: cfg.skelSrc, phoneBodies: { A: phoneSk.A.has, B: phoneSk.B.has, aligned: !!roomToWorld, warn: phoneEst?.warn?.slice(0, 2) ?? [] }, tagMode: cfg.tagMode, tagMount: cfg.tagMount, tagHeight: cfg.tagHeight, layout: W.LAYOUT, pose: tracker ? { ms: tracker.ms, hz: tracker.hz, ready: tracker.ready, A: !!tracker.get('A')?.seen, B: !!tracker.get('B')?.seen } : null,
     field: { scanned: fieldScanned, poly: W.FIELD.poly }, setupTags: tagChecks(), tagCheckMs: Math.round(seenTags.ms), toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
 }
 setInterval(publish, 250);

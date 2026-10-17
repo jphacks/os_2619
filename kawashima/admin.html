@@ -244,8 +244,12 @@
       <section class="card">
         <h2><span class="no">2</span>スキャンする<span class="keys">合わせる <kbd>K</kbd></span></h2>
         <div id="scan" class="alert warn"></div>
-        <div id="tagModes"><h3>床のタグ</h3>
-          <div class="seg"><button data-tagmode="2">2枚（ID 0・1 を A・B の端に）</button><button data-tagmode="4">4枚（ID 0〜3 を四隅に）</button></div></div>
+        <div id="tagModes"><h3>タグの枚数</h3>
+          <div class="seg"><button data-tagmode="2">2枚（ID 0・1 を A・B の端に）</button><button data-tagmode="4">4枚（ID 0〜3 を四隅に）</button></div>
+          <h3>タグの置き方</h3>
+          <div class="seg"><button data-mount="stand">立てる（縦に垂直）</button><button data-mount="floor">床に置く</button></div>
+          <label class="f" id="tagHeightRow"><span>タグの中心の高さ（m）</span><input id="tagHeight" type="number" min="0.1" max="3" step="0.05" value="1.0"><span></span></label>
+          <p class="note" id="mountNote"></p></div>
         <label class="f"><span>合わせ方</span><select id="camMode"><option value="tags">タグから（tags）</option><option value="manual">手動（manual）</option></select><span></span></label>
         <div class="row"><button id="calibrate">タグでカメラ合わせ<kbd>K</kbd></button><button id="guideCam">ガイドを推奨位置から表示</button></div>
         <div class="msg" id="tagCheck"></div>
@@ -344,6 +348,8 @@ $$('[data-skel]').forEach(b => b.onclick = () => send({ cmd: 'skelSrc', value: b
 $$('[data-hand]').forEach(b => b.onclick = () => send({ cmd: 'hand', value: b.dataset.hand }));
 $('#swap').onclick = () => send({ cmd: 'swap' });
 $$('[data-tagmode]').forEach(b => b.onclick = () => send({ cmd: 'tagMode', value: +b.dataset.tagmode }));
+$$('[data-mount]').forEach(b => b.onclick = () => send({ cmd: 'tagMount', value: b.dataset.mount }));
+$('#tagHeight').onchange = e => send({ cmd: 'tagHeight', value: +e.target.value });
 $('#forceReady').onclick = () => send({ cmd: 'forceReady' });
 $('#pause').onclick = () => send({ cmd: 'pause' });
 $('#reset').onclick = () => send({ cmd: 'reset' });
@@ -492,6 +498,11 @@ function render() {
   $$('[data-hand]').forEach(b => setOn(b, b.dataset.hand === s.hand));
   $$('[data-skel]').forEach(b => setOn(b, b.dataset.skel === s.skelSrc));
   $$('[data-tagmode]').forEach(b => setOn(b, +b.dataset.tagmode === s.tagMode));
+  $$('[data-mount]').forEach(b => setOn(b, b.dataset.mount === (s.tagMount ?? 'floor')));
+  $('#tagHeightRow').style.display = s.tagMount === 'stand' ? '' : 'none';
+  if (document.activeElement !== $('#tagHeight') && s.tagHeight != null) $('#tagHeight').value = s.tagHeight;
+  const mn = s.tagMount === 'stand' ? 'タグは縦に垂直に立て、どれも中心が同じ高さになるように貼ります。その高さを上に入れます。向きと位置は自由です（紙の上下もどちらでも可）。' : 'タグは表を上にして床に置きます。向きと位置は自由です。';
+  if ($('#mountNote').textContent !== mn) $('#mountNote').textContent = mn;
   show('#tagModes', s.layout === 'map4');
   const pb = s.phoneBodies ?? {};
   setHtml('#poseInfo', lines([
