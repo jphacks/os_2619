@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>カメラ受信テスト</title>
+<!-- Display-side check of the phone-camera link (camlink.js receiver) without touching index.html / app.js. -->
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; color: #eee; font: 14px/1.5 system-ui, sans-serif; }
+  #stage { position: fixed; inset: 0; display: grid; place-items: center; background: #111; }
+  video { max-width: 100%; max-height: 100%; background: #000; }
+  #hud { position: fixed; left: 12px; top: 12px; right: 12px; font: 13px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; text-shadow: 0 0 4px #000, 0 0 2px #000; pointer-events: none; }
+  #ctl { position: fixed; left: 12px; bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font: inherit; color: #eee; background: rgba(30,30,36,.9); border: 1px solid #555; border-radius: 8px; padding: 8px 12px; }
+  #log { position: fixed; right: 12px; bottom: 12px; width: min(46vw, 520px); max-height: 40vh; overflow: auto; font: 12px/1.4 ui-monospace, Menlo, monospace; color: #bcd; background: rgba(0,0,0,.6); padding: 8px; border-radius: 8px; }
+</style>
+</head>
+<body>
+<div id="stage"><video id="v" autoplay muted playsinline></video></div>
+<div id="hud">接続中…</div>
+<div id="ctl">
+  <button id="jpeg">JPEGに切り替え</button>
+  <button id="rtc">WebRTCに戻す</button>
+  <button id="fit">表示: 等倍/フィット</button>
+</div>
+<div id="log"></div>
+<script type="module">
+import { createCamReceiver, defaultCamUrl, readClockBar } from './camlink.js';
+const v = document.getElementById('v'), hud = document.getElementById('hud'), log = document.getElementById('log');
+const say = t => { log.textContent = `${new Date().toLocaleTimeString()} ${t}\n` + log.textContent.split('\n').slice(0, 40).join('\n'); };
+const url = defaultCamUrl();
+let frames = 0, bar = [], work = document.createElement('canvas'), fit = true;
+const rx = createCamReceiver({
+  url,
+  onStream: s => { v.srcObject = s; v.play().catch(() => {}); say(`stream: ${s.getVideoTracks()[0]?.label || '(canvas)'}`); },
+  onFrame: () => frames++,
+  onState: s => say(`state: ${s.mode}  cam=${s.cam ? s.cam.name + ' ' + s.cam.id : '-'}  ws=${s.ws}${s.reason ? '  (' + s.reason + ')' : ''}`),
+});
+window.rx = rx; // poke at it from the console
+document.getElementById('jpeg').onclick = () => rx.requestFallback();
+document.getElementById('rtc').onclick = () => rx.requestWebRTC();
+document.getElementById('fit').onclick = () => { fit = !fit; v.style.maxWidth = fit ? '100%' : 'none'; v.style.maxHeight = fit ? '100%' : 'none'; };
+
+// true glass-to-glass delay when the sender paints the clock bar (cam.html?fake): read on every presented frame
+const tick = () => {
+  if (v.videoWidth) { const t = readClockBar(v, work); if (!isNaN(t)) { bar.push(((Date.now() + (rx.getStats().clockOffset || 0)) & 0xffffff) - t); if (bar.length > 60) bar.shift(); } }
+  v.requestVideoFrameCallback ? v.requestVideoFrameCallback(tick) : requestAnimationFrame(tick);
+};
+tick();
+setInterval(() => {
+  const s = rx.getStats(), b = bar.length ? [...bar].sort((a, b) => a - b) : null;
+  const barTxt = b ? `  バー遅延(実測) 中央 ${b[b.length >> 1]} ms  最小 ${b[0]}  最大 ${b[b.length - 1]}  (n=${b.length})` : '';
+  hud.textContent = `${url}\n方式 ${s.mode}  ${s.width}x${s.height}  ${s.fps} fps  ${(s.kbps / 1000).toFixed(1)} Mbps  ${s.codec}\n遅延 ${isNaN(s.latencyMs) ? '—' : s.latencyMs + ' ms'} (${s.latencyKind})${s.mode === 'webrtc' ? `  内訳: 送信側エンコード ${s.encodeMs} ms  P2P RTT ${s.peerRtt} ms  受信→デコード ${s.procMs} ms` : ''}\nWS RTT ${s.rtt} ms  clock offset ${s.clockOffset} ms  video要素 ${v.videoWidth}x${v.videoHeight} ${v.paused ? '(paused)' : ''}${barTxt}`;
+  bar = bar.slice(-30);
+}, 500);
+</script>
+</body>
+</html>

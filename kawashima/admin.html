@@ -576,7 +576,7 @@ function render() {
   $$('[data-toggle]').forEach(b => setOn(b, !!s.toggles?.[b.dataset.toggle]));
   if (!dragging) { if (swing.value != s.swingDps) swing.value = s.swingDps; setText('#swingOut', String(s.swingDps)); }
   if (!dragging) $$('input[data-set]').forEach(i => { const v = s[i.dataset.set]; if (v != null) { if (i.value != v) i.value = v; if (i.nextElementSibling.textContent !== String(v)) i.nextElementSibling.textContent = String(v); } });
-  const G = { charging: '溜め中', up: '棒を上げている', idle: '待機', '-': 'IMU なし' };
+  const G = { charging: '溜め中（PC仮判定）', up: '棒を上げている', idle: '待機', '-': 'IMU なし', ext: 'センサー班の判定を使用中', 'ext-charging': '溜め中（センサー班の判定）' };
   setHtml('#gestInfo', s.gest ? `IMU の動作: A ${G[s.gest.A] ?? s.gest.A}　B ${G[s.gest.B] ?? s.gest.B}` : '');
   if (document.activeElement !== $('#aim')) $('#aim').value = s.aim;
 

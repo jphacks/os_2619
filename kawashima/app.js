@@ -3,12 +3,11 @@
 // the third-person camera by extrinsics.js (corner tags in its own picture) or by hand with the sliders.
 import * as THREE from 'three';
 import * as W from './world.js';
-import { createLocalizer } from './localize.js';
+import { createPhoneAlign } from './phonealign.js'; // every phone's AR world -> the field world (by the field tags it sees)
 import { createFx } from './effects.js';
 import { calibrateCamera, toThreeCamera, detectTags, solveCamera } from './extrinsics.js';
 import { createDrone } from './drone.js';
 import { createField, createMinimap } from './field3d.js';
-import { createMap } from '/sensing/map.js'; // the sensing team's space map: each phone's view of the opponent's body
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
@@ -149,7 +148,8 @@ function makePlayer(slot, element) {
 }
 const players = { A: makePlayer('A', 'fire'), B: makePlayer('B', 'thunder') };
 const other = p => p === players.A ? players.B : players.A;
-const loc = createLocalizer();
+const PA = createPhoneAlign();
+let est = PA.estimate(Date.now() / 1000); // refreshed once per frame
 
 const rotQ = ([w, x, y, z], [a, b, c]) => { // rotate v by quaternion [w, x, y, z]
   const ix = w * a + y * c - z * b, iy = w * b + z * a - x * c, iz = w * c + x * b - y * a, iw = -x * a - y * b - z * c;
@@ -160,28 +160,31 @@ const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a
 const IMU_SIDE = cross(W.STICK.axis, W.STICK.up);
 
 function updatePlayer(p) {
-  const L = loc.get(p.slot), st = W.START[p.slot];
+  const g = est.slots[p.slot] ?? {}, st = W.START[p.slot];
   const T = p.truth;
   const pt = cfg.posSrc === 'camera' ? tracker?.get(p.slot) : null;
   p.body = cfg.useTruth && T ? W.bodyPose(T.chest, T.yaw, T.chest[1])
     : cfg.posSrc === 'camera' ? (pt?.foot ? W.bodyPose(pt.foot, pt.yaw ?? st.yaw, pt.chest?.[1] ?? W.CHEST_H) : p.body ?? W.bodyPose(st.pos, st.yaw))
-    : cfg.posSrc === 'phones' ? L.body ?? W.bodyPose(st.pos, st.yaw) : W.bodyPose(st.pos, st.yaw);
+    : cfg.posSrc === 'phones' ? (g.chest && (g.aligned || g.src === 'localize') ? W.bodyPose(g.chest, g.yaw ?? st.yaw, g.chest[1]) : p.body ?? W.bodyPose(st.pos, st.yaw))
+    : W.bodyPose(st.pos, st.yaw);
   p.chest.copy(v3(p.body.t));
   p.capsule.position.copy(p.chest).setY(p.chest.y - .45);
   // hand in the body frame (x fwd, y up, z right); stick direction from the IMU, tared at the start mark facing the opponent
   const h = W.STICK.hand;
   const wrist = pt?.seen && pt.wrist?.[cfg.hand];
   p.base.copy(v3(wrist ?? W.apply(p.body, [h.fwd, h.up, h.right]))); // the camera sees the hand: use it
-  if (p.imu) {
+  const sk = est.stick?.[p.slot];
+  if (sk?.dir) p.dir.copy(v3(sk.dir)).normalize(); // phonealign: same IMU maths, tared on the phone's real forward at calib
+  else if (p.imu) {
     const v = rotQ(p.imu.q, W.STICK.axis);
     p.dir.copy(v3(W.app3(W.bodyPose(st.pos, st.yaw).R, [dot(v, W.STICK.axis), dot(v, W.STICK.up), dot(v, IMU_SIDE)]))).normalize();
   } else p.dir.copy(v3(W.app3(p.body.R, [1, 0, 0])));
   p.tip.copy(p.base).addScaledVector(p.dir, W.STICK.len);
   p.stick.geometry.setFromPoints([p.base, p.tip]);
   p.ghost.visible = !!T; if (T) p.ghost.position.copy(v3(T.chest));
-  const s = loc.get(other(p).slot).seen?.opponent;
-  p.seen.visible = !!s && now() - s.t < 1; // s.t is PC time; the check only hides stale marks
-  if (s) p.seen.position.copy(v3(s.pos));
+  const s = g.seenBy; // where the other phone saw my chest tag
+  p.seen.visible = !!s && Date.now() / 1000 - s.t < 1;
+  if (s) p.seen.position.copy(v3(s.p));
   if (match.phase !== 'setup' && (p.online || p.imu || match.phase === 'demo')) { // no effects while setting up
     fx.aura(p.element, p.base, p.tip, p.charging ? .6 + .4 * p.charge : .5);
     if (p.charging) fx.charge(p.element, p.tip, p.charge);
@@ -243,6 +246,23 @@ function gesture(p, dps, t) {
   g.downSince = up ? 0 : (g.downSince || t);
   if (g.downSince && t - g.downSince > .4) { p.charging = false; p.charge = 0; g.imuCharge = false; g.upSince = 0; } // lowered quietly: cancel
 }
+// Seam for the sensor team's motion detection (not in their README yet). Accepted shape, any of these types:
+//   { type: 'action', slot, action: 'charge' | 'release' | 'attack' | 'cancel' | 'dodge', power?: 0..1, t }
+// 'charge' starts charging, 'release' fires with the charge so far (full = special), 'attack' is a plain shot with
+// `power` (default from the IMU swing), 'cancel' drops the charge. While such messages arrive the IMU guess is off.
+const EXT_HOLD = 5; // s without an external action before the IMU guess takes over again
+function extActive(p) { return p.gest?.extAt && now() - p.gest.extAt < EXT_HOLD; }
+function onAction(p, k) {
+  const g = p.gest ??= { upSince: 0, downSince: 0, imuCharge: false, lastT: 0 };
+  g.extAt = now(); g.imuCharge = false; g.upSince = 0;
+  const a = String(k.action ?? k.name ?? k.kind ?? '').toLowerCase();
+  if (!canAct()) { p.charging = false; p.charge = 0; return; }
+  if (a === 'charge' || a === 'charge_start') { if (!p.charging) { p.charging = true; p.charge = 0; } }
+  else if (a === 'release' || a === 'charge_end' || a === 'special') { const c = p.charging ? p.charge : (k.power ?? .5); p.charging = false; p.lastShot = 0; shoot(p, a === 'special' ? 1 : c); p.charge = 0; }
+  else if (a === 'attack' || a === 'shoot' || a === 'swing') { if (p.charging) { const c = p.charge; p.charging = false; p.lastShot = 0; shoot(p, c); p.charge = 0; } else shoot(p, Math.min(1, +(k.power ?? .5))); }
+  else if (a === 'cancel') { p.charging = false; p.charge = 0; }
+  // 'dodge': nothing to do here, moving out of the way is already the dodge (3D hit test)
+}
 function stepCharge(dt) {
   for (const p of Object.values(players)) if (p.charging) {
     const full = p.charge < 1;
@@ -297,11 +317,12 @@ function connect() {
   ws.onmessage = m => {
     if (typeof m.data !== 'string') return onPhoneJpeg(m.data); // chest-camera JPEGs, first byte = slot
     const k = JSON.parse(m.data);
+    PA.ingest(k);
     if (k.type === 'phones') { for (const p of Object.values(players)) p.online = k.list.some(q => q.slot === p.slot); return; }
     const p = players[k.slot]; if (!p) return;
-    loc.onMessage(k); smap.ingest(k);
     if (k.type === 'tags') fitIntrinsics(k);
-    if (k.type === 'imu') { p.imu = k; gesture(p, Math.hypot(...k.gyro), k.t ?? now()); } else if (k.type === 'truth') { p.truth = k; dummy?.setTruth(k.slot, k); }
+    if (k.type === 'imu') { p.imu = k; if (!extActive(p)) gesture(p, Math.hypot(...k.gyro), k.t ?? now()); }
+    else if (k.type === 'action' || k.type === 'gesture' || k.type === 'motion') onAction(p, k); // the sensor team's own detector, when it exists else if (k.type === 'truth') { p.truth = k; dummy?.setTruth(k.slot, k); }
     else if (k.type === 'calib') p.imu = null;
   };
 }
@@ -323,10 +344,9 @@ async function startRemote() {
   try {
     const M = await import('./camlink.js');
     camRx?.close?.();
-    camRx = M.createCamReceiver({ url: camUrl, id: 'display-' + DISPLAY_ID,
-      onStream: stream => { video.srcObject?.getTracks().forEach(t => t.stop()); video.srcObject = stream; status.extra = ''; },
-      onState: st => { status.extra = st?.error ? 'LANカメラ: ' + st.error : status.extra; } });
-    status.extra = 'LANカメラ: スマホの接続を待っている（管理画面のURLをスマホで開く）';
+    camRx = M.createCamReceiver({ url: camUrl, name: 'display-' + DISPLAY_ID,
+      onStream: stream => { if (video.srcObject !== stream) { video.srcObject = stream; video.play().catch(() => {}); } },
+      onState: st => { status.extra = st.mode === 'idle' ? 'LANカメラ: スマホの cam.html で「開始」を待っている' : st.mode === 'connecting' ? 'LANカメラ: スマホに接続中…' : st.mode === 'jpeg' ? 'LANカメラ: JPEG（WebRTC不可）' : ''; } });
   } catch (e) { status.extra = 'LANカメラの部品を読み込めない: ' + e.message + '。このMacのカメラを使う'; cfg.videoSrc = 'local'; save(); startVideo(localStorage.getItem('fx-cam') || undefined); }
 }
 function startSource() {
@@ -379,7 +399,7 @@ const fieldKey = 'fx-field-' + W.LAYOUT + STORE;
 let fieldScanned = false, scannedIds = null; // ids the last scan measured (an unseen sheet keeps a placeholder spot)
 function applyField(f) { fieldScanned = true; if (f.tags && Object.keys(f.tags).length) scannedIds = Object.keys(f.tags).map(Number); W.setField(f); }
 try { const f = JSON.parse(localStorage.getItem(fieldKey)); if (f?.poly) queueMicrotask(() => applyField(f)); } catch {}
-const saveField = () => { try { localStorage.setItem(fieldKey, JSON.stringify({ poly: W.FIELD.poly, tags: Object.fromEntries((scannedIds ?? W.CORNER_IDS).map(id => [id, { pos: W.TAGS[id].pos, yaw: W.TAGS[id].yaw ?? 0 }])) })); } catch {} };
+const saveField = () => { try { localStorage.setItem(fieldKey, JSON.stringify({ poly: W.FIELD.poly, tags: Object.fromEntries((scannedIds ?? W.CORNER_IDS).map(id => { const T = W.TAGS[id]; return [id, { pos: T.pos, yaw: T.yaw ?? 0, ...(T.stand ? { stand: true, spin: T.spin ?? 0, R: T.R } : {}) }]; })) })); } catch {} };
 async function scanMap() {
   status.extra = '4枚のタグをスキャン中…';
   let FM; try { FM = await import('./fieldmap.js'); } catch (e) { status.extra = 'スキャン失敗：fieldmap.js を読み込めない ' + e.message; return; }
@@ -453,9 +473,7 @@ function updateSkels() {
     k.pos.set(s.skel); k.attr.needsUpdate = true;
   }
 }
-// phone-side bodies: map.js puts what each chest camera sees of the opponent into its room frame (centre of the floor
-// tags). Our world sits on the same floor tags (fieldmap.js), so a yaw + shift fitted on the shared tag ids maps one to the other.
-const smap = createMap();
+// phone-side bodies: what each chest camera sees of the opponent (phonealign.js), already in the field world
 const phoneSk = Object.fromEntries(['A', 'B'].map(slot => {
   const pos = new Float32Array(BONES.length * 6), g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -463,27 +481,13 @@ const phoneSk = Object.fromEntries(['A', 'B'].map(slot => {
   lines.renderOrder = 14; lines.frustumCulled = false; lines.visible = false; scene.add(lines);
   return [slot, { lines, pos, attr: g.getAttribute('position'), has: false }];
 }));
-let phoneEst = null, phoneEstAt = 0, roomToWorld = null;
-function fitRoom(corners) { // 2D Procrustes (yaw + shift) from map.js room coords onto our measured floor tags
-  const pairs = corners.filter(c => W.TAGS[c.id]?.floor && fieldScanned).map(c => [c.p, W.TAGS[c.id].pos]);
-  if (pairs.length < 2) return null;
-  const m = i => pairs.reduce((a, q) => [a[0] + q[i][0] / pairs.length, a[1] + q[i][2] / pairs.length], [0, 0]), ma = m(0), mb = m(1);
-  let sc = 0, ss = 0;
-  for (const [a, b] of pairs) { const A = [a[0] - ma[0], a[2] - ma[1]], B = [b[0] - mb[0], b[2] - mb[1]]; sc += A[0] * B[0] + A[1] * B[1]; ss += A[0] * B[1] - A[1] * B[0]; }
-  const th = Math.atan2(ss, sc), c = Math.cos(th), s = Math.sin(th);
-  return p => [c * (p[0] - ma[0]) - s * (p[2] - ma[1]) + mb[0], p[1], s * (p[0] - ma[0]) + c * (p[2] - ma[1]) + mb[1]];
-}
 function updatePhoneSkels() {
   if (cfg.skelSrc === 'camera') { for (const k of Object.values(phoneSk)) k.has = false; return; }
-  if (now() - phoneEstAt > .1) {
-    phoneEstAt = now();
-    try { phoneEst = smap.estimate({ now: Date.now() / 1000 }); roomToWorld = fitRoom(phoneEst.corners ?? []); } catch { phoneEst = null; }
-  }
   for (const slot of ['A', 'B']) {
-    const k = phoneSk[slot], b = roomToWorld && phoneEst?.bodies?.[slot];
+    const k = phoneSk[slot], b = est.bodies?.[slot];
     k.has = !!b; if (!b) continue;
     BONES.forEach(([i, j], n) => { // a bone with a hidden end collapses to a point
-      const p = b[i] && b[j] ? [roomToWorld(b[i]), roomToWorld(b[j])] : [[0, -50, 0], [0, -50, 0]];
+      const p = b[i] && b[j] ? [b[i], b[j]] : [[0, -50, 0], [0, -50, 0]];
       k.pos.set(p[0], n * 6); k.pos.set(p[1], n * 6 + 3);
     });
     k.attr.needsUpdate = true;
@@ -535,8 +539,8 @@ function fitIntrinsics(k) {
 }
 
 function placePhoneCamera(slot) {
-  const L = loc.get(slot); if (!L.world_T_arcam) return;
-  const P = W.compose(L.world_T_arcam, W.arcam_T_cv), R = P.R;
+  const L = PA.get(slot); if (!L?.cam) return;
+  const P = W.compose(L.cam, W.arcam_T_cv), R = P.R;
   // OpenCV camera (x right, y down, z forward) -> Three.js camera (x right, y up, looks down -z)
   new THREE.Matrix4().set(R[0], -R[1], -R[2], P.t[0], R[3], -R[4], -R[5], P.t[1], R[6], -R[7], -R[8], P.t[2], 0, 0, 0, 1)
     .decompose(camera.position, camera.quaternion, camera.scale);
@@ -780,18 +784,18 @@ bus.onmessage = e => command(e.data);
 let devices = [];
 navigator.mediaDevices.addEventListener?.('devicechange', fillDevices);
 function publish() { // state for admin.html, a few times a second
-  const L = s => { const l = loc.get(s); return { anchored: l.anchored, fixes: l.fixes, err: l.err }; };
+  const L = s => { const g = est.slots[s] ?? {}; return { anchored: !!g.aligned || g.src === 'localize', fixes: g.n ?? 0, err: g.check != null ? g.check / 100 : g.rms ?? 0, src: g.src ?? null }; };
   const tc = cfg.tagCam;
   bus.postMessage({ type: 'state', id: DISPLAY_ID, visible: !document.hidden, born: performance.timeOrigin, phase: match.phase, ready: match.ready, paused: match.paused, left: match.left, sec: match.sec, until: Math.max(0, match.until - now()),
     winner: winner?.slot ?? null,
     players: Object.fromEntries(Object.values(players).map(p => [p.slot, { hp: p.hp, online: p.online, imu: !!p.imu, fake: !!p.truth, charge: p.charge, charging: p.charging, loc: L(p.slot) }])),
     link: linkState, host, camMode: cfg.camMode, tagCam: tc && { ids: tc.ids, err: tc.reprojErrPx, fov: tc.fovY, t: tc.pose.t }, camMsg: status.extra,
-    videoSrc: params.has('dummy') ? 'dummy' : cfg.videoSrc, cam: camRx ? { ...(camRx.stats ?? {}), url: camUrl } : null,
+    videoSrc: params.has('dummy') ? 'dummy' : cfg.videoSrc, cam: camRx ? { ...(camRx.getStats?.() ?? {}), url: camUrl } : null,
     video: { w: video.videoWidth, h: video.videoHeight, label: video.srcObject?.getVideoTracks()[0]?.label ?? '', id: video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId }, devices,
     view: cfg.view, drone: drone.mode, shot: drone.shot, fpv: cfg.fpv, fovPhone: intr,
     audio: sfx && { unlocked: sfx.unlocked, loaded: sfx.loaded, muted: sfx.muted, vol: sfx.volumes },
-    posSrc: cfg.posSrc, hand: cfg.hand, skelSrc: cfg.skelSrc, phoneBodies: { A: phoneSk.A.has, B: phoneSk.B.has, aligned: !!roomToWorld, warn: phoneEst?.warn?.slice(0, 2) ?? [] }, tagMode: cfg.tagMode, tagMount: cfg.tagMount, tagHeight: cfg.tagHeight, knownFov: cfg.knownFov ?? null, layout: W.LAYOUT, pose: tracker ? { ms: tracker.ms, hz: tracker.hz, ready: tracker.ready, A: !!tracker.get('A')?.seen, B: !!tracker.get('B')?.seen } : null,
-    field: { scanned: fieldScanned, poly: W.FIELD.poly }, setupTags: tagChecks(), tagCheckMs: Math.round(seenTags.ms), toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, chargeUpDeg: cfg.chargeUpDeg, chargeStillDps: cfg.chargeStillDps, chargeDelay: cfg.chargeDelay, gest: Object.fromEntries(Object.values(players).map(p => [p.slot, p.gest?.imuCharge ? 'charging' : p.imu ? (p.dir.y > Math.sin(cfg.chargeUpDeg * Math.PI / 180) ? 'up' : 'idle') : '-'])), aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
+    posSrc: cfg.posSrc, hand: cfg.hand, skelSrc: cfg.skelSrc, phoneBodies: { A: phoneSk.A.has, B: phoneSk.B.has, aligned: !!(est.slots.A?.aligned || est.slots.B?.aligned), warn: est.warn?.slice(0, 2) ?? [] }, tagMode: cfg.tagMode, tagMount: cfg.tagMount, tagHeight: cfg.tagHeight, knownFov: cfg.knownFov ?? null, layout: W.LAYOUT, pose: tracker ? { ms: tracker.ms, hz: tracker.hz, ready: tracker.ready, A: !!tracker.get('A')?.seen, B: !!tracker.get('B')?.seen } : null,
+    field: { scanned: fieldScanned, poly: W.FIELD.poly }, setupTags: tagChecks(), tagCheckMs: Math.round(seenTags.ms), toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, chargeUpDeg: cfg.chargeUpDeg, chargeStillDps: cfg.chargeStillDps, chargeDelay: cfg.chargeDelay, gest: Object.fromEntries(Object.values(players).map(p => [p.slot, extActive(p) ? (p.charging ? 'ext-charging' : 'ext') : p.gest?.imuCharge ? 'charging' : p.imu ? (p.dir.y > Math.sin(cfg.chargeUpDeg * Math.PI / 180) ? 'up' : 'idle') : '-'])), aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
 }
 setInterval(publish, 250);
 // a small picture of this screen for the admin page (drawn right after a render, so the WebGL buffer is still there)
@@ -799,8 +803,8 @@ setInterval(publish, 250);
 // ---- main loop ----
 const banner = document.getElementById('banner'), statusEl = document.getElementById('status'), pipLabel = document.getElementById('pipLabel');
 function locText(slot) {
-  const L = loc.get(slot);
-  return `${slot}: ${L.anchored ? `タグ固定 ${L.fixes}回 ずれ${(L.err * 100).toFixed(0)}cm` : '未固定(開始位置)'}`;
+  const g = est.slots[slot] ?? {};
+  return `${slot}: ${g.aligned ? `タグ合わせ ${g.n}点 ずれ${((g.check ?? g.rms * 100) || 0).toFixed(0)}cm` : g.src === 'localize' ? '旧アプリ' : '未合わせ(開始位置)'}`;
 }
 const timerEl = document.getElementById('timer'), phaseEl = document.getElementById('phase');
 const PHASE_LABEL = { setup: '準備中', demo: 'デモ', countdown: '', fight: '', result: '' };
@@ -817,6 +821,7 @@ function frame(ts = 0) {
   if (FPS_CAP && ts && ts - (frame.at ?? -1e9) < 1000 / FPS_CAP - 2) return requestAnimationFrame(frame);
   frame.at = ts;
   const t = now(), raw = t - last, dt = Math.min(.05, raw); last = t;
+  try { est = PA.estimate(Date.now() / 1000); } catch (e) { status.extra = 'phonealign: ' + e.message; }
   fps = .95 * fps + .05 / Math.max(raw, 1e-3);
   stepMatch(raw);
   for (const p of Object.values(players)) {
