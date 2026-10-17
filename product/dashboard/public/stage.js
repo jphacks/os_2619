@@ -118,7 +118,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true }) {
 
   // live tag check while preparing: which ids phone C sees
   const seen = { list: [], at: 0, busy: false, ms: 0 };
-  const PLAYER_IDS = Object.values(W.PLAYER_TAG);
+  const PLAYER_IDS = W.CHEST_IDS;
   async function checkTags(setup) {
     if (seen.busy || !setup || video.__dummy || !video.videoWidth || document.hidden) return;
     seen.busy = true; const t0 = performance.now();

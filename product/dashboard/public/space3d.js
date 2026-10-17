@@ -2,7 +2,7 @@
 //  - phones A / B: a phone-sized rectangle at the chest camera's pose, its view pyramid, AR trail and facing arrow
 //  - phone C: a landscape rectangle where the tag scan put the third-person camera, with its view pyramid
 //  - swords: base → tip as the game places them (hand + IMU direction × stick length), tip marked
-//  - AprilTags: squares with their real pattern — field sheets at their scanned pose, chest tags 10 / 11 on the players,
+//  - AprilTags: squares with their real pattern — field sheets at their scanned pose, chest tags 8-11 on the players,
 //    and the live sightings (a ray from the phone to every tag it sees right now)
 //  - optional: the sensing team's own estimate (map.js) as a dashed ghost
 // Ported from kawashima/space.js. Own renderer; geometry allocated once, buffers rewritten in place, estimate drawn at 15 Hz.
@@ -225,7 +225,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
         d.tag.visible = on.tags && g.yaw != null;
         if (d.tag.visible) toMat(W.compose(W.chestTagPose(W.bodyPose(g.chest, g.yaw, g.chest[1] - .12)), W.pose(W.I3, [0, 0, .01])), d.tag.matrix);
         d.seen.visible = !!g.seenBy; if (g.seenBy) d.seen.position.set(...g.seenBy.p);
-        for (const sg of g.sightings ?? []) if (sg.R && sg.id !== W.PLAYER_TAG.A && sg.id !== W.PLAYER_TAG.B) showDetected(sg.id, sg.R, sg.p, t);
+        for (const sg of g.sightings ?? []) if (sg.R && !W.isChestTag(sg.id)) showDetected(sg.id, sg.R, sg.p, t);
         if (on.rays && g.sightings) for (const sg of g.sightings) {
           if (nRays >= RAY_N) break;
           const isField = W.TAGS[sg.id]?.pos, m = seenPool[nRays];

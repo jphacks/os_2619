@@ -199,7 +199,7 @@ export function createPhoneAlign(opts = {}) {
             const w = 1 / Math.max(0.5, d) ** 2;
             st.sight.push({ t: k.t, id: g.id, b, bx: camDir(pose, rodr(g.r, [1, 0, 0])), by: camDir(pose, rodr(g.r, [0, 1, 0])), w, d });
             st.fixes++; st.lastFix = k.t; st.fDirty = st.dirty = true; S[OTHER[s]].dirty = true;
-          } else if (g.id === W.PLAYER_TAG[OTHER[s]]) { // the other player's chest tag
+          } else if (W.isChestTag(g.id)) { // a chest tag (8-11) is worn by the other player: a phone cannot see its own
             st.seen.push({ t: k.t, b, d }); S[OTHER[s]].dirty = true;
             while (st.seen[0].t < k.t - o.keep) st.seen.shift();
           }

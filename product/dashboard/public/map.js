@@ -27,6 +27,7 @@ const apply = (T, v) => add(rotY(T.th, v), T.t);
 const unapply = (T, v) => rotY(-T.th, sub(v, T.t));
 const ID = { th: 0, t: [0, 0, 0] };
 
+const isChest = id => id >= 8 && id <= 11; // tags 8-11 are worn on the phones, all others are fixed
 const FLOOR_COS = Math.cos(35 * Math.PI / 180); // tag normal within 35° of vertical = floor tag
 const HIP_BELOW_CHEST = 0.4; // m, chest mount to hip midpoint (MediaPipe pose depth origin)
 const K0 = [1.04, 0.78, 0.5, 0.5]; // fx/W, fy/H, cx/W, cy/H guess for apps that don't send intrinsics
@@ -97,15 +98,15 @@ export function createMap() {
         if (!g.p) continue;
         const d = Math.hypot(...g.p); if (d > 6) continue;
         const p = camToWorld(pose, g.p), n = qrot(pose.q, swap(rodr(g.r, [0, 0, 1])));
-        if (Math.abs(n[1]) > FLOOR_COS) {
+        if (isChest(g.id)) {
+          s.seen.push({ t: k.t, p, d }); // tags 8-11 are worn on the phones: the opponent's chest mount
+          while (s.seen[0].t < k.t - KEEP) s.seen.shift();
+        } else if (Math.abs(n[1]) > FLOOR_COS) {
           const x = qrot(pose.q, swap(rodr(g.r, [1, 0, 0]))), xh = norm([x[0], 0, x[2]]);
           const f = s.floor[g.id] ??= { p, x: xh, n: 0 };
           const a = Math.max(1 / ++f.n, 0.05); // running mean, then a slow EMA so ARCore drift is followed
           f.p = add(f.p, mul(sub(p, f.p), a)); f.x = add(f.x, mul(sub(xh, f.x), a));
-        } else {
-          s.seen.push({ t: k.t, p, d }); // a standing tag in my view is the opponent's chest mount
-          while (s.seen[0].t < k.t - KEEP) s.seen.shift();
-        }
+        } // any other standing tag is fixed in the room, not a chest mount: ignored here
       }
     } else if (k.type === 'color') s.color = k;
     else if (k.type === 'pose') s.pose = k;

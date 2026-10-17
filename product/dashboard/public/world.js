@@ -71,7 +71,12 @@ const pick = (typeof location !== 'undefined' && new URLSearchParams(location.se
 export const LAYOUT = LAYOUTS[pick] ? pick : 'map4';
 export const TAGS = LAYOUTS[LAYOUT];
 export const CORNER_IDS = Object.keys(TAGS).map(Number).filter(id => TAGS[id].pos); // every fixed tag (name kept for the modules that use it)
-export const PLAYER_TAG = { A: 10, B: 11 };
+export const PLAYER_TAG = { A: 10, B: 11 }; // the ids drawn / simulated on A and B
+// Tags 8-11 are worn on the phones (chest mounts) and move with their wearer; every other id is fixed in the room.
+// A phone never sees its own, so a chest tag in view is always the opponent's.
+export const CHEST_IDS = [8, 9, 10, 11];
+export const isChestTag = id => id >= 8 && id <= 11;
+for (const id of CHEST_IDS) if (!TAGS[id]) TAGS[id] = { size: 0.18, chest: true }; // size for tagScale; never a pos, never a field tag
 // floor layout: the scan measures how far apart the two sheets really are (app.js) and keeps it, so the
 // sheets only need to lie level and face the same way, not sit exactly 3 m apart
 export const FLOOR_IDS = CORNER_IDS.filter(id => TAGS[id].floor);
@@ -96,7 +101,7 @@ export const onFieldChange = cb => { fieldListeners.add(cb); return () => fieldL
  * third-person picture) to B's side (right), so A starts at -x facing +x as before.
  */
 export function setField({ poly, tags = {} }) {
-  for (const [id, t] of Object.entries(tags)) if (TAGS[id]) // a measured sheet: lying (floor) or upright (stand: true, spin)
+  for (const [id, t] of Object.entries(tags)) if (TAGS[id] && !isChestTag(+id)) // a measured sheet: lying (floor) or upright (stand: true, spin)
     Object.assign(TAGS[id], { pos: [...t.pos], yaw: t.yaw ?? 0, floor: !t.stand, stand: !!t.stand, spin: t.spin ?? 0, R: t.R ? [...t.R] : undefined, flip: false });
   FIELD.poly = poly.map(p => [...p]);
   const xs = poly.map(p => p[0]), zs = poly.map(p => p[1]);

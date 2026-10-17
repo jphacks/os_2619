@@ -85,6 +85,7 @@ import { PLAYER_TAG } from './public/world.js';
       if (when.tags) {
         const m = sim.tags(s);
         if (s === 'B') m.tags = m.tags.filter(g => g.id === PLAYER_TAG.A); // nothing of the field
+        else m.tags = m.tags.map(g => g.id === PLAYER_TAG.B ? { ...g, id: 9 } : g); // B wears tag 9: any of 8-11 is a chest tag
         PA.ingest({ slot: s, t: stamp, ...m });
       }
     }
