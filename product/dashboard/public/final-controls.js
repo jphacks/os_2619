@@ -107,11 +107,11 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
     },
     updateStatus() {
       const f = stage.fx.stats().fire;
-      $('#fireTextureStatus').textContent = f.errors.length ? '炎素材を読み込めません: ' + f.errors.join(', ') : f.loaded.length < 5 ? '炎素材を読み込み中…' : '';
+      $('#fireTextureStatus').textContent = f.errors.length ? '炎素材を読み込めません: ' + f.errors.join(', ') : f.loaded.length < f.total ? '炎素材を読み込み中…' : '';
       const th = stage.fx.stats().thunder;
-      $('#thunderTextureStatus').textContent = th.errors.length ? '電気素材を読み込めません: ' + th.errors.join(', ') : th.loaded.length < 4 ? '電気素材を読み込み中…' : '';
+      $('#thunderTextureStatus').textContent = th.errors.length ? '電気素材を読み込めません: ' + th.errors.join(', ') : th.loaded.length < th.total ? '電気素材を読み込み中…' : '';
       const ch = stage.fx.stats().charging;
-      $('#chargeTextureStatus').textContent = ch.errors.length ? 'チャージ素材を読み込めません: ' + ch.errors.join(', ') : ch.loaded.length < 5 ? 'チャージ素材を読み込み中…' : '';
+      $('#chargeTextureStatus').textContent = ch.errors.length ? 'チャージ素材を読み込めません: ' + ch.errors.join(', ') : ch.loaded.length < ch.total ? 'チャージ素材を読み込み中…' : '';
     },
   };
 }

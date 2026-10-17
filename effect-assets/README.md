@@ -4,43 +4,52 @@
 
 ## 完成素材
 
-`textures/` の14枚が素材です。12枚をCodex内蔵の画像生成ツールで生成し、共通の光・火花2枚は数式で作成しました。全て透過RGBA PNGです。`fire-lobe-v2.png` は炎の色付き、それ以外は主にグレーの濃淡と透明度を持ち、描画側で着色します。
+`textures/` の20枚が素材です。12枚をCodex内蔵の画像生成ツールで生成し、共通の光・火花2枚は数式で作成しました。残り6枚（星形フレア、ギザギザの閃光2種、PKの◆、スパーク球の歯状コロナ、衝撃の輪）は `procedural/make-textures.mjs` が手続き的に生成します。全て透過RGBA PNGです。`fire-lobe-v2.png` は炎の色付き、それ以外は主にグレーの濃淡と透明度を持ち、描画側で着色します。
 
 | PNG | 用途 |
 |---|---|
-| `flame-density.png` | 炎の一房。火弾の尾、着弾の火柱 |
-| `explosion-density.png` | 爆炎を構成する膨らんだ一塊 |
-| `smoke-puff.png` | 爆発後の煙、炎の外側の薄い煙 |
-| `electric-filament.png` | 局所的な稲妻、放電の補助粒子 |
-| `aura-wisp.png` | 体の周囲を上昇するチャージの筋 |
-| `plasma-flow.png` | チャージ球・電気弾の周囲を流れるエネルギーの断片 |
+| `flame-density.png` | ファイガの尾を流れる炎 |
+| `explosion-density.png` | ファイガ着弾・爆炎破裂で飛ぶ炎の塊 |
+| `smoke-puff.png` | PKファイアの暗赤色の煙、爆炎の黒煙、チャージの土煙 |
+| `electric-filament.png` | 電気チャージで脚の周りを走る放電 |
+| `aura-wisp.png` | 炎チャージで脚の周りを上がる揺らぎ |
+| `plasma-flow.png` | 旧チャージ球の表面素材。現在の実装では未使用 |
 | `glow.png` | 中心光、柔らかな発光 |
 | `spark.png` | 短い火花、飛び散る光の筋 |
-| `flame-tongue.png` | 中心が明るい炎の一房。小の火柱に使用 |
+| `flame-tongue.png` | PKファイアの火柱、爆炎の球から立つ炎、ファイガ着弾後に残る炎 |
 | `short-flame.png` | 炎小向けに生成した短炎の代替案。現在の実装では未使用 |
-| `electric-spike.png` | 初期候補の枝分かれ放電。現在の電気攻撃ではv2素材を採用 |
-| `fire-lobe-v2.png` | 色付きの密度のある炎。火球の尾と球状爆炎の表面に使用 |
-| `electric-arc-v2.png` | 電気小・中の飛翔中に使う鋭い横向き放電 |
-| `electric-burst-v2.png` | 電気の着弾と大の落雷地点に使う放射状放電 |
+| `electric-spike.png` | 初期候補の枝分かれ放電。現在の実装では未使用 |
+| `fire-lobe-v2.png` | 色付きの炎の塊。ファイガの火球・尾、爆炎の破裂 |
+| `electric-arc-v2.png` | 電気小・中の弾の尾に重ねる放電片 |
+| `electric-burst-v2.png` | 電気中・大の着弾に重ねる放射状放電 |
+| `star-flare.png` | 爆炎中心の大きな星、着弾の瞬間の閃光、杖先球の中の星（手続き生成） |
+| `spike-burst.png`・`spike-burst-2.png` | 電気の弾のコア・着弾のギザギザの星、炎の着弾の閃光（手続き生成） |
+| `pk-diamond.png` | PKファイアの火柱の周りを漂う◆（手続き生成） |
+| `spark-corona.png` | 杖先スパーク球の外周の歯（手続き生成） |
+| `shock-ring.png` | ファイガ着弾の輪、爆炎の輪郭、チャージの足元の輪（手続き生成） |
 
-元の生成PNGをそのまま保存しています。サイズ・透過の実測結果は `validation.json`、生成指示は `generation.json`、`fire-generation.json`、`thunder-generation.json` にあります。指示TXTを入力する仕組みはありません。
+生成画像は元のPNGをそのまま保存しています。サイズ・透過の実測結果は `validation.json`、生成指示は `generation.json`、`fire-generation.json`、`thunder-generation.json` にあります（手続き生成の6枚は含みません）。指示TXTを入力する仕組みはありません。手続き生成の6枚は次で再生成でき、同じバイト列を `textures/` と `product/dashboard/public/assets/` の各フォルダへ書き込みます。
 
-`preview.html` をブラウザで開くと14枚を背景・色付きで比較できます。`preview-dark.png` と `preview-light.png` は一覧確認用で、ゲーム用素材ではありません。
+```powershell
+node effect-assets/procedural/make-textures.mjs
+```
+
+`preview.html` をブラウザで開くと初期の14枚を背景・色付きで比較できます。`preview-dark.png` と `preview-light.png` は一覧確認用で、ゲーム用素材ではありません。
 
 ## 各技への割り当て
 
 | 演出の参考 | PNGで用意した部分 | JS / 3D側で作る部分 |
 |---|---|---|
-| 炎小：PKファイア | flame-tongue / spark / glow | 元素材の縦横比を保った低い炎、着弾点からの燃焼 |
-| 炎中：ファイガ | flame / plasma / glow | 球状の中心、追従する尾、弾の軌道 |
-| 炎大：爆炎 | explosion / flame / smoke / spark | 着弾地点から複数の塊が球状に膨張、時間差で消失 |
-| 電気小：サンダー | electric-arc-v2 / electric-burst-v2 / glow | 細い直進弾、短い3D放電、着弾光 |
-| 電気中：エルサンダー | electric-arc-v2 / electric-burst-v2 / glow / spark | 黄白い球状コア、放電尾、球状の着弾放電 |
-| 電気大：かみなり | electric-burst-v2 / spark / glow | 上空から着弾点を結ぶ太い3Dの稲妻、中心閃光 |
-| 体のチャージ：リミットチャージ | aura-wisp / glow | 胸の周囲への3D配置、上昇、溜めによる密度変化 |
-| 杖先のチャージ：スパーク風 | plasma-flow / electric-filament / spark / glow | 球メッシュ、球面上を流れる属性別粒子、3Dリング、溜めによる拡大 |
+| 炎小：PKファイア | flame-tongue / smoke / pk-diamond / star / spike | 黄色いジグザグ弾（押し出し形状）と残像。着弾点から背丈を超える深紅の火柱、白い芯、上部の暗赤色の煙、漂う◆ |
+| 炎中：ファイガ | fire-lobe / flame-density / flame-tongue / explosion / star / spike / shock-ring | ノイズシェーダーの火球と後方へ流れる炎の尾。着弾は星形の閃光と炎の塊の飛散、相手に残る炎 |
+| 炎大：爆炎 | star / shock-ring / flame-tongue / explosion / fire-lobe / smoke | 明るい輪郭と暗い渦の内部を持つ炎の球、外周の炎の殻、中心の大きな星。保持後に破裂して炎の塊と黒煙 |
+| 電気小：サンダー | spike / electric-arc-v2 / star | ギザギザの星のコア、黄色い光の尾と絡む稲妻。着弾は小さなギザギザの星 |
+| 電気中：エルサンダー | spike / electric-arc-v2 / electric-burst-v2 / star | 大きいコアと太い光の尾。着弾は黒い縁取り付きの大きなギザギザの星と放射する稲妻 |
+| 電気大：かみなり | spike / electric-burst-v2 / star | 上空の光、太い落雷の柱、相手を包む巨大なギザギザの爆発、黒い芯の稲妻、残る稲妻 |
+| 体のチャージ：リミットチャージ | smoke / aura-wisp / electric-filament / star / shock-ring / glow | 体の周りを上る細い光の柱（黄＋属性色）、脚の周りの揺らぎ、足元の土煙と輪。満タンで脈動 |
+| 杖先のチャージ：スパーク風 | spark-corona / star / spike / glow / spark | 透ける球体（明るい輪郭）、歯状のコロナ、外へ伸びるギザギザの稲妻。炎は橙＋黄、電気は水色＋黄緑 |
 
-上表の略称はPNG名の先頭部分です。参考技の画像そのものを複製したものではありません。PNG一枚で技全体を完成させず、小・中・大は粒子数、空間的な大きさ、速度、寿命と発生タイミングで作り分けます。
+上表の略称はPNG名の先頭部分です。参考技の画像そのものを複製したものではありません。PNG一枚で技全体を完成させず、小・中・大は形・大きさ・時間構成で作り分けます。稲妻・光の柱・弾の尾はカメラを向く帯（`product/dashboard/public/effect-kit.js` の ribbon）を3Dの折れ線に沿って並べて描きます。
 
 ## 3D・リプレイで使う際の条件
 
@@ -64,7 +73,9 @@ effect-assets/
   imagegen/
     generate.mjs         # 以前のNano Banana用CLI
     output/              # 以前の生成結果。今回は不採用、Git管理対象外
-  textures/              # 素材14枚
+  procedural/
+    make-textures.mjs    # 手続き生成素材6枚のスクリプト
+  textures/              # 素材20枚
   generation.json        # 生成方法・指示の記録
   fire-generation.json   # 炎追加素材の生成指示
   thunder-generation.json # 電気追加素材の生成指示
