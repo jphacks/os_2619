@@ -1,0 +1,10 @@
+{
+  "name": "os-2619-effect-assets",
+  "private": true,
+  "scripts": {
+    "images": "node imagegen/generate.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

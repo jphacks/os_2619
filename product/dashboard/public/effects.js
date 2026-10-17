@@ -10,6 +10,9 @@
 // Premultiplied blending everywhere: glows/sparks/bolts add (alpha ~0), flames and smoke also cover what is behind them
 // (alpha > 0), so dense fire stays orange instead of summing to white. The layer alpha then hides the video behind the effect.
 import * as THREE from 'three';
+import { createFireEffects } from './fire-effects.js';
+import { createThunderEffects } from './thunder-effects.js';
+import { createChargeEffects } from './charge-effects.js';
 
 const TAU = Math.PI * 2;
 const K = { FLAME: 0, SMOKE: 1, SPARK: 2, GLOW: 3, EMBER: 4 };                              // particle kinds
@@ -289,6 +292,9 @@ export function createFx(renderer, scene, camera, opts = {}) {
   const shake = a => opts.onShake?.(a);
 
   const fxScene = new THREE.Scene();
+  const fire = createFireEffects(fxScene, { onShake: shake });
+  const thunder = createThunderEffects(fxScene, { onShake: shake });
+  const charging = createChargeEffects(fxScene);
   const common = { uNoise: { value: noise }, uTime: { value: 0 } };
   const addMat = (vs, fs, uniforms = {}) => new THREE.ShaderMaterial({
     // DoubleSide: floor sprites (sprFloor) span +x/+z, so seen from above their winding faces away and FrontSide culled them
@@ -736,7 +742,19 @@ export function createFx(renderer, scene, camera, opts = {}) {
     THREE, K, S, COL, TAU, Q, R, RS, V, emit, spr, sprFloor, seg, segV, Bolt, gen, drawBolt, runit, u3, take, flick, sc, shake,
     fireBurst, sparkBurst, trailFire, headFire, add, classic, get time() { return time; },
   };
-  const styles = { classic }; let style = classic, styleName = 'classic';
+  // 'textured': takumi's set (fire-effects.js / thunder-effects.js / charge-effects.js, generated texture sprites in their own
+  // meshes). They take the shot by id and draw everything themselves; nothing goes through the primitives above.
+  const texMod = el => el === 'fire' ? fire : thunder;
+  const textured = {
+    start: s => texMod(s.el).shot(s.id, s.pos, s.dir, s.power),
+    move: (s, pos) => texMod(s.el).moveShot(s.id, pos),
+    shot: s => { s.prev.copy(s.pos); },
+    end: s => texMod(s.el).endShot(s.id),
+    hit: (el, pos, power) => texMod(el).hit(pos, power),
+    charge: () => {}, // the tip sphere is part of charge-effects.js, requested from aura()
+    aura: (a) => { if (a.opt?.charging) charging.request(a.el, a.opt.chest, a.tip, a.opt.level, a.el); }, // no stick glow when not charging
+  };
+  const styles = { classic, textured }; let style = textured, styleName = 'textured';
   function classicEnd(s) {
     const p = s.pos;
     if (s.el === 'fire') for (let i = 0; i < 25 * Q; i++) { runit(); emit(p.x, p.y, p.z, u3[0] * .6, u3[1] * .6 + .3, u3[2] * .6, .3 + .2 * R(), .08, .14, 3, 1, COL.one, K.FLAME, 1, .2, 0, 0); }
@@ -811,14 +829,17 @@ export function createFx(renderer, scene, camera, opts = {}) {
     aura(element, base, tip, intensity = 1, key = element, opt = {}) { const st = request(auras, key, element); st.base.copy(base); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, intensity)); st.opt = opt; },
     /** opt: { tier, chargeT } */
     charge(element, tip, level, key = element, opt = {}) { const st = request(charges, key, element); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, level)); st.opt = opt; },
+    /** The textured set's body aura + tip sphere directly (charge-effects.js); the 'textured' style also reaches it through aura(). */
+    charging(element, chest, tip, level, key = element) { charging.request(element, chest, tip, level, key); },
     /** big: overall size of the projectile (1 = the usual shot; the game's 小・中・大 tiers pass different sizes). opt: { tier } */
     shot(element, pos, dir, power = .5, big = 1, opt = {}) {
       const id = nextId++;
       shots.set(id, { id, el: element, pos: pos.clone(), prev: pos.clone(), from: pos.clone(), dir: dir.clone().normalize(), power, big, tier: opt.tier ?? null, age: 0, travel: 0, acc: {}, regen: 0, seed: R(),
         bolts: Array.from({ length: 6 }, () => new Bolt(96)), st: style });
+      style.start?.(shots.get(id));
       return id;
     },
-    moveShot(id, pos) { shots.get(id)?.pos.copy(pos); },
+    moveShot(id, pos) { const s = shots.get(id); if (!s) return; s.pos.copy(pos); s.st.move?.(s, pos); },
     /** reason: 'hit' | 'floor' | 'timeout' (game.js); a style may leave something behind (a pillar of fire where it landed). */
     endShot(id, reason = 'timeout') {
       const s = shots.get(id); if (!s) return;
@@ -849,9 +870,15 @@ export function createFx(renderer, scene, camera, opts = {}) {
     /** A hit stopped by the shield. */
     block(element, pos) { sparkBurst(pos, .3, 80, .8); add({ update: blockFx, el: element, pos: pos.clone() }); shake(.15); },
     special(element, from, to) {
+      if (styleName === 'textured') { texMod(element).special(from, to); return; }
       add({ update: element === 'fire' ? specialFire : specialThunder, el: element, from: from.clone(), to: to.clone(), bolts: Array.from({ length: 8 }, () => new Bolt(200)) });
       if (element === 'thunder') shake(.4);
     },
+    /** Visual checks only: no game damage or sensor input is generated. */
+    previewFire(tier, from, to, getTarget = null) { fire.preview(tier, from, to, getTarget); },
+    controlFirePreview(state) { fire.previewControl(state); },
+    previewThunder(tier, from, to, getTarget = null) { thunder.preview(tier, from, to, getTarget); },
+    controlThunderPreview(state) { thunder.previewControl(state); },
     step(dt) {
       dt = Math.min(Math.max(dt, 0), .1); time += dt;
       nS = 0; nG = 0;
@@ -870,6 +897,9 @@ export function createFx(renderer, scene, camera, opts = {}) {
         if (n) { b.buf.clearUpdateRanges(); b.buf.addUpdateRange(0, n * st); b.buf.needsUpdate = true; }
       }
       common.uTime.value = time;
+      fire.step(dt);
+      thunder.step(dt);
+      charging.step(dt);
     },
     render() {
       renderer.getDrawingBufferSize(dbs);
@@ -879,7 +909,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
       renderer.setRenderTarget(null); renderer.autoClear = true;
       timed('scene', () => renderer.render(scene, camera));
       // nothing alive: skip the effect layer, bloom and composite (setup, between moves)
-      if (!nS && !nG && time >= pAlive) { renderer.autoClear = ac; renderer.setRenderTarget(rt0); return; }
+      if (!nS && !nG && time >= pAlive && !fire.active && !thunder.active && !charging.active) { renderer.autoClear = ac; renderer.setRenderTarget(rt0); return; }
       timed('fx', fxPasses);
       renderer.setClearColor(cc, ca); renderer.autoClear = ac; renderer.setRenderTarget(rt0);
     },
@@ -888,8 +918,11 @@ export function createFx(renderer, scene, camera, opts = {}) {
     /** { fxPixels, fxPixelsMin, fxBudgetMs, adaptive }: fxPixels also resets the adaptive size to it. */
     setQuality(q) { Object.assign(opts, q); if (q.fxPixels) { px = q.fxPixels; if (W) resizeTargets(W, H); } },
     stats() { return { sprites: nS, segments: nG, particleCap: CAP, shots: shots.size, live: live.length, auras: auras.size, charges: charges.size,
-      fxPixels: Math.round(fxRT.width * fxRT.height), gpuSceneMs: +gpu.scene.toFixed(2), gpuFxMs: +gpu.fx.toFixed(2), timer: !!tq }; },
+      fire: fire.stats(), thunder: thunder.stats(), charging: charging.stats(), fxPixels: Math.round(fxRT.width * fxRT.height), gpuSceneMs: +gpu.scene.toFixed(2), gpuFxMs: +gpu.fx.toFixed(2), timer: !!tq }; },
     dispose() {
+      fire.dispose();
+      thunder.dispose();
+      charging.dispose();
       for (const t of [fxRT, ...down, ...up]) t.dispose();
       for (const m of [P, SP, SG]) { m.g.dispose(); m.mesh.material.dispose(); }
       for (const m of [downMat, upMat, compMat]) m.dispose();

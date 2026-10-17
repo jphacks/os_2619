@@ -1,0 +1,35 @@
+{
+  "tool": "Codex built-in image_gen",
+  "transparent_background": true,
+  "processing": "Original RGBA PNGs copied without image modification.",
+  "assets": [
+    {
+      "file": "flame-tongue.png",
+      "source": "exec-7d97aa04-ef0c-4156-be58-7b24d0ee725c.png",
+      "prompt": "Use case: stylized-concept. Asset type: ONE production game particle texture, RGBA PNG on genuinely transparent background. Subject: one DENSE TONGUE OF FAST HOT FLAME, a local fragment for a small fire pillar and fireball wake in a polished stylized 3D fighting game. Vertically rising asymmetric tapered shape: broad bright lower-middle body, two or three sharp curling tapered tips upward, smaller irregular holes inside. Strong readable low-frequency silhouette with a rich luminous nearly-white core and soft translucent gray edges. Monochrome white and neutral gray only for runtime shader coloring. A balance of clean energetic forms and fluid surface breakup: flame has weight and density, not just wispy smoke or a cloud of hairline filaments. Internal bright flow stretched upward; continuous soft alpha at boundaries, but a clearly stronger core. No black outline, no ink contour, no cel-shaded color bands, no painted sticker, no flat base, no full fireball, no complete explosion or scene. Do not make a round puff or a closed ring. Single flame fragment centered inside generous transparent padding, not touching any edge. No objects, character, letters, checkerboard, background, shadow, border, watermark, or sprite sheet. The finished transparent texture must remain recognizable when used at 64 pixels high; reserve fine detail as subtle supporting texture."
+    },
+    {
+      "file": "electric-spike.png",
+      "source": "exec-0fbce47e-e95d-4303-824b-0206d13b77cd.png",
+      "prompt": "Use case: stylized-concept. Asset type: ONE reusable local particle texture for stylized 3D fighting game electricity. Square RGBA PNG, genuinely transparent background, real alpha. Subject: a single short outward-directed FORK OF ELECTRICAL ENERGY: one bright angular spear-shaped main streak shooting upward from a compact lower junction, with two shorter sharply bent side forks. This is a local fragment to place in 3D around an energy sphere, not the whole sphere or the full radial burst. Broad enough to read at 48 pixels high; clean angular tapered shapes with bright dense white cores, soft subtle gray emissive falloff, small irregular torn edges. White and neutral gray ONLY, colored in the game shader. Sharp energetic stepped bends, asymmetrical lengths, 3 or 4 main tips at most. More graphic, compact and legible than a photographic hairline lightning filament; retain luminous volume and continuous soft alpha without inked outlines. Fit within middle 60 percent of the square, all tips and glows inside generous fully transparent padding. No black outline, no dark contour, no cel shading bands, no neon closed tube, no entire electric orb, no ring, circle, sun emblem, starburst symbol, cloud, scene, character, weapon, floor, shadow, text, watermark, checkerboard, border, or multiple isolated specimens. One connected forked spike fragment, directed upward."
+    },
+    {
+      "file": "fire-lobe-v2.png",
+      "source": "exec-664f5d7b-1d9d-46c7-83f5-79a91a73ae02.png",
+      "references": [
+        "reference/ファイガ.png",
+        "reference/爆炎.png"
+      ],
+      "prompt": "Use case: stylized-concept. Asset type: ONE transparent game VFX particle texture, square RGBA PNG with real semitransparent alpha. Reference images are ONLY visual references for fire palette, core brightness and readable shape; do not reproduce their whole effects, objects, UI or scenes. Generate one local compact tuft of incandescent magical FIRE used repeatedly around a 3D moving fireball and on a 3D expanding explosion. White-hot to pale yellow dense irregular core, golden yellow flowing lobes, saturated orange and deep orange-red thin outer tongues, with a few transparent gaps. Approximately oval, asymmetric, slightly swept upward, three or four broad curling flame tips, no flat base, no perfect circle and no ring. Broad clean energetic forms and continuous fluid shading, slightly sharp torn flame tips; controlled internal detail so it reads at 64px, high brightness contrast. More dense molten flame than photographic smoke, not a fuzzy tangled filament cloud. Edges dissolve into real transparency; no black outlines, no dark ink contour, no thick cartoon stroke, no flat cel-shaded bands or sticker-like opaque perimeter. Keep the whole fragment and glow inside central 65 percent with fully transparent clear padding. No long tail, starburst, full sphere, complete explosion, ground, smoke mushroom, character, weapon, scene, background, text, checkerboard, grid, borders, watermark or multiple specimens. One local volumetric-looking fire fragment only."
+    },
+    {
+      "file": "short-flame.png",
+      "source": "exec-a4f732a5-230e-4fec-938a-06c5649a53d3.png",
+      "references": [
+        "textures/flame-tongue.png",
+        "reference/pkファイヤー.png"
+      ],
+      "prompt": "Use case: stylized-concept. Asset type: transparent grayscale particle texture for a Three.js game fire impact. Image 1 is the existing grayscale flame-density texture and defines the soft detailed flame rendering; Image 2 is gameplay reference only for the compact, low PK Fire impact character. Create one NEW compact ground flame cluster designed specifically for a very short burning impact. It must be naturally short rather than a tall flame compressed vertically. Three to five overlapping small flame tongues rise from one shared low base; broad compact silhouette; the tallest tongue is only about 1.1 times the total cluster width; flat, clearly defined bottom contact line centered along the lower edge; dense bright white core at the bottom fading through light gray to transparent edges. Monochrome emissive VFX density map, detailed wispy flame edges, clean game particle texture, suitable for shader recoloring from red/orange/yellow to white-hot. One isolated flame cluster centered in a square canvas, generous transparent margin, entire silhouette visible, no detached sparks. Genuine transparent RGBA background; grayscale only; preserve natural individual flame proportions; compact and low; readable when billboarded at roughly 0.35 meters wide; no text, watermark, border, tall single flame, vertically squashed appearance, horizontal blur, smoke, embers, circular explosion, ground plane, black or checkerboard background, or baked rectangular glow."
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 //   1 接続     phones A / B (SensorLink app over /ws) and phone C (cam.html over /cam), everything they send
 //   2 3D空間   phones, swords and AprilTags in the field world (phonealign.js), dark and raw
 //   3 ゲーム   the match in the stylised 3D arena: magic attacks (小・中・大), charge meters, HP, timer (game.js + stage.js)
-//   4 最終映像 the same 3D state projected onto phone C's live picture (camera pose from the tag scan)
+//   4 最終映像 the untouched camera picture plus effects projected from sensor-world coordinates (camera pose/FOV from the tag scan)
 // Data: hub.js → phonealign.js (positions), map.js (the sensing team's estimate, for comparison), actions.js (moves) → game.js.
 import * as W from './world.js';
 import { createHub } from './hub.js';
@@ -15,6 +15,7 @@ import { createGame, PHASE_JA, POS_JA, ELEMENT_JA, RULES, TIER_JA } from './game
 import { createSmashStyle } from './fx-smash.js';
 import { createSpace } from './space3d.js';
 import { createConnect } from './connect.js';
+import { createFinalControls } from './final-controls.js';
 
 const $ = s => document.querySelector(s);
 const nowS = () => Date.now() / 1000;
@@ -24,13 +25,14 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len }, skeleton: false, skelSrc: 'both',
   minimap: true, debug: false, pip: false, fpv: null, drone: 'auto', videoSrc: 'remote', tagMode: 4, tagMount: 'stand', tagHeight: 1.0, knownFov: null,
-  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 2, fxStyle: 'classic',
+  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 3, fxStyle: 'textured',
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
 if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
 if ((saved.rulesVer ?? 0) < 2) cfg.aim = 'motion'; // ...and the aim from the tip's motion
-cfg.rulesVer = 2;
+if ((saved.rulesVer ?? 0) < 3) cfg.fxStyle = 'textured'; // takumi's textured set became the default
+cfg.rulesVer = 3;
 cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg } };
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
 const axis = {}; // IMU sensor axis along each stick (sensing: calibrated by holding the stick straight up)
@@ -51,7 +53,7 @@ import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const 
 // positions from phone C's picture (posetrack.js), loaded only when that source can be used
 let tracker = null, trackerLoading = false, trackerErr = '';
 async function syncTracker() {
-  const want = (cfg.posSrc === 'camera' || cfg.posSrc === 'auto') && video.videoWidth > 0;
+  const want = !video.__dummy && (cfg.posSrc === 'camera' || cfg.posSrc === 'auto') && video.videoWidth > 0;
   if (!want) { tracker?.stop(); tracker = null; return; }
   if (tracker || trackerLoading) return;
   trackerLoading = true;
@@ -64,8 +66,8 @@ async function syncTracker() {
 
 const stage = createStage({ video, cfg, hub, PA, getTracker: () => tracker, isSetup: () => game.match.phase === 'setup' });
 const hudFlash = { el: null };
-const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el) });
-stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: いつもの / スマブラ風
+const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), getDummyFrame: () => vsrc.dummy?.frame });
+stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: 画像素材版 (textured, default) / プログラム版 (smash) / いつもの (classic)
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
 
 hub.on(k => {
@@ -137,7 +139,7 @@ gameCtrl.innerHTML = `
     <div class="row"><button id="rulesReset">初期値に戻す</button><span class="muted" id="rulesNote"></span></div>
   </div>
   <h3>エフェクトを試す</h3>
-  <div class="seg" id="fxStyles"><button data-fxstyle="classic">いつもの</button><button data-fxstyle="smash">スマブラ風</button></div>
+  <div class="seg" id="fxStyles"><button data-fxstyle="textured">画像素材版</button><button data-fxstyle="smash">プログラム版</button><button data-fxstyle="classic">いつもの</button></div>
   <p class="muted" style="font-size:12px;margin:4px 0">試合中でなくても出る。ダメージは入らない。弾は相手の胸に向けて撃つ。「溜め」は押している間溜まり、離すとその段階の技を撃つ</p>
   <div class="fxtry">${['A', 'B'].map(s => `<div class="row"><b style="color:var(--${s});width:1.4em">${s}</b>${['s', 'm', 'l'].map(t => `<button data-fxshot="${t}" data-s="${s}">${TIER_JA[t]}</button>`).join('')}<button data-fxcharge data-s="${s}">溜め（押している間）</button></div>`).join('')}</div>
   <h3>カメラ（ドローン視点）<kbd>D</kbd></h3>
@@ -185,17 +187,7 @@ for (const b of document.querySelectorAll('[data-tog]')) b.onclick = () => toggl
 
 // ---- final screen toolbar ----
 const finalBar = $('#finalBar');
-finalBar.innerHTML = `
-  <button id="scanBtn" class="go">タグでスキャン<kbd>K</kbd></button>
-  <span class="kv" id="tagCheck"></span>
-  <span class="msg" id="finalMsg"></span>
-  <div class="seg" id="fpvs"><button data-fpv="">第三者カメラ</button><button data-fpv="A">A の胸</button><button data-fpv="B">B の胸</button></div>
-  <button data-tog="pip">小窓に 3D</button><button data-tog="skeleton">骨格</button>
-  <button id="fullBtn">全画面<kbd>F</kbd></button>`;
-$('#scanBtn').onclick = () => scan();
-for (const b of finalBar.querySelectorAll('[data-tog]')) b.onclick = () => toggle(b.dataset.tog);
-for (const b of finalBar.querySelectorAll('[data-fpv]')) b.onclick = () => { cfg.fpv = b.dataset.fpv || null; save(); stage.resize(); stage.applyCam(); };
-$('#fullBtn').onclick = () => fullscreen();
+const finalControls = createFinalControls({ bar: finalBar, stage, game, vsrc, cfg, save, scan, fullscreen });
 function fullscreen() { const box = $('#finalBox'); document.fullscreenElement ? document.exitFullscreen() : box.requestFullscreen?.().then(() => setTimeout(stage.resize, 100)); }
 document.addEventListener('fullscreenchange', () => setTimeout(stage.resize, 50));
 async function scan() { game.command({ cmd: 'phase', phase: 'setup' }); vsrc.dummy?.showPlayers(false); await stage.scan(); vsrc.dummy?.showPlayers(true); }
@@ -258,7 +250,7 @@ addEventListener('keydown', e => {
   if (e.altKey) { const n = { Digit1: 'connect', Digit2: 'space', Digit3: 'game', Digit4: 'final' }[e.code]; if (n) { e.preventDefault(); show(n); } return; }
   if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (held[k]) return game.command({ cmd: 'charge', slot: held[k], on: true });
+  if (held[k] && screen !== 'final') return game.command({ cmd: 'charge', slot: held[k], on: true });
   if (KEYS[k]) return game.command(KEYS[k]);
   if (k === 'k') scan();
   else if (k === 'd') { stage.drone.next(); cfg.drone = stage.drone.mode; save(); }
@@ -267,7 +259,7 @@ addEventListener('keydown', e => {
   else if (k === 's') drawer.classList.toggle('open');
   else if (k === 'Escape') drawer.classList.remove('open');
 });
-addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k]) game.command({ cmd: 'charge', slot: held[k], on: false }); });
+addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k] && screen !== 'final') game.command({ cmd: 'charge', slot: held[k], on: false }); });
 
 // ---- per-frame UI ----
 function pill(id, state) { const p = $(id); p.classList.toggle('on', state === true); p.classList.toggle('half', state === 'half'); }
@@ -338,9 +330,12 @@ function frame(ts) {
   const t = performance.now() / 1000, raw = t - last, dt = Math.min(.05, raw); last = t;
   fps = .95 * fps + .05 / Math.max(raw, 1e-3);
   try { est = PA.estimate(nowS()); } catch (e) { console.warn('phonealign', e); }
-  game.step(dt, raw, est, tracker);
+  vsrc.dummy?.render(t); // the picture and game placement consume this exact same pose snapshot
+  game.step(dt, raw, est, tracker, { sensorOnly: screen === 'final' });
+  if (screen === 'final') finalControls.step(t);
   if (screen === 'game' || screen === 'final') { stage.render(dt, game, est); updateHud(); }
   else stage.fx.step(dt); // effects keep their time even when nobody looks
+  if (screen === 'final') finalControls.updateStatus();
   if (screen === 'space') space.frame(nowS(), est);
   if (screen === 'connect') connect.frame();
   if (t - lastSlow > .2) { lastSlow = t; updateSlowUi(); $('#pillFps').textContent = `${fps.toFixed(0)} fps`; }

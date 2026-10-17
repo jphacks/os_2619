@@ -134,6 +134,12 @@
   .players2 .pc .facts { color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; min-height: 2.6em; }
   .toolbar { display: flex; gap: 8px; align-items: center; padding: 8px 14px; border-top: 1px solid var(--line); background: var(--surface); flex-wrap: wrap; }
   .toolbar .msg { color: var(--text-2); font-size: 12px; flex: 1 1 300px; min-width: 0; }
+  #finalBar { display: grid; gap: 6px; align-items: stretch; }
+  #finalBar .final-control-row { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; align-items: center; }
+  #finalBar .final-control-title { color: var(--text-2); font-size: 12px; letter-spacing: .04em; }
+  #finalBar .final-control-items, #finalBar .final-shared-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+  #finalBar .final-control-items > .msg { flex: 0 1 auto; }
+  #finalBar .final-shared-controls { margin-left: auto; padding-left: 10px; border-left: 1px solid var(--line); }
 
   /* HUD (game + final) */
   .hud { position: absolute; inset: 0; pointer-events: none; font-weight: 600; }

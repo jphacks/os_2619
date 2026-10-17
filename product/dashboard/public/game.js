@@ -40,7 +40,7 @@ export const POS_JA = { auto: '自動', phones: '胸スマホ', camera: 'カメ�
  * cfg (live object): posSrc 'auto'|'phones'|'camera'|'start', hand 'R'|'L', aim 'stick'|'eye', stickLen { A, B }, test (no HP loss),
  * rules (RULES: tier seconds, damage, rapid-fire interval, how far you may move while charging).
  */
-export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {}, clock = null }) {
+export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {}, clock = null, getDummyFrame = () => null }) {
   const now = clock ?? (() => performance.now() / 1000); // test-game.mjs drives a fake clock
   const events = []; // newest first: { at: Date.now(), slot, kind, text }
   const log = (slot, kind, text) => { events.unshift({ at: Date.now(), slot, kind, text }); if (events.length > 200) events.pop(); };
@@ -64,12 +64,20 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const tierOf = t => t < rules().t1 ? 's' : t < rules().t2 ? 'm' : 'l';
   const IMU_SIDE = cross(W.STICK.axis, W.STICK.up);
 
-  function place(p, est, tracker) {
+  function place(p, est, tracker, sensorOnly = false) {
+    const dummy = getDummyFrame()?.players?.[p.slot];
+    if (dummy) {
+      p.body = W.bodyPose(dummy.chest, dummy.yaw, dummy.chest[1]);
+      p.chest.fromArray(dummy.chest); p.base.fromArray(dummy.base);
+      p.tip.fromArray(dummy.tip); p.dir.fromArray(dummy.dir);
+      p.src = 'dummy'; p.stickSrc = 'ダミー映像と同じ座標';
+      return;
+    }
     const g = est?.slots?.[p.slot] ?? {}, st = W.START[p.slot], T = p.truth;
-    const pt = tracker?.get(p.slot);
+    const pt = sensorOnly ? null : tracker?.get(p.slot);
     const phoneOk = g.chest && (g.aligned || g.src === 'localize');
     const camOk = pt?.seen && pt.foot;
-    const src = cfg.useTruth && T ? 'truth' : cfg.posSrc === 'auto' ? (phoneOk ? 'phones' : camOk ? 'camera' : 'hold') : cfg.posSrc;
+    const src = cfg.useTruth && T ? 'truth' : sensorOnly ? (phoneOk ? 'phones' : 'hold') : cfg.posSrc === 'auto' ? (phoneOk ? 'phones' : camOk ? 'camera' : 'hold') : cfg.posSrc;
     if (src === 'truth') p.body = W.bodyPose(T.chest, T.yaw, T.chest[1]);
     else if (src === 'phones' && phoneOk) p.body = W.bodyPose(g.chest, g.yaw ?? st.yaw, g.chest[1]);
     else if (src === 'camera' && camOk) p.body = W.bodyPose(pt.foot, pt.yaw ?? st.yaw, pt.chest?.[1] ?? W.CHEST_H);
@@ -110,13 +118,15 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     if (tier === 's' && now() - p.lastShot < rules().rapid) return false;
     p.lastShot = now();
     const T = TIER[tier], s = sfx();
-    const aim = cfg.aim === 'eye' ? p.tip.clone().sub(p.chest.clone().add(V(0, .35, 0))).normalize()
-      : (cfg.aim ?? 'motion') === 'motion' ? motionAim(p) ?? p.dir.clone() : p.dir.clone();
+    const dummyTarget = !!getDummyFrame();
+    const aim = dummyTarget ? other(p).chest.clone().sub(p.tip).normalize()
+      : cfg.aim === 'eye' ? p.tip.clone().sub(p.chest.clone().add(V(0, .35, 0))).normalize()
+        : (cfg.aim ?? 'motion') === 'motion' ? motionAim(p) ?? p.dir.clone() : p.dir.clone();
     p.shots++; if (tier === 'l') p.specials++;
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
     if (tier === 'l') { s?.special(p.element, panOf(p.tip)); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
     else { s?.shot(p.element, panOf(p.tip), T.power); drone?.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() }); }
-    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big, { tier }), owner: p, element: p.element, tier, pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now() });
+    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big, { tier }), owner: p, element: p.element, tier, pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now(), dummyTarget });
     log(p.slot, tier === 'l' ? 'special' : 'shot', `${TIER_JA[tier]}の攻撃${tier === 's' ? '' : `（溜め ${p.chargeT.toFixed(1)} 秒）`}`);
     return true;
   }
@@ -157,7 +167,11 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function stepShots(dt) {
     for (let i = shots.length - 1; i >= 0; i--) {
       const s = shots[i], foe = other(s.owner), T = TIER[s.tier];
-      s.pos.addScaledVector(s.vel, dt);
+      if (s.dummyTarget && getDummyFrame()) {
+        const distance = s.pos.distanceTo(foe.chest);
+        s.vel.copy(foe.chest).sub(s.pos).normalize().multiplyScalar(T.speed);
+        s.pos.addScaledVector(s.vel, Math.min(dt, distance / T.speed));
+      } else s.pos.addScaledVector(s.vel, dt);
       fx.moveShot(s.id, s.pos);
       // hit: distance to the opponent's vertical body segment (capsule radius .3 + the shot's own radius)
       const a = foe.chest.clone().setY(foe.chest.y - 1.05), b = foe.chest.clone().setY(foe.chest.y + .15);
@@ -265,10 +279,10 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     }
   }
 
-  function step(dt, raw, est, tracker) {
+  function step(dt, raw, est, tracker, { sensorOnly = false } = {}) {
     stepMatch(raw);
     for (const p of Object.values(players)) {
-      place(p, est, tracker); effects(p);
+      place(p, est, tracker, sensorOnly); effects(p);
       p.trail.push({ t: now(), p: p.tip.clone().sub(p.chest) }); while (p.trail.length && p.trail[0].t < now() - .5) p.trail.shift(); // for motionAim
     }
     stepCharge(dt); stepShots(dt);
