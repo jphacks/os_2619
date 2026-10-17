@@ -128,7 +128,9 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     if (tier === 'l') { s?.special(p.element, panOf(p.tip)); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
     else { s?.shot(p.element, panOf(p.tip), T.power); drone?.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() }); }
     const k = sizeOf(tier);
-    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now(), dummyTarget, homing });
+    // steer: the dummy room keeps turning a shot onto the chest it was drawn at; デモ試合 never does (aimed once, then straight)
+    const steer = dummyTarget && match.mode !== 'demo';
+    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now(), dummyTarget, homing, steer });
     log(p.slot, tier === 'l' ? 'special' : 'shot', `${TIER_JA[tier]}の攻撃${tier === 's' ? '' : `（溜め ${p.chargeT.toFixed(1)} 秒）`}`);
     return true;
   }
@@ -171,7 +173,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function stepShots(dt) {
     for (let i = shots.length - 1; i >= 0; i--) {
       const s = shots[i], foe = other(s.owner), T = TIER[s.tier];
-      if (s.dummyTarget && getDummyFrame()) { // dummy room: steer at the chest every frame
+      if (s.steer && getDummyFrame()) { // dummy room (not デモ試合): steer at the chest every frame
         const distance = s.pos.distanceTo(foe.chest);
         s.vel.copy(foe.chest).sub(s.pos).normalize().multiplyScalar(T.speed);
         s.pos.addScaledVector(s.vel, Math.min(dt, distance / T.speed));
