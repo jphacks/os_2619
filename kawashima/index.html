@@ -31,14 +31,19 @@
   #banner { position: absolute; inset: 0; display: none; place-items: center; font-size: 72px; font-weight: 900; text-shadow: 0 0 24px #000; pointer-events: none; }
   #flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .25s; }
   #status { position: absolute; left: 16px; bottom: 10px; color: var(--dim); text-shadow: 0 0 4px #000; }
-  #panel { position: absolute; right: 12px; bottom: 12px; width: 300px; max-height: calc(100% - 24px); overflow: auto; background: var(--panel); border-radius: 8px; padding: 12px; display: none; }
+  /* settings panel (C): same light/dark tokens as admin.html (follows the OS; data-theme on :root forces one) */
+  #panel { --p-bg: rgba(255, 255, 255, .94); --p-fg: #1a1e26; --p-dim: #4f5767; --p-ctl: #f7f8fa; --p-line: #bfc6d2; --p-accent: #4b3fd6; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #panel { --p-bg: rgba(26, 29, 36, .94); --p-fg: #e7e9ee; --p-dim: #a6aebd; --p-ctl: #252a33; --p-line: #3b4250; --p-accent: #a99dff; color-scheme: dark; } }
+  :root[data-theme="dark"] #panel { --p-bg: rgba(26, 29, 36, .94); --p-fg: #e7e9ee; --p-dim: #a6aebd; --p-ctl: #252a33; --p-line: #3b4250; --p-accent: #a99dff; color-scheme: dark; }
+  #panel { position: absolute; right: 12px; bottom: 12px; width: 300px; max-height: calc(100% - 24px); overflow: auto; background: var(--p-bg); color: var(--p-fg); border: 1px solid var(--p-line); border-radius: 8px; padding: 12px; display: none; }
   #panel.open { display: block; }
-  #panel h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); font-weight: 600; }
+  #panel h3 { margin: 10px 0 6px; font-size: 12px; color: var(--p-dim); font-weight: 600; }
   #panel label { display: grid; grid-template-columns: 90px 1fr 44px; gap: 6px; align-items: center; margin: 3px 0; }
-  #panel input[type=range] { width: 100%; }
-  #panel select, #panel input[type=text] { width: 100%; background: #222; color: var(--fg); border: 1px solid #444; border-radius: 4px; padding: 2px 4px; }
+  #panel input[type=range] { width: 100%; accent-color: var(--p-accent); }
+  #panel select, #panel input[type=text] { width: 100%; background: var(--p-ctl); color: var(--p-fg); border: 1px solid var(--p-line); border-radius: 4px; padding: 2px 4px; }
+  #panel button { font: inherit; background: var(--p-ctl); color: var(--p-fg); border: 1px solid var(--p-line); border-radius: 6px; padding: 4px 8px; margin: 4px 0; cursor: pointer; }
   #panel output { text-align: right; font-variant-numeric: tabular-nums; }
-  #panel .keys { color: var(--dim); margin-top: 10px; }
+  #panel .keys { color: var(--p-dim); margin-top: 10px; }
 </style>
 <script type="importmap">{ "imports": { "three": "./cdn/npm/three@0.160.0/build/three.module.js", "three/addons/": "./cdn/npm/three@0.160.0/examples/jsm/" } }</script>
 </head>

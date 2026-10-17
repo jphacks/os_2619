@@ -4,142 +4,339 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>棒バトル 管理</title>
+<script>
+  // apply the saved theme before the first paint (no flash). 'system' = no attribute, follow the OS
+  try { const t = localStorage.getItem('bou-admin-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 <style>
-  :root { --bg: #0d0f14; --card: #161a22; --line: #262c38; --fg: #eef0f4; --dim: #8a93a6; --fire: #ff7a1a; --thunder: #6cc8ff; --ok: #3ddc84; --warn: #ffcc4d; --bad: #ff5d5d; --accent: #8b7bff; }
+  /* ---- colour tokens: light by default, dark from the OS unless forced light, or forced dark ---- */
+  :root {
+    color-scheme: light;
+    --bg: #eef0f4; --surface: #ffffff; --surface-2: #f4f5f8; --line: #d3d8e1; --line-strong: #b7bfcc;
+    --fg: #1a1e26; --dim: #4f5767; --faint: #6b7385;
+    --btn: #f7f8fa; --btn-hover: #eceff4; --btn-line: #bfc6d2;
+    --accent: #4b3fd6; --on-accent: #ffffff; --accent-soft: #e9e7fd;
+    --ok: #11703a; --ok-bg: #e2f4e9; --ok-line: #8fd1a8; --ok-solid: #15803d; --on-ok: #ffffff;
+    --warn: #7f4d00; --warn-bg: #fff2d1; --warn-line: #e8bf63;
+    --bad: #b3261e; --bad-bg: #fde6e3; --bad-line: #ef9a92;
+    --fire: #b83c06; --fire-bar: #f97316; --thunder: #035f93; --thunder-bar: #2aa7ea; --track: #e1e5ec;
+    --shadow: 0 1px 2px rgba(20, 24, 33, .06), 0 2px 8px rgba(20, 24, 33, .05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #111318; --surface: #1a1d24; --surface-2: #20242c; --line: #2d323c; --line-strong: #414857;
+      --fg: #e7e9ee; --dim: #a6aebd; --faint: #8a93a4;
+      --btn: #252a33; --btn-hover: #2d333e; --btn-line: #3b4250;
+      --accent: #a99dff; --on-accent: #16112f; --accent-soft: #2a2550;
+      --ok: #5fdc93; --ok-bg: #132b1e; --ok-line: #2b6b45; --ok-solid: #46c47c; --on-ok: #07210f;
+      --warn: #f5c95a; --warn-bg: #2f250e; --warn-line: #6b5420;
+      --bad: #ff8f86; --bad-bg: #351816; --bad-line: #7a3631;
+      --fire: #ff9a55; --fire-bar: #ff7a1a; --thunder: #84d2ff; --thunder-bar: #4cb8f5; --track: #2b303a;
+      --shadow: none;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #111318; --surface: #1a1d24; --surface-2: #20242c; --line: #2d323c; --line-strong: #414857;
+    --fg: #e7e9ee; --dim: #a6aebd; --faint: #8a93a4;
+    --btn: #252a33; --btn-hover: #2d333e; --btn-line: #3b4250;
+    --accent: #a99dff; --on-accent: #16112f; --accent-soft: #2a2550;
+    --ok: #5fdc93; --ok-bg: #132b1e; --ok-line: #2b6b45; --ok-solid: #46c47c; --on-ok: #07210f;
+    --warn: #f5c95a; --warn-bg: #2f250e; --warn-line: #6b5420;
+    --bad: #ff8f86; --bad-bg: #351816; --bad-line: #7a3631;
+    --fire: #ff9a55; --fire-bar: #ff7a1a; --thunder: #84d2ff; --thunder-bar: #4cb8f5; --track: #2b303a;
+    --shadow: none;
+  }
+
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
-  header { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-  header h1 { font-size: 16px; margin: 0; }
-  #link { font-size: 12px; color: var(--dim); }
-  #link b { font-weight: 600; }
-  main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; padding: 12px 16px 24px; }
-  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
-  .col { display: grid; gap: 12px; align-content: start; }
-  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
-  section h2 { margin: 0 0 10px; font-size: 12px; color: var(--dim); font-weight: 600; letter-spacing: .06em; }
-  button { font: inherit; color: var(--fg); background: #222836; border: 1px solid #343c4e; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
-  button:hover { background: #2a3142; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; -webkit-text-size-adjust: 100%; }
+  .num { font-variant-numeric: tabular-nums; }
+  kbd { font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 2px 5px; border: 1px solid var(--btn-line); border-radius: 4px; color: var(--dim); background: var(--surface); }
+
+  /* ---- top status bar: always visible ---- */
+  header { position: sticky; top: 0; z-index: 10; background: var(--surface); border-bottom: 1px solid var(--line); box-shadow: var(--shadow); }
+  .top { background: var(--surface); display: flex; align-items: center; gap: 10px 14px; padding: 8px 16px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+  .top h1 { font-size: 16px; margin: 0; white-space: nowrap; }
+  .top .grow { flex: 1; }
+  .stats { display: grid; grid-template-columns: minmax(170px, 1.3fr) minmax(130px, 1fr) minmax(150px, 1.3fr) minmax(150px, 1.3fr) minmax(130px, 1fr); gap: 10px; padding: 10px 16px; max-width: 1440px; margin: 0 auto; }
+  .stat { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px 8px; min-width: 0; }
+  .stat small { display: block; font-size: 12px; color: var(--dim); font-weight: 600; }
+  .stat b { display: block; font-size: 26px; line-height: 1.2; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat .sub { display: block; font-size: 12px; color: var(--dim); min-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat.time b { font-size: 30px; }
+  .stat.hp.A small { color: var(--fire); } .stat.hp.B small { color: var(--thunder); }
+  .stat .bar { margin-top: 4px; }
+  .stat.tone-ok { background: var(--ok-bg); border-color: var(--ok-line); } .stat.tone-ok b { color: var(--ok); }
+  .stat.tone-warn { background: var(--warn-bg); border-color: var(--warn-line); } .stat.tone-warn b { color: var(--warn); }
+  .stat.tone-bad { background: var(--bad-bg); border-color: var(--bad-line); } .stat.tone-bad b { color: var(--bad); }
+  .stat.tone-accent { background: var(--accent-soft); border-color: var(--accent); } .stat.tone-accent b { color: var(--fg); }
+  @media (max-width: 760px) {
+    .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 8px 12px; }
+    .stat { padding: 4px 8px 6px; }
+    .stat.ph { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 10px; }
+    .stat.ph small { display: none; }
+    .stat b, .stat.time b { font-size: 19px; }
+    .stat:not(.ph) .sub { display: none; }
+    .stat small { font-size: 11px; }
+    #multi { margin: 0 12px 8px; }
+    .top { padding: 8px 12px; }
+  }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 700; border: 1px solid var(--line); background: var(--surface-2); }
+  .pill.ok { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); }
+  .pill.bad { color: var(--bad); background: var(--bad-bg); border-color: var(--bad-line); }
+
+  .theme { display: inline-flex; border: 1px solid var(--btn-line); border-radius: 8px; overflow: hidden; }
+  .theme button { border: 0; border-radius: 0; min-height: 34px; padding: 4px 10px; font-size: 13px; }
+  .theme button + button { border-left: 1px solid var(--btn-line); }
+
+  .alert { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; font-weight: 600; border: 1px solid; }
+  .alert::before { content: "!"; flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-size: 13px; font-weight: 900; }
+  .alert.warn { color: var(--warn); background: var(--warn-bg); border-color: var(--warn-line); } .alert.warn::before { background: var(--warn); color: var(--surface); }
+  .alert.ok { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); } .alert.ok::before { content: "✓"; background: var(--ok); color: var(--surface); }
+  .alert.bad { color: var(--bad); background: var(--bad-bg); border-color: var(--bad-line); } .alert.bad::before { background: var(--bad); color: var(--surface); }
+  #multi { margin: 0 16px 10px; }
+
+  /* ---- layout ---- */
+  main { max-width: 1440px; margin: 0 auto; padding: 14px 16px 40px; display: grid; gap: 14px; }
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+  .col { display: grid; gap: 14px; align-content: start; }
+  @media (max-width: 980px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 760px) { main { padding: 12px 12px 32px; } }
+
+  section.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px 16px; box-shadow: var(--shadow); min-width: 0; }
+  .card > h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-size: 17px; }
+  .card > h2 .no { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent-soft); color: var(--fg); font-size: 13px; }
+  .card > h2 .keys { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--dim); }
+  h3 { margin: 16px 0 8px; font-size: 13px; color: var(--dim); font-weight: 700; }
+  .card > h2 + h3, .card > h2 + div > h3:first-child { margin-top: 0; }
+
+  button { font: inherit; color: var(--fg); background: var(--btn); border: 1px solid var(--btn-line); border-radius: 8px; padding: 8px 12px; min-height: 40px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  button:hover { background: var(--btn-hover); }
   button:active { transform: translateY(1px); }
-  button:disabled { opacity: .35; cursor: not-allowed; }
-  #scan { margin-top: 10px; padding: 8px 10px; border-radius: 8px; font-weight: 700; }
-  #scan.no { background: #3a2a12; color: var(--warn); } #scan.yes { background: #123a22; color: var(--ok); }
-  button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button kbd { font: 11px ui-monospace, monospace; color: var(--dim); margin-left: 6px; }
-  button.on kbd { color: #e6e1ff; }
+  button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+  button.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 700; }
+  button.on::before { content: "✓"; font-weight: 900; }
+  button.on kbd { color: var(--on-accent); border-color: currentColor; background: transparent; }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .phase { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
-  .phase button { padding: 14px 8px; font-size: 15px; font-weight: 700; }
-  .phase button.go { background: #1f3b2b; border-color: #2f6b47; }
-  .phase button.go.on { background: var(--ok); border-color: var(--ok); color: #06210f; }
-  @media (max-width: 600px) { .phase { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-  #now { display: flex; align-items: baseline; gap: 14px; margin-top: 12px; }
-  #nowPhase { font-size: 22px; font-weight: 800; }
-  #nowTimer { font-size: 22px; font-variant-numeric: tabular-nums; color: var(--dim); }
+  .row + .row, .seg + .row, .row + .seg { margin-top: 10px; }
+
+  /* primary match flow */
+  .primary { border: 2px solid var(--line-strong); }
+  .phase { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+  .phase button { min-height: 64px; font-size: 17px; font-weight: 800; flex-direction: column; gap: 4px; }
+  .phase button kbd { font-size: 11px; }
+  .phase button.go:not(.on):not(:disabled) { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok); }
+  .phase button.go.on { background: var(--ok-solid); border-color: var(--ok-solid); color: var(--on-ok); }
+  @media (max-width: 760px) { .phase { grid-template-columns: repeat(2, minmax(0, 1fr)); } .phase button { min-height: 56px; } .phase #reset { grid-column: 1 / -1; } }
+  .why { margin: 10px 0 0; min-height: 22px; font-size: 13px; color: var(--dim); }
+  .why b { color: var(--warn); }
+  .flow-foot { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-top: 10px; }
+
+  /* players */
   .players { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
-  .pl h3 { margin: 0 0 6px; font-size: 15px; }
-  .pl.A h3 { color: var(--fire); } .pl.B h3 { color: var(--thunder); }
-  .bar { height: 10px; border-radius: 5px; background: #2a3040; overflow: hidden; }
-  .bar i { display: block; height: 100%; }
-  .pl.A .bar i { background: var(--fire); } .pl.B .bar i { background: var(--thunder); }
-  .facts { font-size: 12px; color: var(--dim); margin: 6px 0 8px; display: grid; gap: 2px; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--bad); }
-  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
-  label.f { display: grid; grid-template-columns: 110px minmax(0, 1fr) 54px; gap: 8px; align-items: center; margin: 6px 0; }
-  label.f output { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
-  select, input[type=number] { font: inherit; color: var(--fg); background: #222836; border: 1px solid #343c4e; border-radius: 6px; padding: 5px 6px; width: 100%; min-width: 0; }
-  input[type=range] { width: 100%; }
-  .msg { font-size: 12px; color: var(--dim); margin-top: 8px; overflow-wrap: anywhere; }
-  .note { font-size: 12px; color: var(--dim); }
+  @media (max-width: 520px) { .players { grid-template-columns: minmax(0, 1fr); } }
+  .pl { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--surface-2); min-width: 0; }
+  .pl h3 { margin: 0 0 6px; font-size: 16px; display: flex; justify-content: space-between; align-items: baseline; }
+  .pl h3 .hp { font-size: 20px; font-weight: 800; color: var(--fg); }
+  .pl.A h3 > span:first-child { color: var(--fire); } .pl.B h3 > span:first-child { color: var(--thunder); }
+  .bar { height: 10px; border-radius: 5px; background: var(--track); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 100%; }
+  .A .bar i { background: var(--fire-bar); } .B .bar i { background: var(--thunder-bar); }
+  .facts { font-size: 13px; color: var(--dim); margin: 8px 0 10px; display: grid; gap: 3px; min-height: 84px; }
+  .pl .row button { flex: 1 1 auto; }
+
+  /* status marks: shape + colour, never colour alone */
+  .st { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; font-size: 10px; font-weight: 900; margin-right: 6px; vertical-align: -2px; color: var(--surface); background: var(--bad); }
+  .st.ok { background: var(--ok); } .st.warn { background: var(--warn); }
+
+  label.f { display: grid; grid-template-columns: 120px minmax(0, 1fr) 56px; gap: 10px; align-items: center; margin: 8px 0; }
+  label.f > span:first-child { font-size: 14px; color: var(--dim); }
+  label.f output { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+  @media (max-width: 520px) { label.f { grid-template-columns: 96px minmax(0, 1fr) 48px; } }
+  select, input[type=number] { font: inherit; color: var(--fg); background: var(--btn); border: 1px solid var(--btn-line); border-radius: 8px; padding: 7px 8px; width: 100%; min-width: 0; min-height: 40px; }
+  input[type=number] { font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--accent); min-height: 28px; }
+  .inline { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--dim); }
+  .inline input { width: 96px; }
+
+  .msg { font-size: 13px; margin-top: 10px; overflow-wrap: anywhere; display: grid; gap: 3px; }
+  .msg:empty { display: none; }
+  .note { font-size: 13px; color: var(--dim); }
+  #scan { margin-bottom: 12px; }
+
+  details.help { margin-top: 12px; font-size: 13px; color: var(--dim); }
+  details.help summary, details.diag > summary { cursor: pointer; font-weight: 700; color: var(--dim); min-height: 32px; display: flex; align-items: center; }
+  details.help summary::before, details.diag > summary::before { content: "▸"; display: inline-block; width: 1.2em; transition: transform .15s; }
+  details[open] > summary::before { transform: rotate(90deg); }
+  details.help summary::-webkit-details-marker, details.diag > summary::-webkit-details-marker { display: none; }
+  details.help p { margin: 6px 0 0; line-height: 1.7; }
+  details.diag > summary { font-size: 17px; color: var(--fg); }
+  .kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; font-size: 13px; margin-top: 10px; }
+  .kv dt { color: var(--dim); } .kv dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  pre#raw { font: 11px/1.45 ui-monospace, Menlo, monospace; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+  .tests { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  @media (max-width: 520px) { .tests { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .tests button { font-size: 13px; }
 </style>
 </head>
 <body>
-<header>
-  <h1>棒バトル 管理画面</h1>
+<div class="top">
+  <h1>棒バトル 管理</h1>
+  <span id="link" class="pill">映像画面を確認中</span>
   <button id="openDisplay">映像画面を開く</button>
-  <span id="link">映像画面: <b>未接続</b></span>
+  <span class="grow"></span>
+  <div class="theme" role="group" aria-label="画面の色">
+    <button data-theme-choice="system">システムに合わせる</button><button data-theme-choice="light">ライト</button><button data-theme-choice="dark">ダーク</button>
+  </div>
+</div>
+<header>
+  <div class="stats" aria-live="off">
+    <div class="stat ph" id="sbPhaseBox"><small>フェーズ</small><b id="sbPhase">接続待ち</b><span class="sub" id="sbPhaseSub"></span></div>
+    <div class="stat time"><small id="sbTimeLabel">残り時間</small><b id="sbTime" class="num">-:--</b><span class="sub num" id="sbTimeSub"></span></div>
+    <div class="stat hp A"><small>A 炎</small><b id="sbHpA" class="num">HP --</b><div class="bar"><i></i></div></div>
+    <div class="stat hp B"><small>B 雷</small><b id="sbHpB" class="num">HP --</b><div class="bar"><i></i></div></div>
+    <div class="stat scan" id="sbScanBox"><small>スキャン</small><b id="sbScan">-</b><span class="sub" id="sbScanSub"></span></div>
+  </div>
+  <div id="multi" class="alert warn" hidden></div>
 </header>
+
 <main>
-  <div class="col">
-    <section>
-      <h2>試合</h2>
-      <div class="phase">
-        <button data-phase="setup">準備中<kbd>1</kbd></button>
-        <button data-phase="demo">デモ開始<kbd>2</kbd></button>
-        <button data-phase="fight" class="go">試合開始<kbd>3</kbd></button>
-        <button id="pause">一時停止<kbd>4</kbd></button>
-        <button id="reset">やり直し<kbd>R</kbd></button>
-      </div>
-      <div id="scan"></div>
-      <div id="now"><span id="nowPhase">-</span><span id="nowTimer"></span></div>
-      <label class="f"><span>試合時間（秒）</span><input id="sec" type="number" min="10" max="600" step="10" value="90"><span></span></label>
-      <div class="row" style="margin-top:8px"><button id="forceReady" class="note">スキャンせずに開始可能にする（前回の合わせ結果を使う）</button></div>
-      <p class="note">準備中はエフェクトを出しません。タグを置いて「タグでカメラ合わせ」でスキャンが済むと、デモと試合を始められます。準備中とデモではHPが減りません。試合開始で3秒カウントしてから始まり、HPが0になるか時間切れで終わります。時間切れはHPが多い方の勝ちです。</p>
-    </section>
-    <section>
-      <h2>プレイヤー</h2>
-      <div class="players">
-        <div class="pl A"><h3>A 炎</h3><div class="bar"><i></i></div><div class="facts"></div>
-          <div class="row"><button data-shoot="A">発射<kbd>Space</kbd></button><button data-charge="A">溜め（押し続ける）<kbd>Q</kbd></button><button data-special="A">必殺技</button></div></div>
-        <div class="pl B"><h3>B 雷</h3><div class="bar"><i></i></div><div class="facts"></div>
-          <div class="row"><button data-shoot="B">発射<kbd>Enter</kbd></button><button data-charge="B">溜め（押し続ける）<kbd>P</kbd></button><button data-special="B">必殺技</button></div></div>
-      </div>
-    </section>
+  <!-- primary actions -->
+  <section class="card primary">
+    <h2>試合の進行<span class="keys">キー 1 2 3 4 R</span></h2>
+    <div class="phase">
+      <button data-phase="setup">準備中<kbd>1</kbd></button>
+      <button data-phase="demo">デモ開始<kbd>2</kbd></button>
+      <button data-phase="fight" class="go">試合開始<kbd>3</kbd></button>
+      <button id="pause"><span class="lbl">一時停止</span><kbd>4</kbd></button>
+      <button id="reset">やり直し<kbd>R</kbd></button>
+    </div>
+    <p class="why" id="why"></p>
+    <div class="flow-foot">
+      <label class="inline">試合時間（秒）<input id="sec" type="number" min="10" max="600" step="10" value="90"></label>
+      <button id="forceReady">スキャンせずに開始できるようにする（前回の合わせ結果を使う）</button>
+    </div>
+    <details class="help"><summary>進め方を読む</summary>
+      <p>準備中はエフェクトを出しません。タグを置いて「タグでカメラ合わせ」でスキャンが済むと、デモと試合を始められます。準備中とデモではHPが減りません。試合開始で3秒カウントしてから始まり、HPが0になるか時間切れで終わります。時間切れはHPが多い方の勝ちです。</p>
+    </details>
+  </section>
+
+  <div class="cols">
+    <div class="col">
+      <section class="card">
+        <h2><span class="no">1</span>準備する</h2>
+        <label class="f"><span>カメラ</span><select id="device"></select><span></span></label>
+        <h3>プレイヤーの位置の取り方</h3>
+        <div class="seg" id="posSrcs"><button data-pos="camera">カメラ映像（骨格）</button><button data-pos="phones">胸スマホ（ARCore＋タグ）</button><button data-pos="start">固定（立ち位置）</button></div>
+        <h3>棒を持つ手</h3>
+        <div class="row"><button data-hand="R">右</button><button data-hand="L">左</button><button id="swap">A・B を入れ替える</button></div>
+        <h3>3Dに出す骨格</h3>
+        <div class="seg"><button data-skel="camera">カメラ映像</button><button data-skel="phones">胸スマホ</button><button data-skel="both">両方</button></div>
+        <div class="msg" id="poseInfo"></div>
+      </section>
+
+      <section class="card">
+        <h2><span class="no">2</span>スキャンする<span class="keys">合わせる <kbd>K</kbd></span></h2>
+        <div id="scan" class="alert warn"></div>
+        <div id="tagModes"><h3>床のタグ</h3>
+          <div class="seg"><button data-tagmode="2">2枚（ID 0・1 を A・B の端に）</button><button data-tagmode="4">4枚（ID 0〜3 を四隅に）</button></div></div>
+        <label class="f"><span>合わせ方</span><select id="camMode"><option value="tags">タグから（tags）</option><option value="manual">手動（manual）</option></select><span></span></label>
+        <div class="row"><button id="calibrate">タグでカメラ合わせ<kbd>K</kbd></button><button id="guideCam">ガイドを推奨位置から表示</button></div>
+        <div class="msg" id="tagCheck"></div>
+        <div class="msg" id="camInfo"></div>
+        <details class="help"><summary>タグの置き方を読む</summary>
+          <p>床のタグは2枚か4枚を選びます。2枚なら ID 1 を A の端（カメラから見て左）、ID 0 を B の端（右）に置くと、その間がフィールドになります。4枚なら ID 0〜3 をだいたい四角形の角に置くと、その内側がフィールドになります。どちらも向きと間隔は自由で、測る必要はありません。全部OKになったら、人がいない状態で「タグでカメラ合わせ」を押します。</p>
+        </details>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="card">
+        <h2><span class="no">3</span>試合を動かす<span class="keys">A <kbd>Space</kbd><kbd>Q</kbd>　B <kbd>Enter</kbd><kbd>P</kbd></span></h2>
+        <div class="players">
+          <div class="pl A"><h3><span>A 炎</span><span class="hp num">--</span></h3><div class="bar"><i></i></div><div class="facts"></div>
+            <div class="row"><button data-shoot="A">発射<kbd>Space</kbd></button><button data-charge="A">溜める（押し続ける）<kbd>Q</kbd></button><button data-special="A">必殺技</button></div></div>
+          <div class="pl B"><h3><span>B 雷</span><span class="hp num">--</span></h3><div class="bar"><i></i></div><div class="facts"></div>
+            <div class="row"><button data-shoot="B">発射<kbd>Enter</kbd></button><button data-charge="B">溜める（押し続ける）<kbd>P</kbd></button><button data-special="B">必殺技</button></div></div>
+        </div>
+        <h3 style="margin-top:16px">判定の設定</h3>
+        <label class="f"><span>振り判定 deg/s</span><input id="swing" type="range" min="100" max="1500" step="10"><output id="swingOut" class="num"></output></label>
+        <label class="f"><span>狙い</span><select id="aim"><option value="stick">棒の向き（stick）</option><option value="eye">目から棒先（eye）</option></select><span></span></label>
+      </section>
+
+      <section class="card">
+        <h2><span class="no">4</span>演出と表示を切り替える</h2>
+        <h3>表示 <kbd>V</kbd></h3>
+        <div class="seg" id="views"><button data-view="off">実映像だけ</button><button data-view="pip">右下に3D</button><button data-view="full3d">3D全画面</button></div>
+        <h3>ドローン視点 <kbd>D</kbd></h3>
+        <div class="seg" id="drones"></div>
+        <h3>スマホ視点 <kbd>F</kbd></h3>
+        <div class="seg" id="fpvs"><button data-fpv="">切</button><button data-fpv="A">A の胸</button><button data-fpv="B">B の胸</button></div>
+        <h3>重ねて出すもの</h3>
+        <div class="seg" id="toggles">
+          <button data-toggle="minimap">ミニマップ<kbd>M</kbd></button>
+          <button data-toggle="debug">デバッグ表示<kbd>G</kbd></button>
+          <button data-toggle="anchors">タグの目印<kbd>H</kbd></button>
+          <button data-toggle="useTruth">正解位置（ダミー）<kbd>T</kbd></button>
+          <button data-toggle="skeleton">骨格を映像に重ねる</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2><span class="no">5</span>音を調整する</h2>
+        <div id="audioWarn" class="alert warn" hidden></div>
+        <label class="f"><span>全体</span><input type="range" min="0" max="1" step="0.01" data-vol="master"><output class="num" data-volout="master">--</output></label>
+        <label class="f"><span>BGM</span><input type="range" min="0" max="1" step="0.01" data-vol="bgm"><output class="num" data-volout="bgm">--</output></label>
+        <label class="f"><span>効果音</span><input type="range" min="0" max="1" step="0.01" data-vol="sfx"><output class="num" data-volout="sfx">--</output></label>
+        <label class="f"><span>環境音</span><input type="range" min="0" max="1" step="0.01" data-vol="amb"><output class="num" data-volout="amb">--</output></label>
+        <div class="row"><button id="mute">消音する</button><span class="note" id="audioInfo"></span></div>
+        <h3>試しに鳴らす</h3>
+        <div class="tests">
+          <button data-sound="shotFire">炎の発射</button><button data-sound="shotThunder">雷の発射</button>
+          <button data-sound="hitFire">炎が当たる</button><button data-sound="hitThunder">雷が当たる</button>
+          <button data-sound="specialFire">炎の必殺技</button><button data-sound="specialThunder">雷の必殺技</button>
+          <button data-sound="charge">溜め</button><button data-sound="bgm">BGM</button>
+        </div>
+      </section>
+    </div>
   </div>
-  <div class="col">
-    <section>
-      <h2>3人称カメラ</h2>
-      <div class="row" id="tagModes" style="margin-bottom:8px"><span class="note">床のタグ</span><button data-tagmode="2">2枚（ID 0・1 を A・B の端に）</button><button data-tagmode="4">4枚（ID 0〜3 を四隅に）</button></div>
-      <label class="f"><span>カメラ</span><select id="device"></select><span></span></label>
-      <label class="f"><span>合わせ方</span><select id="camMode"><option value="tags">tags（タグから）</option><option value="manual">manual（手動）</option></select><span></span></label>
-      <div class="row"><button id="calibrate">タグでカメラ合わせ<kbd>K</kbd></button><button id="guideCam">ガイドを推奨位置から表示</button></div>
-      <div class="msg" id="tagCheck"></div>
-      <div class="msg" id="camInfo"></div>
-      <p class="note">床のタグは2枚か4枚を選びます。2枚なら ID 1 を A の端（カメラから見て左）、ID 0 を B の端（右）に置くと、その間がフィールドになります。4枚なら ID 0〜3 をだいたい四角形の角に置くと、その内側がフィールドになります。どちらも向きと間隔は自由で、測る必要はありません。全部OKになったら、人がいない状態で「タグでカメラ合わせ」を押します。</p>
-    </section>
-    <section>
-      <h2>プレイヤーの位置の取り方</h2>
-      <div class="row" id="posSrcs"><button data-pos="camera">カメラ映像（骨格）</button><button data-pos="phones">胸スマホ（ARCore＋タグ）</button><button data-pos="start">固定（立ち位置）</button></div>
-      <div class="row" style="margin-top:8px"><button id="swap">A・B を入れ替える</button><span class="note">棒を持つ手</span><button data-hand="R">右</button><button data-hand="L">左</button></div>
-      <div class="row" style="margin-top:8px"><span class="note">3Dに出す骨格</span><button data-skel="camera">カメラ映像</button><button data-skel="phones">胸スマホ</button><button data-skel="both">両方</button></div>
-      <div class="msg" id="poseInfo"></div>
-    </section>
-    <section>
-      <h2>表示</h2>
-      <div class="row" id="views">
-        <button data-view="off">実映像だけ</button><button data-view="pip">右下に3D</button><button data-view="full3d">3D全画面</button><span class="note">V</span>
-      </div>
-      <h2 style="margin-top:14px">ドローン視点 <span class="note">D</span></h2>
-      <div class="row" id="drones"></div>
-      <h2 style="margin-top:14px">スマホ視点 <span class="note">F</span></h2>
-      <div class="row" id="fpvs"><button data-fpv="">切</button><button data-fpv="A">A の胸</button><button data-fpv="B">B の胸</button></div>
-      <h2 style="margin-top:14px">切り替え</h2>
-      <div class="row" id="toggles">
-        <button data-toggle="minimap">ミニマップ<kbd>M</kbd></button>
-        <button data-toggle="debug">デバッグ表示<kbd>G</kbd></button>
-        <button data-toggle="anchors">タグの目印<kbd>H</kbd></button>
-        <button data-toggle="useTruth">正解位置（ダミー）<kbd>T</kbd></button>
-        <button data-toggle="skeleton">骨格を映像に重ねる</button>
-      </div>
-    </section>
-    <section>
-      <h2>ゲーム設定</h2>
-      <label class="f"><span>振り判定 deg/s</span><input id="swing" type="range" min="100" max="1500" step="10"><output id="swingOut"></output></label>
-      <label class="f"><span>狙い</span><select id="aim"><option value="stick">stick（棒の向き）</option><option value="eye">eye（目→棒先）</option></select><span></span></label>
-    </section>
-    <section>
-      <h2>状態</h2>
-      <div class="msg" id="sys"></div>
-    </section>
-  </div>
+
+  <section class="card">
+    <details class="diag" id="diag"><summary>6　詳細と診断を見る</summary>
+      <dl class="kv" id="sys"></dl>
+      <details class="help" id="rawBox"><summary>受け取った状態をそのまま見る</summary><pre id="raw"></pre></details>
+    </details>
+  </section>
 </main>
+
 <script>
 const bus = new BroadcastChannel('bou-battle');
 const send = c => bus.postMessage(c);
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const PHASE = { setup: '準備中', demo: 'デモ中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 const DRONE = { auto: '自動演出', orbit: '周回', chaseA: 'A 肩越し', chaseB: 'B 肩越し', top: '真上', side: '真横', free: '自由操作' };
-let st = null, lastState = 0, dragging = false;
+const BUSES = ['master', 'bgm', 'sfx', 'amb'];
+let st = null, lastState = -1e9, dragging = false;
+const volDrag = {};
 
+// ---- theme: system (no attribute) / light / dark, remembered in this browser ----
+const THEME_KEY = 'bou-admin-theme';
+function applyTheme(t) {
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+  $$('[data-theme-choice]').forEach(b => { const on = b.dataset.themeChoice === (t === 'light' || t === 'dark' ? t : 'system'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
+}
+let theme = 'system';
+try { theme = localStorage.getItem(THEME_KEY) || 'system'; } catch (e) {}
+applyTheme(theme);
+$$('[data-theme-choice]').forEach(b => b.onclick = () => { theme = b.dataset.themeChoice; try { localStorage.setItem(THEME_KEY, theme); } catch (e) {} applyTheme(theme); });
+
+// ---- controls -> commands (unchanged contract) ----
 $('#openDisplay').onclick = () => window.open('index.html' + location.search, 'bou-display');
 $$('[data-phase]').forEach(b => b.onclick = () => send({ cmd: 'phase', phase: b.dataset.phase }));
 $$('[data-pos]').forEach(b => b.onclick = () => send({ cmd: 'posSrc', value: b.dataset.pos }));
@@ -171,6 +368,15 @@ const swing = $('#swing');
 swing.oninput = () => { dragging = true; $('#swingOut').textContent = swing.value; send({ cmd: 'set', key: 'swingDps', value: +swing.value }); };
 swing.onchange = () => { dragging = false; };
 $('#aim').onchange = e => send({ cmd: 'set', key: 'aim', value: e.target.value });
+// sound
+const pct = v => `${Math.round(v * 100)}%`;
+$$('[data-vol]').forEach(r => {
+  const bus_ = r.dataset.vol, out = $(`[data-volout="${bus_}"]`);
+  r.oninput = () => { volDrag[bus_] = true; out.textContent = pct(+r.value); send({ cmd: 'volume', bus: bus_, value: +r.value }); };
+  r.onchange = () => { volDrag[bus_] = false; };
+});
+$('#mute').onclick = () => send({ cmd: 'mute' });
+$$('[data-sound]').forEach(b => b.onclick = () => send({ cmd: 'sound', name: b.dataset.sound }));
 
 // the display page's keys work here too
 const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 2: { cmd: 'phase', phase: 'demo' }, 3: { cmd: 'phase', phase: 'fight' }, 4: { cmd: 'pause' },
@@ -186,7 +392,6 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => { if (held[e.key]) send({ cmd: 'charge', slot: held[e.key], on: false }); });
 
 // Several display pages may be open (an old window left behind): follow the one on screen, newest first, and warn.
-let lastHtml = {};
 const displays = new Map(); // id -> { s, at }
 const pick = () => {
   const t = performance.now();
@@ -200,72 +405,154 @@ bus.onmessage = ({ data: m }) => {
   const s = pick();
   if (s === m) { st = m; lastState = performance.now(); render(); }
 };
-const setHtml = (sel, html) => { if (lastHtml[sel] !== html) { lastHtml[sel] = html; $(sel).innerHTML = html; } }; // only touch the DOM on a change
+
+// ---- DOM writes only on a change ----
+const last = new Map();
+const changed = (k, v) => { if (last.get(k) === v) return false; last.set(k, v); return true; };
+const setHtml = (sel, html) => { if (changed('h' + sel, html)) $(sel).innerHTML = html; };
+const setText = (sel, text) => { if (changed('t' + sel, text)) $(sel).textContent = text; };
+const setCls = (sel, cls) => { if (changed('c' + sel, cls)) $(sel).className = cls; };
+const setW = (sel, pc) => { const v = Math.max(0, Math.min(100, pc)) + '%'; if (changed('w' + sel, v)) $$(sel).forEach(el => el.style.width = v); };
+const setOn = (b, on) => { on = !!on; if (b.classList.contains('on') !== on) { b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); } };
+const setDis = (b, d) => { if (b.disabled !== !!d) b.disabled = !!d; };
+const show = (sel, v) => { const el = $(sel); if (el.hidden === !!v) el.hidden = !v; };
 
 const fmt = s => `${Math.floor(Math.ceil(s) / 60)}:${String(Math.ceil(s) % 60).padStart(2, '0')}`;
-const dot = c => `<span class="dot ${c}"></span>`;
+const mark = c => `<span class="st ${c}" aria-hidden="true">${c === 'ok' ? '✓' : c === 'warn' ? '!' : '×'}</span>`;
+const esc = v => String(v ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
+const lines = a => a.filter(Boolean).map(x => `<div>${x}</div>`).join('');
+
 function render() {
   const s = st;
-  const live = s.phase === 'fight' ? 'fight' : s.phase === 'countdown' ? 'fight' : s.phase;
-  $$('[data-phase]').forEach(b => { b.classList.toggle('on', b.dataset.phase === live); b.disabled = b.dataset.phase !== 'setup' && !s.ready; });
-  $('#scan').className = s.ready ? 'yes' : 'no';
-  $('#scan').textContent = s.ready ? 'スキャン完了：デモと試合を始められます' : 'スキャン前：タグを置いて「タグでカメラ合わせ」を押す';
+  const live = s.phase === 'countdown' ? 'fight' : s.phase;
+  const playing = s.phase === 'fight' || s.phase === 'demo';
+
+  // status bar: phase
+  const phaseText = s.paused ? '一時停止' : s.phase === 'setup' && s.ready ? '準備完了' : PHASE[s.phase] ?? s.phase;
+  const phaseSub = s.phase === 'result' ? (s.winner ? `${s.winner} の勝ち` : '引き分け') : s.paused ? `${PHASE[s.phase]}を止めている` : s.phase === 'setup' ? (s.ready ? 'デモと試合を始められる' : 'スキャンが済むと始められる') : '';
+  const tone = s.paused || s.phase === 'countdown' ? 'warn' : s.phase === 'fight' ? 'ok' : s.phase === 'demo' || s.phase === 'result' ? 'accent' : s.ready ? 'ok' : '';
+  setCls('#sbPhaseBox', 'stat ph' + (tone ? ' tone-' + tone : ''));
+  setText('#sbPhase', phaseText); setText('#sbPhaseSub', phaseSub);
+  // time
+  if (s.phase === 'countdown') { setText('#sbTimeLabel', '開始まで'); setText('#sbTime', `${Math.ceil(s.until)} 秒`); setText('#sbTimeSub', `試合時間 ${fmt(s.sec)}`); }
+  else if (s.phase === 'fight' || s.phase === 'result') { setText('#sbTimeLabel', '残り時間'); setText('#sbTime', fmt(s.left)); setText('#sbTimeSub', `/ ${fmt(s.sec)}`); }
+  else { setText('#sbTimeLabel', '試合時間'); setText('#sbTime', fmt(s.sec)); setText('#sbTimeSub', '試合開始で数え始める'); }
+  // scan
+  setCls('#sbScanBox', 'stat scan ' + (s.ready ? 'tone-ok' : 'tone-warn'));
+  setText('#sbScan', s.ready ? '✓ 完了' : '! まだ');
+  setText('#sbScanSub', s.ready ? '' : '「2 スキャンする」で合わせる');
+
+  // primary actions
+  $$('[data-phase]').forEach(b => { setOn(b, b.dataset.phase === live); setDis(b, b.dataset.phase !== 'setup' && !s.ready); });
+  const pause = $('#pause');
+  setOn(pause, s.paused); setDis(pause, !playing);
+  setText('#pause .lbl', s.paused ? '再開' : '一時停止');
+  setHtml('#why', [
+    !s.ready ? '<b>スキャンがまだなので、デモと試合は押せません。</b>下の「2 スキャンする」で合わせるか、右下のボタンで前回の結果を使います。' : '',
+    !playing ? '一時停止はデモ中と試合中だけ使えます。' : '',
+  ].filter(Boolean).join('　'));
   $('#forceReady').style.display = s.ready ? 'none' : '';
-  $('#pause').classList.toggle('on', s.paused);
-  $('#pause').firstChild.textContent = s.paused ? '再開' : '一時停止';
-  $('#nowPhase').textContent = (s.paused ? '一時停止 / ' : '') + (s.phase === 'result' ? (s.winner ? `${s.winner} の勝ち` : '引き分け') : s.phase === 'setup' && s.ready ? '準備完了' : PHASE[s.phase]);
-  $('#nowTimer').textContent = s.phase === 'countdown' ? `開始まで ${Math.ceil(s.until)}` : s.phase === 'fight' || s.phase === 'result' ? `残り ${fmt(s.left)} / ${fmt(s.sec)}` : `試合時間 ${fmt(s.sec)}`;
   if (document.activeElement !== $('#sec')) $('#sec').value = s.sec;
+
+  // scan section
+  setCls('#scan', 'alert ' + (s.ready ? 'ok' : 'warn'));
+  setText('#scan', s.ready ? 'スキャン完了：デモと試合を始められます' : 'スキャン前：タグを置いて「タグでカメラ合わせ」を押す');
+
+  // players
   for (const k of ['A', 'B']) {
-    const p = s.players[k], el = $('.pl.' + k);
-    el.querySelector('.bar i').style.width = p.hp + '%';
-    const L = p.loc;
-    setHtml(`.pl.${k} .facts`, [
-      `HP ${p.hp}${p.charging ? `　溜め ${Math.round(p.charge * 100)}%` : ''}`,
-      `${dot(p.online ? 'ok' : '')}スマホ ${p.online ? '接続' : '未接続'}${p.fake ? '（ダミーデータ）' : ''}`,
-      `${dot(p.imu ? 'ok' : '')}IMU ${p.imu ? '受信中' : 'なし'}`,
-      `${dot(L.anchored ? (L.err < .1 ? 'ok' : 'warn') : '')}位置 ${L.anchored ? `タグで固定・ずれ ${(L.err * 100).toFixed(0)}cm` : '未固定（開始位置を仮に使用）'}`,
-    ].map(x => `<div>${x}</div>`).join(''));
+    const p = s.players?.[k]; if (!p) continue;
+    const L = p.loc ?? {};
+    setW(`.${k} .bar i`, p.hp);
+    setText(`#sbHp${k}`, `HP ${p.hp}`);
+    setText(`.pl.${k} .hp`, `HP ${p.hp}`);
+    setHtml(`.pl.${k} .facts`, lines([
+      p.charging ? `溜め <b class="num">${Math.round(p.charge * 100)}%</b>` : '溜めていない',
+      `${mark(p.online ? 'ok' : '')}スマホ ${p.online ? '接続' : '未接続'}${p.fake ? '（ダミーデータ）' : ''}`,
+      `${mark(p.imu ? 'ok' : '')}IMU ${p.imu ? '受信中' : 'なし'}`,
+      `${mark(L.anchored ? (L.err < .1 ? 'ok' : 'warn') : '')}位置 ${L.anchored ? `タグで固定・ずれ ${(L.err * 100).toFixed(0)}cm` : '未固定（開始位置を仮に使用）'}`,
+    ]));
   }
-  const dev = $('#device'), want = s.devices.map(d => d.id).join();
-  if (dev.dataset.list !== want) { dev.innerHTML = s.devices.map(d => `<option value="${d.id}">${d.label}</option>`).join(''); dev.dataset.list = want; }
-  if (document.activeElement !== dev) dev.value = s.video.id ?? '';
+
+  // setup
+  const dev = $('#device'), devs = [...(s.devices ?? [])];
+  if (s.video?.id && !devs.some(d => d.id === s.video.id)) devs.unshift({ id: s.video.id, label: s.video.label || '使用中のカメラ' }); // the camera in use, even when the list missed it
+  const want = devs.map(d => d.id).join();
+  if (dev.dataset.list !== want) { dev.innerHTML = devs.map(d => `<option value="${esc(d.id)}">${esc(d.label)}</option>`).join(''); dev.dataset.list = want; }
+  if (document.activeElement !== dev && dev.value !== (s.video?.id ?? '')) dev.value = s.video?.id ?? '';
   if (document.activeElement !== $('#camMode')) $('#camMode').value = s.camMode;
   const tc = s.tagCam;
-  setHtml('#camInfo', [
-    `映像 ${s.video.w ? `${s.video.w}×${s.video.h}　${s.video.label}` : '<b style="color:var(--bad)">届いていない</b>'}`,
-    tc ? `前回の合わせ: タグ ${tc.ids.join(', ')}　誤差 ${tc.err.toFixed(1)}px　縦画角 ${tc.fov.toFixed(1)}°　位置 (${tc.t.map(v => v.toFixed(2)).join(', ')}) m` : 'まだ合わせていない',
-    s.camMsg,
-  ].filter(Boolean).map(x => `<div>${x}</div>`).join(''));
+  setHtml('#camInfo', lines([
+    `${mark(s.video?.w ? 'ok' : '')}映像 ${s.video?.w ? `${s.video.w}×${s.video.h}　${esc(s.video.label)}` : '<b style="color:var(--bad)">届いていない</b>'}`,
+    tc ? `${mark('ok')}前回の合わせ：タグ ${tc.ids.join(', ')}　誤差 ${tc.err.toFixed(1)}px` : `${mark('warn')}まだ合わせていない`,
+    s.camMsg ? `<span class="note">${esc(s.camMsg)}</span>` : '',
+  ]));
   const SIDE = { left: '左', right: '右' };
-  setHtml('#tagCheck', s.phase !== 'setup' ? '' : '<div>タグの見え方（準備中だけ確認）</div>' + s.setupTags.map(c => `<div>${dot(!c.seen ? '' : (c.want && c.side !== c.want) || c.px < 14 ? 'warn' : 'ok')}ID ${c.id}${c.want ? `（${SIDE[c.want]}側）` : ''}：${!c.seen ? '見えていない' : c.want && c.side !== c.want ? `画面の${SIDE[c.side]}に見えている。左右が逆かも` : c.px < 14 ? '小さい' : 'OK'}</div>`).join(''));
-  $$('[data-pos]').forEach(b => b.classList.toggle('on', b.dataset.pos === s.posSrc));
-  $$('[data-hand]').forEach(b => b.classList.toggle('on', b.dataset.hand === s.hand));
-  $$('[data-skel]').forEach(b => b.classList.toggle('on', b.dataset.skel === s.skelSrc));
-  $$('[data-tagmode]').forEach(b => b.classList.toggle('on', +b.dataset.tagmode === s.tagMode));
-  $('#tagModes').style.display = s.layout === 'map4' ? '' : 'none';
+  setHtml('#tagCheck', s.phase !== 'setup' ? '' : '<div class="note">タグの見え方（準備中だけ確認）</div>' + (s.setupTags ?? []).map(c => `<div>${mark(!c.seen ? '' : (c.want && c.side !== c.want) || c.px < 14 ? 'warn' : 'ok')}ID ${c.id}${c.want ? `（${SIDE[c.want]}側）` : ''}：${!c.seen ? '見えていない' : c.want && c.side !== c.want ? `画面の${SIDE[c.side]}に見えている。左右が逆かも` : c.px < 14 ? '小さい' : 'OK'}</div>`).join(''));
+  $$('[data-pos]').forEach(b => setOn(b, b.dataset.pos === s.posSrc));
+  $$('[data-hand]').forEach(b => setOn(b, b.dataset.hand === s.hand));
+  $$('[data-skel]').forEach(b => setOn(b, b.dataset.skel === s.skelSrc));
+  $$('[data-tagmode]').forEach(b => setOn(b, +b.dataset.tagmode === s.tagMode));
+  show('#tagModes', s.layout === 'map4');
   const pb = s.phoneBodies ?? {};
-  setHtml('#poseInfo', [
-    s.posSrc !== 'camera' ? '' : !s.pose ? 'カメラ映像の骨格: 準備中' : `カメラ映像の骨格: ${dot(s.pose.A ? 'ok' : '')}A ${s.pose.A ? '見えている' : '見えていない'}　${dot(s.pose.B ? 'ok' : '')}B ${s.pose.B ? '見えている' : '見えていない'}`,
-    s.skelSrc === 'camera' ? '' : `胸スマホの骨格: ${!pb.aligned ? '床のタグを両方のスマホとカメラで共有できていない' : `${dot(pb.A ? 'ok' : '')}A ${pb.A ? 'あり' : 'なし'}　${dot(pb.B ? 'ok' : '')}B ${pb.B ? 'あり' : 'なし'}`}`,
-    ...(pb.warn ?? []).map(w => `<span class="note">センサー: ${w}</span>`),
-  ].filter(Boolean).map(x => `<div>${x}</div>`).join(''));
-  $$('[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === s.view));
-  $$('[data-drone]').forEach(b => b.classList.toggle('on', b.dataset.drone === s.drone));
-  $$('[data-fpv]').forEach(b => b.classList.toggle('on', (b.dataset.fpv || null) === s.fpv));
-  $$('[data-toggle]').forEach(b => b.classList.toggle('on', !!s.toggles[b.dataset.toggle]));
-  if (!dragging) { swing.value = s.swingDps; $('#swingOut').textContent = s.swingDps; }
+  setHtml('#poseInfo', lines([
+    s.posSrc !== 'camera' ? '' : !s.pose ? 'カメラ映像の骨格：準備中' : `カメラ映像の骨格：${mark(s.pose.A ? 'ok' : '')}A ${s.pose.A ? '見えている' : '見えていない'}　${mark(s.pose.B ? 'ok' : '')}B ${s.pose.B ? '見えている' : '見えていない'}`,
+    s.skelSrc === 'camera' ? '' : `胸スマホの骨格：${!pb.aligned ? `${mark('warn')}床のタグを両方のスマホとカメラで共有できていない` : `${mark(pb.A ? 'ok' : '')}A ${pb.A ? 'あり' : 'なし'}　${mark(pb.B ? 'ok' : '')}B ${pb.B ? 'あり' : 'なし'}`}`,
+    ...(pb.warn ?? []).map(w => `<span class="note">センサー：${esc(w)}</span>`),
+  ]));
+
+  // view
+  $$('[data-view]').forEach(b => setOn(b, b.dataset.view === s.view));
+  $$('[data-drone]').forEach(b => setOn(b, b.dataset.drone === s.drone));
+  $$('[data-fpv]').forEach(b => setOn(b, (b.dataset.fpv || null) === s.fpv));
+  $$('[data-toggle]').forEach(b => setOn(b, !!s.toggles?.[b.dataset.toggle]));
+  if (!dragging) { if (swing.value != s.swingDps) swing.value = s.swingDps; setText('#swingOut', String(s.swingDps)); }
   if (document.activeElement !== $('#aim')) $('#aim').value = s.aim;
-  setHtml('#sys', [
-    `中継サーバー ${s.host}: ${s.link}`,
-    `タグ配置 ${s.layout}　ドローン ${DRONE[s.drone] ?? s.drone}（${s.shot}）`,
-    s.fpv ? `スマホ視点の推定画角 ${s.fovPhone[s.fpv]?.toFixed(1) ?? '推定待ち'}°` : '',
-  ].filter(Boolean).map(x => `<div>${x}</div>`).join(''));
+
+  // sound
+  const a = s.audio;
+  show('#audioWarn', !a || !a.unlocked);
+  setText('#audioWarn', !a ? 'この映像画面は音の状態を送っていません（古い版か、音の読み込みに失敗）。映像画面を開き直してください。' : '音を出すには映像画面のウィンドウを一度クリック（またはキーを押す）');
+  for (const k of BUSES) {
+    const v = a?.vol?.[k], r = $(`[data-vol="${k}"]`);
+    if (v == null) { setText(`[data-volout="${k}"]`, '--'); continue; }
+    if (!volDrag[k]) { if (+r.value !== v) r.value = v; setText(`[data-volout="${k}"]`, pct(v)); }
+  }
+  setOn($('#mute'), a?.muted);
+  setText('#mute', a?.muted ? '消音中（押すと戻す）' : '消音する');
+  setText('#audioInfo', !a ? '' : a.loaded === false || a.loaded === 0 ? '音を読み込み中' : '');
+
+  // diagnostics
+  const pose = s.pose;
+  const kv = [
+    ['映像画面の描画', s.fps != null ? `${s.fps} fps` : '-'],
+    ['中継サーバー', `${esc(s.host)}：${esc(s.link)}`],
+    ['タグ配置', esc(s.layout)],
+    ['ドローン', `${esc(DRONE[s.drone] ?? s.drone)}（${esc(s.shot)}）`],
+    ['スマホ視点の推定画角', s.fpv ? `${s.fovPhone?.[s.fpv]?.toFixed(1) ?? '推定待ち'}°` : '使っていない'],
+    ['骨格推定', !pose ? '動いていない' : `${pose.ready ? '準備済み' : '準備中'}　${pose.hz != null ? (+pose.hz).toFixed(1) + ' 回/秒' : ''}　${pose.ms != null ? (+pose.ms).toFixed(1) + ' ms' : ''}${pose.delegate ? `　${esc(pose.delegate)}` : ''}`],
+    ['タグ確認の処理時間', s.tagCheckMs != null ? `${s.tagCheckMs} ms` : '-'],
+    ['フィールド', s.field ? (s.field.scanned ? 'スキャン済み' : '未スキャン') + `（角 ${s.field.poly?.length ?? 0} 点）` : '-'],
+    ['前回の合わせ（詳細）', tc ? `タグ ${tc.ids.join(', ')}　誤差 ${tc.err.toFixed(1)}px　縦画角 ${tc.fov.toFixed(1)}°　位置 (${tc.t.map(v => v.toFixed(2)).join(', ')}) m` : 'まだ合わせていない'],
+    ['映像', s.video?.w ? `${s.video.w}×${s.video.h}　${esc(s.video.label)}` : '届いていない'],
+    ['音', !a ? '状態なし' : `解除 ${a.unlocked ? '済み' : 'まだ'}　読み込み ${esc(a.loaded)}　消音 ${a.muted ? 'する' : 'しない'}　${BUSES.map(k => `${k} ${a.vol?.[k] != null ? (+a.vol[k]).toFixed(2) : '-'}`).join(' ')}`],
+    ['センサーの警告', (pb.warn ?? []).length ? pb.warn.map(esc).join(' / ') : 'なし'],
+    ['開いている映像画面', `${displays.size} 個`],
+  ];
+  if ($('#diag').open) {
+    setHtml('#sys', kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join(''));
+    if ($('#rawBox').open) setText('#raw', JSON.stringify(s, null, 1));
+  }
 }
+$('#diag').addEventListener('toggle', () => st && render());
+$('#rawBox').addEventListener('toggle', () => st && render());
+
 setInterval(() => {
   const ok = performance.now() - lastState < 1500; pick();
-  setHtml('#link', `映像画面: <b style="color:var(${ok ? '--ok' : '--bad'})">${ok ? '接続中' : '未接続（「映像画面を開く」を押す）'}</b>` +
-    (displays.size > 1 ? `　<b style="color:var(--warn)">映像画面が ${displays.size} 個開いています。古いほうを閉じて1つにしてください（操作は全部に届きます）</b>` : ''));
+  setCls('#link', 'pill ' + (ok ? 'ok' : 'bad'));
+  setText('#link', ok ? '✓ 映像画面 接続中' : '× 映像画面 未接続（「映像画面を開く」を押す）');
+  show('#multi', displays.size > 1);
+  if (displays.size > 1) setText('#multi', `映像画面が ${displays.size} 個開いています。古いほうを閉じて1つにしてください（操作は全部に届きます）`);
+  if (!ok && st) { setCls('#sbPhaseBox', 'stat ph tone-bad'); setText('#sbPhase', '接続なし'); setText('#sbPhaseSub', '最後に受け取った状態を表示中'); }
 }, 500);
 </script>
 </body>

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>音のテスト</title>
+<style>
+  :root { --bg: #111; --fg: #eee; --dim: #999; --fire: #ff7a1a; --thunder: #6cc8ff; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, sans-serif; }
+  section { margin: 0 0 14px; } h3 { margin: 0 0 6px; font-size: 14px; color: var(--dim); }
+  button { margin: 2px; padding: 6px 10px; background: #222; color: var(--fg); border: 1px solid #444; border-radius: 6px; cursor: pointer; }
+  button.fire { border-color: var(--fire); } button.thunder { border-color: var(--thunder); }
+  label { display: inline-flex; gap: 6px; align-items: center; margin-right: 14px; }
+  input[type=range] { width: 140px; }
+  #meter { width: 300px; height: 10px; background: #222; } #meter i { display: block; height: 100%; width: 0; background: #3ddc84; }
+  #log { color: var(--dim); white-space: pre-wrap; font: 12px ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<section><button id="unlock">音を有効にする</button> <span id="state"></span></section>
+<section><h3>バス</h3><div id="buses"></div><label><input type="checkbox" id="mute">ミュート</label></section>
+<section><h3>位置と強さ</h3>
+  <label>pan <input type="range" id="pan" min="-1" max="1" step=".05" value="0"><span id="panV">0</span></label>
+  <label>power <input type="range" id="power" min="0" max="1" step=".05" value=".5"><span id="powV">.5</span></label></section>
+<section><h3>イベント</h3><div id="ev"></div></section>
+<section><h3>オーラ（毎フレーム呼ぶ想定）</h3>
+  <label>A 炎 <input type="range" id="auraA" min="0" max="1" step=".05" value="0"></label>
+  <label>B 雷 <input type="range" id="auraB" min="0" max="1" step=".05" value="0"></label></section>
+<section><h3>出力ピーク</h3><div id="meter"><i></i></div><span id="peakV"></span> <button id="resetPeak">最大値をリセット</button></section>
+<pre id="log"></pre>
+<script type="module">
+import { createAudio } from './audio.js';
+const au = createAudio(), $ = id => document.getElementById(id), log = s => $('log').textContent += s + '\n';
+au.load().then(r => log(`loaded: ${r.ok.join(', ')}${r.failed.length ? '  failed: ' + r.failed.join(', ') : ''}`));
+$('unlock').onclick = () => au.unlock();
+for (const b of ['master', 'bgm', 'sfx', 'amb']) {
+  const l = document.createElement('label'); l.innerHTML = `${b} <input type="range" min="0" max="1" step=".01" value="${au.volumes[b]}">`;
+  l.querySelector('input').oninput = e => au.setVolume(b, +e.target.value); $('buses').append(l);
+}
+$('mute').onchange = e => au.setMuted(e.target.checked);
+const pan = () => +$('pan').value, pow = () => +$('power').value;
+$('pan').oninput = () => $('panV').textContent = pan(); $('power').oninput = () => $('powV').textContent = pow();
+const btn = (text, cls, fn, hold) => { const b = document.createElement('button'); b.textContent = text; b.className = cls;
+  if (hold) { b.onpointerdown = () => fn(true); b.onpointerup = b.onpointerleave = () => fn(false); } else b.onclick = fn; $('ev').append(b); };
+let music = false;
+btn('BGM オン/オフ', '', () => { music = !music; au.bgm(music); });
+for (const [el, s] of [['fire', 'A'], ['thunder', 'B']]) {
+  btn(`${el} shot`, el, () => au.shot(el, pan(), pow()));
+  btn(`${el} hit`, el, () => au.hit(el, pan(), pow()));
+  btn(`${el} special`, el, () => au.special(el, pan()));
+  let t0 = 0, raf = 0; // charge like app.js: level rises over 1.5 s while held
+  btn(`${s} charge (押し続ける)`, el, on => {
+    cancelAnimationFrame(raf);
+    if (!on) return au.charge(s, false);
+    t0 = performance.now();
+    const f = () => { au.charge(s, true, Math.min(1, (performance.now() - t0) / 1500), pan()); raf = requestAnimationFrame(f); }; f();
+  }, true);
+}
+btn('連射 (shot x8, 60 ms間隔)', '', () => { for (let i = 0; i < 8; i++) setTimeout(() => au.shot(i % 2 ? 'thunder' : 'fire', i % 2 ? .6 : -.6, pow()), i * 60); });
+btn('同時ヒット x10 (クリップ確認)', '', () => { for (let i = 0; i < 10; i++) setTimeout(() => au.hit(i % 2 ? 'thunder' : 'fire', 0, 1), i * 35); au.special('fire', 0); au.special('thunder', 0); });
+btn('stopAll', '', () => { au.stopAll(); music = false; });
+let maxP = 0;
+$('resetPeak').onclick = () => maxP = 0;
+(function frame() {
+  au.aura('A', 'fire', +$('auraA').value, -.6); au.aura('B', 'thunder', +$('auraB').value, .6); // per frame, as app.js will
+  const p = au.peak(); maxP = Math.max(maxP, p);
+  $('meter').firstChild.style.width = Math.min(100, p * 100) + '%';
+  const d = v => v > 0 ? (20 * Math.log10(v)).toFixed(1) + ' dBFS' : '-inf';
+  $('peakV').textContent = `今 ${d(p)} / 最大 ${d(maxP)}`;
+  $('state').textContent = au.unlocked ? '再生できる' : 'まだ音が出ない（ボタンかページをクリック）';
+  requestAnimationFrame(frame);
+})();
+window.au = au;
+</script>
+</body>
+</html>

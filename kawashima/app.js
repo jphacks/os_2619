@@ -13,6 +13,13 @@ import { createMap } from '/sensing/map.js'; // the sensing team's space map: ea
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
 const params = new URLSearchParams(location.search);
+// ---- sound (audio.js): loaded lazily so a missing / failing module never stops the picture ----
+let sfx = null;
+import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); }).catch(e => console.warn('audio', e));
+const panOf = v => { // world x across the field -> stereo pan -1..1 (the camera looks along -z, so +x is screen right)
+  const xs = W.FIELD.poly.map(q => q[0]), a = Math.min(...xs), b = Math.max(...xs);
+  return Math.max(-1, Math.min(1, ((v.x - a) / ((b - a) || 1)) * 2 - 1));
+};
 const now = () => performance.now() / 1000;
 
 // ---- settings (kept in localStorage) ----
@@ -171,7 +178,8 @@ function updatePlayer(p) {
   if (match.phase !== 'setup' && (p.online || p.imu || match.phase === 'demo')) { // no effects while setting up
     fx.aura(p.element, p.base, p.tip, p.charging ? .6 + .4 * p.charge : .5);
     if (p.charging) fx.charge(p.element, p.tip, p.charge);
-  }
+    sfx?.aura(p.slot, p.element, match.paused ? 0 : p.charging ? .6 + .4 * p.charge : .4, panOf(p.chest));
+  } else sfx?.aura(p.slot, p.element, 0, 0);
 }
 
 // ---- game ----
@@ -183,13 +191,13 @@ function shoot(p, power = .5) {
   p.lastShot = now();
   const foe = other(p);
   if (power >= 1) { // full charge: special move straight at the opponent
-    fx.special(p.element, p.tip.clone(), foe.chest.clone());
+    fx.special(p.element, p.tip.clone(), foe.chest.clone()); sfx?.special(p.element, panOf(p.tip));
     drone.event('special', { owner: p.slot, from: p.tip.clone(), to: foe.chest.clone() });
     return damage(foe, p, 35);
   }
   const aim = match.phase === 'demo' ? foe.chest.clone().sub(p.tip).normalize()
     : cfg.aim === 'eye' ? p.tip.clone().sub(p.chest.clone().add(V(0, .35, 0))).normalize() : p.dir.clone();
-  drone.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() });
+  drone.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() }); sfx?.shot(p.element, panOf(p.tip), power);
   shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), power), owner: p, element: p.element, pos: p.tip.clone(), vel: aim.multiplyScalar(9), power, born: now() });
 }
 function damage(foe, from, n) {
@@ -206,7 +214,7 @@ function stepShots(dt) {
     // hit: distance to the opponent's vertical body segment (capsule radius .3 + shot radius .15)
     const a = foe.chest.clone().setY(foe.chest.y - 1.05), b = foe.chest.clone().setY(foe.chest.y + .15);
     const hit = new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .45;
-    if (hit) { fx.hit(s.owner.element, s.pos.clone(), s.power); drone.event('hit', { target: foe.slot, pos: s.pos.clone(), power: s.power }); damage(foe, s.owner, Math.round(10 + 20 * s.power)); }
+    if (hit) { fx.hit(s.owner.element, s.pos.clone(), s.power); sfx?.hit(s.owner.element, panOf(s.pos), s.power); drone.event('hit', { target: foe.slot, pos: s.pos.clone(), power: s.power }); damage(foe, s.owner, Math.round(10 + 20 * s.power)); }
     if (hit || now() - s.born > 1.5) { fx.endShot(s.id); shots.splice(i, 1); }
   }
 }
@@ -680,9 +688,18 @@ function command(c) {
     case 'set': if (c.key === 'swingDps') cfg.swingDps = +c.value; else if (c.key === 'aim') cfg.aim = c.value; break;
     case 'shoot': if (p) shoot(p, c.power ?? .5); return;
     case 'charge': if (!p) return;
-      if (c.on) { p.charging = true; p.charge = 0; } else if (p.charging) { p.charging = false; p.lastShot = 0; shoot(p, p.charge); p.charge = 0; }
+      if (c.on) { if (!canAct()) return; p.charging = true; p.charge = 0; }
+      else if (p.charging) { p.charging = false; p.lastShot = 0; shoot(p, p.charge); p.charge = 0; }
       return;
     case 'panel': return panel.classList.toggle('open');
+    case 'volume': return sfx?.setVolume(c.bus, Math.max(0, Math.min(1, +c.value)));
+    case 'mute': return sfx?.setMuted(!sfx.muted);
+    case 'sound': { // admin test buttons
+      const T = { shotFire: () => sfx.shot('fire', 0, .6), shotThunder: () => sfx.shot('thunder', 0, .6), hitFire: () => sfx.hit('fire', 0, .7), hitThunder: () => sfx.hit('thunder', 0, .7),
+        specialFire: () => sfx.special('fire', 0), specialThunder: () => sfx.special('thunder', 0), charge: () => { sfx.charge('A', true, 0, 0); setTimeout(() => sfx.charge('A', false), 1500); },
+        bgm: () => { sfx.bgm(true); setTimeout(() => match.phase !== 'demo' && match.phase !== 'fight' && sfx.bgm(false), 4000); } };
+      return sfx && T[c.name]?.();
+    }
     default: return;
   }
   save(); applyCam();
@@ -714,6 +731,7 @@ function publish() { // state for admin.html, a few times a second
     link: linkState, host, camMode: cfg.camMode, tagCam: tc && { ids: tc.ids, err: tc.reprojErrPx, fov: tc.fovY, t: tc.pose.t }, camMsg: status.extra,
     video: { w: video.videoWidth, h: video.videoHeight, label: video.srcObject?.getVideoTracks()[0]?.label ?? '', id: video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId }, devices,
     view: cfg.view, drone: drone.mode, shot: drone.shot, fpv: cfg.fpv, fovPhone: intr,
+    audio: sfx && { unlocked: sfx.unlocked, loaded: sfx.loaded, muted: sfx.muted, vol: sfx.volumes },
     posSrc: cfg.posSrc, hand: cfg.hand, skelSrc: cfg.skelSrc, phoneBodies: { A: phoneSk.A.has, B: phoneSk.B.has, aligned: !!roomToWorld, warn: phoneEst?.warn?.slice(0, 2) ?? [] }, tagMode: cfg.tagMode, layout: W.LAYOUT, pose: tracker ? { ms: tracker.ms, hz: tracker.hz, ready: tracker.ready, A: !!tracker.get('A')?.seen, B: !!tracker.get('B')?.seen } : null,
     field: { scanned: fieldScanned, poly: W.FIELD.poly }, setupTags: tagChecks(), tagCheckMs: Math.round(seenTags.ms), toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
 }
@@ -750,6 +768,10 @@ function frame(ts = 0) {
   }
   if (cfg.fpv) { placePhoneCamera(cfg.fpv); if (cfg.anchors) tagAnchors(); }
   stepCharge(dt); stepShots(dt); fx.step(dt); updateSkels(); updatePhoneSkels();
+  if (sfx) { // sound follows the state every frame (cheap: audio.js only touches parameters on change)
+    for (const p of Object.values(players)) sfx.charge(p.slot, p.charging && canAct(), p.charge, panOf(p.tip));
+    sfx.bgm(['demo', 'countdown', 'fight'].includes(match.phase) && !match.paused);
+  }
   const yawOf = b => Math.atan2(-b.R[6], b.R[0]); // body x axis = forward
   drone.update(dt, Object.fromEntries(Object.values(players).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
   field.update(dt, Object.fromEntries(Object.values(players).map(p => [p.slot,

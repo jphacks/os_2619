@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const PORT = +process.env.PORT || 8080;
 const root = fileURLToPath(new URL('.', import.meta.url));
 const cache = join(root, 'vendor', 'cdn');
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.wasm': 'application/wasm' };
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.wasm': 'application/wasm', '.mp3': 'audio/mpeg', '.svg': 'image/svg+xml' };
 const PREFETCH = [
   'npm/three@0.160.0/build/three.module.js', 'npm/three@0.160.0/examples/jsm/controls/OrbitControls.js',
   'npm/js-aruco2@2.0.0/src/cv.js', 'npm/js-aruco2@2.0.0/src/aruco.js', 'npm/js-aruco2@2.0.0/src/dictionaries/apriltag_36h11.js',
