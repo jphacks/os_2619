@@ -4,18 +4,16 @@
 //  - swords: base → tip as the game places them (hand + IMU direction × stick length), tip marked
 //  - AprilTags: squares with their real pattern — field sheets at their scanned pose, chest tags 10 / 11 on the players,
 //    and the live sightings (a ray from the phone to every tag it sees right now)
-//  - optional: the opponent skeletons the chest cameras see, and the sensing team's own estimate (map.js) as a dashed ghost
+//  - optional: the sensing team's own estimate (map.js) as a dashed ghost
 // Ported from kawashima/space.js. Own renderer; geometry allocated once, buffers rewritten in place, estimate drawn at 15 Hz.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as W from './world.js';
 import { toThreeCamera } from './extrinsics.js';
 import { tagCanvas } from './dummycam.js';
-import { BONES } from './stage.js';
 
 const SLOTS = ['A', 'B'];
 const COL = { A: 0xff8a3d, B: 0x4cc3ff, C: 0xffd23d, tag: 0x3ddc84, chest: 0xff4df0, ghost: 0xc9c9c9, grid: 0x2a3140 };
-const HIDE = [0, -50, 0];
 const DEG = Math.PI / 180;
 const PHONE = { w: .075, h: .155, d: .009 }; // m, a typical phone
 const toMat = (p, m = new THREE.Matrix4()) => m.set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
@@ -31,13 +29,6 @@ function segs(n, mat, vertexColors = false) {
     write(i, a, b, color) { pos.set(a, i * 6); pos.set(b, i * 6 + 3); if (col && color != null) { c.set(color); const o = i * 6, A = col.array; A[o] = A[o + 3] = c.r; A[o + 1] = A[o + 4] = c.g; A[o + 2] = A[o + 5] = c.b; } },
     draw(k) { g.setDrawRange(0, k * 2); attr.needsUpdate = true; if (col) col.needsUpdate = true; },
   };
-}
-function dashedSegs(n, color) {
-  const s = segs(n, new THREE.LineDashedMaterial({ color, dashSize: .06, gapSize: .04, transparent: true, opacity: .8, depthTest: false }));
-  const ld = new THREE.BufferAttribute(new Float32Array(n * 2), 1); s.obj.geometry.setAttribute('lineDistance', ld);
-  const w = s.write; s.write = (i, a, b) => { w(i, a, b); ld.array[i * 2] = 0; ld.array[i * 2 + 1] = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]); };
-  const d = s.draw; s.draw = k => { d(k); ld.needsUpdate = true; };
-  return s;
 }
 function label(text, color = '#e7e9ee', size = .2) {
   const c = document.createElement('canvas'), ctx = c.getContext('2d'); c.width = 256; c.height = 64;
@@ -151,10 +142,8 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
     const tipShadow = segs(1, lineMat(color, { opacity: .25 }));
     const swordLabel = label(`${s} の剣`, s === 'A' ? '#ffb070' : '#a8dcff', .1);
     const sword = new THREE.Group(); sword.add(blade, glow, tip, tipGlow, hand, tipShadow.obj, swordLabel); scene.add(sword);
-    const body = segs(BONES.length, lineMat(color, { opacity: .9 })); scene.add(body.obj);
-    const ghostBody = dashedSegs(BONES.length, COL.ghost); scene.add(ghostBody.obj);
     const ghost = new THREE.Mesh(new THREE.SphereGeometry(.09, 10, 6), new THREE.MeshBasicMaterial({ color: COL.ghost, wireframe: true, transparent: true, opacity: .6 })); scene.add(ghost);
-    src[s] = { grp, trail, trailPos, tg, phone, frustum, arrow, tag, name, seen, drop, sword, blade, glow, tip, tipGlow, hand, tipShadow, swordLabel, body, ghostBody, ghost };
+    src[s] = { grp, trail, trailPos, tg, phone, frustum, arrow, tag, name, seen, drop, sword, blade, glow, tip, tipGlow, hand, tipShadow, swordLabel, ghost };
   }
   const rays = segs(RAY_N, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .7, depthTest: false }), true); scene.add(rays.obj);
   const seenTags = new THREE.Group(); scene.add(seenTags); // small squares where each phone sees a tag right now
@@ -164,7 +153,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
   const TOGGLES = [
     ['phones', 'スマホ A・B（長方形・視野・軌跡）', 'linear-gradient(90deg,#ff8a3d 50%,#4cc3ff 50%)'], ['phoneC', 'スマホ C（第三者視点カメラ）', '#ffd23d'],
     ['swords', '剣の推定位置', '#fff'], ['tags', 'AprilTag（フィールド・胸）', '#3ddc84'], ['rays', 'いま見えているタグ', '#3ddc84'],
-    ['bodies', '相手の骨格（胸カメラ）', '#c9c9c9'], ['mapjs', 'センサー班 map.js の推定（点線）', 'repeating-linear-gradient(90deg,#c9c9c9 0 3px,transparent 3px 5px)'], ['grid', 'グリッド・軸', '#5a6378'],
+    ['mapjs', 'センサー班 map.js の推定（点線）', 'repeating-linear-gradient(90deg,#c9c9c9 0 3px,transparent 3px 5px)'], ['grid', 'グリッド・軸', '#5a6378'],
   ];
   const on = Object.fromEntries(TOGGLES.map(([k]) => [k, k !== 'mapjs']));
   try { Object.assign(on, JSON.parse(localStorage.getItem('pd-space-toggles') ?? '{}')); } catch {}
@@ -237,8 +226,6 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
       const p = game?.players[s];
       d.sword.visible = on.swords && !!p && (p.online || !!p.imu || !!g.chest);
       if (d.sword.visible) placeSword(d, p.base.toArray(), p.tip.toArray());
-      const b = est.bodies[s]; d.body.obj.visible = on.bodies && !!b;
-      if (d.body.obj.visible) { BONES.forEach(([i, j], n) => b[i] && b[j] ? d.body.write(n, b[i], b[j]) : d.body.write(n, HIDE, HIDE)); d.body.draw(BONES.length); }
     }
     for (let i = nRays; i < RAY_N; i++) seenPool[i].visible = false;
     rays.draw(nRays); rays.obj.visible = on.rays && nRays > 0;
@@ -250,8 +237,6 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
     for (const s of SLOTS) {
       const d = src[s], ok = on.mapjs && roomToWorld && ghostEst;
       const p = ok && ghostEst.people[s]; d.ghost.visible = !!p; if (p) d.ghost.position.set(...roomToWorld(p.p));
-      const b = ok && ghostEst.bodies[s]; d.ghostBody.obj.visible = !!b;
-      if (b) { BONES.forEach(([i, j], n) => b[i] && b[j] ? d.ghostBody.write(n, roomToWorld(b[i]), roomToWorld(b[j])) : d.ghostBody.write(n, HIDE, HIDE)); d.ghostBody.draw(BONES.length); }
     }
     grid.visible = axes.visible = on.grid; tagsGrp.visible = on.tags;
     placeC();

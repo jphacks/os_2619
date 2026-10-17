@@ -1,5 +1,5 @@
 // Game state and rules, shared by the game screen (3D arena) and the final render (camera picture): one match, two views.
-// Ported from kawashima/app.js. Players are placed from phonealign.js (chest phones), the pose tracker on phone C's picture,
+// Ported from kawashima/app.js. Players are placed from phonealign.js (chest phones), (no pose / hand estimation),
 // or the start marks; the sword (stick) tip is base + IMU direction × stick length. Moves come from the sensing team's
 // detectors (actions.js: Charge / Swing) and from the keys / buttons. Rules (GAME_DESIGN.md, 10/17):
 //   Swing without charging → 小 (weak, can be repeated every `rapid` s)
@@ -33,7 +33,7 @@ const TIER = {
   m: { power: .6, big: 1.5, speed: 8, radius: .28, hit: .65 },
   l: { power: 1, big: 2.8, speed: 6.5, radius: .5, hit: 1 },
 };
-export const POS_JA = { auto: '自動', phones: '胸スマホ', camera: 'カメラ映像', start: '立ち位置' };
+export const POS_JA = { auto: '自動', phones: '胸スマホ', start: '立ち位置' };
 
 /**
  * createGame({ fx, drone, sfx: () => audio | null, cfg, onFlash, clock? }) → { players, match, shots, events, step, onSensed, command, canAct, ... }
@@ -64,21 +64,18 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const tierOf = t => t < rules().t1 ? 's' : t < rules().t2 ? 'm' : 'l';
   const IMU_SIDE = cross(W.STICK.axis, W.STICK.up);
 
-  function place(p, est, tracker) {
+  function place(p, est) {
     const g = est?.slots?.[p.slot] ?? {}, st = W.START[p.slot], T = p.truth;
-    const pt = tracker?.get(p.slot);
     const phoneOk = g.chest && (g.aligned || g.src === 'localize');
-    const camOk = pt?.seen && pt.foot;
-    const src = cfg.useTruth && T ? 'truth' : cfg.posSrc === 'auto' ? (phoneOk ? 'phones' : camOk ? 'camera' : 'hold') : cfg.posSrc;
+    const src = cfg.useTruth && T ? 'truth' : cfg.posSrc === 'auto' ? (phoneOk ? 'phones' : 'hold') : cfg.posSrc;
     if (src === 'truth') p.body = W.bodyPose(T.chest, T.yaw, T.chest[1]);
     else if (src === 'phones' && phoneOk) p.body = W.bodyPose(g.chest, g.yaw ?? st.yaw, g.chest[1]);
-    else if (src === 'camera' && camOk) p.body = W.bodyPose(pt.foot, pt.yaw ?? st.yaw, pt.chest?.[1] ?? W.CHEST_H);
     else if (src === 'start' || !p.body) p.body = W.bodyPose(st.pos, st.yaw);
     p.src = src === 'hold' ? (p.src === 'start' ? 'start' : 'hold') : src;
     p.chest.copy(v3(p.body.t));
-    // hand in the body frame (x fwd, y up, z right); the camera sees the wrist: use it
-    const h = W.STICK.hand, wrist = pt?.seen && pt.wrist?.[cfg.hand];
-    p.base.copy(v3(wrist ?? W.apply(p.body, [h.fwd, h.up, h.right])));
+    // hand in the body frame (x fwd, y up, z right)
+    const h = W.STICK.hand;
+    p.base.copy(v3(W.apply(p.body, [h.fwd, h.up, h.right])));
     const sk = est?.stick?.[p.slot];
     if (sk?.dir) { p.dir.copy(v3(sk.dir)).normalize(); p.stickSrc = sk.src === 'calib-ar' ? 'IMU（キャリブ時の向き基準）' : 'IMU（立ち位置の向き基準）'; }
     else if (p.imu) {
@@ -245,10 +242,10 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     }
   }
 
-  function step(dt, raw, est, tracker) {
+  function step(dt, raw, est) {
     stepMatch(raw);
     for (const p of Object.values(players)) {
-      place(p, est, tracker); effects(p);
+      place(p, est); effects(p);
       p.trail.push({ t: now(), p: p.tip.clone().sub(p.chest) }); while (p.trail.length && p.trail[0].t < now() - .5) p.trail.shift(); // for motionAim
     }
     stepCharge(dt); stepShots(dt);

@@ -16,16 +16,13 @@ const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
 const now = () => performance.now() / 1000;
 const toMat = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
-export const BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [15, 19], [16, 20], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [27, 29], [29, 31], [27, 31],
-  [24, 26], [26, 28], [28, 30], [30, 32], [28, 32], [0, 11], [0, 12]];
-const JOINTS = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28, 31, 32];
 // where phone C should go: 3.5 m in front of the centre, 1.7 m up or higher, tilted down a little (camera before a scan)
 export const GUIDE_CAM = { x: 0, y: 1.7, z: 3.5, yaw: 0, pitch: -16, roll: 0, fov: 45 };
 export const DRONE_JA = { auto: '自動演出', orbit: '周回', chaseA: 'A の肩越し', chaseB: 'B の肩越し', top: '真上', side: '真横', free: '自由操作' };
 
 const FIELD_KEY = 'pd-field-' + W.LAYOUT, CAM_KEY = 'pd-tagcam';
 
-export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => true }) {
+export function createStage({ video, cfg, hub, PA, isSetup = () => true }) {
   const el = document.createElement('div'); el.className = 'stage';
   const canvas = document.createElement('canvas'), guideCanvas = Object.assign(document.createElement('canvas'), { className: 'guide2d' }), gctx = guideCanvas.getContext('2d');
   el.append(canvas, guideCanvas);
@@ -45,39 +42,6 @@ export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => t
   const world3d = new THREE.Group(); scene.add(world3d); world3d.visible = false;
   const grid = new THREE.GridHelper(8, 16, 0x888888, 0x444444); world3d.add(grid);
   const camHelper = new THREE.CameraHelper(camera); world3d.add(camHelper);
-
-  // ---- skeletons: phone C's pose tracker (posetrack.js) and what each chest camera sees of the opponent (phonealign.js) ----
-  const skels = Object.fromEntries(['A', 'B'].map(slot => {
-    const color = slot === 'A' ? 0xffa060 : 0x8fd8ff, pos = new Float32Array(99);
-    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(BONES.flat());
-    const jg = new THREE.BufferGeometry(); jg.setAttribute('position', g.getAttribute('position')); jg.setIndex(JOINTS);
-    const lines = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, transparent: true, depthTest: false }));
-    const dots = new THREE.Points(jg, new THREE.PointsMaterial({ color, size: .07, transparent: true, depthTest: false }));
-    lines.renderOrder = dots.renderOrder = 15; lines.frustumCulled = dots.frustumCulled = false;
-    const grp = new THREE.Group(); grp.add(lines, dots); grp.visible = false; scene.add(grp);
-    return [slot, { grp, pos, attr: g.getAttribute('position'), has: false }];
-  }));
-  const phoneSk = Object.fromEntries(['A', 'B'].map(slot => {
-    const pos = new Float32Array(BONES.length * 6), g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const lines = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: slot === 'A' ? 0xffd2a8 : 0xd2f0ff, transparent: true, opacity: .75, depthTest: false }));
-    lines.renderOrder = 14; lines.frustumCulled = false; lines.visible = false; scene.add(lines);
-    return [slot, { lines, pos, attr: g.getAttribute('position'), has: false }];
-  }));
-  function updateSkels(est) {
-    const tr = getTracker();
-    for (const slot of ['A', 'B']) {
-      const k = skels[slot], s = tr?.get(slot);
-      k.has = !!(s?.seen && s.skel) && cfg.skelSrc !== 'phones';
-      if (k.has) { k.pos.set(s.skel); k.attr.needsUpdate = true; }
-      const q = phoneSk[slot], b = est?.bodies?.[slot];
-      q.has = !!b && cfg.skelSrc !== 'camera';
-      if (!q.has) continue;
-      BONES.forEach(([i, j], n) => { const p = b[i] && b[j] ? [b[i], b[j]] : [[0, -50, 0], [0, -50, 0]]; q.pos.set(p[0], n * 6); q.pos.set(p[1], n * 6 + 3); });
-      q.attr.needsUpdate = true;
-    }
-  }
-  const showSkels = on => { for (const k of Object.values(skels)) k.grp.visible = on && k.has; for (const k of Object.values(phoneSk)) k.lines.visible = on && k.has; };
 
   // ---- setup guide over the picture while preparing: field outline, start marks, the sheets ----
   const guide = new THREE.Group(); scene.add(guide);
@@ -152,18 +116,15 @@ export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => t
   }
   function clearScan() { try { localStorage.removeItem(FIELD_KEY); localStorage.removeItem(CAM_KEY); } catch {} location.reload(); }
 
-  // live tag check while preparing: which ids phone C sees, and chest tags 10 / 11 tell the pose tracker who is who
+  // live tag check while preparing: which ids phone C sees
   const seen = { list: [], at: 0, busy: false, ms: 0 };
   const PLAYER_IDS = Object.values(W.PLAYER_TAG);
   async function checkTags(setup) {
-    const tr = getTracker();
-    if (seen.busy || (!setup && !tr) || video.__dummy || !video.videoWidth || document.hidden) return;
+    if (seen.busy || !setup || video.__dummy || !video.videoWidth || document.hidden) return;
     seen.busy = true; const t0 = performance.now();
     try {
       const d = await detectTags(video, setup ? null : PLAYER_IDS, { passes: [[1, 2], [1, 6]] }); // off the main thread (tagworker.js)
       seen.list = d.map(o => ({ id: o.id, corners: o.corners, w: d.width, h: d.height })); seen.at = now();
-      tr?.setHints?.(seen.list.filter(o => PLAYER_IDS.includes(o.id)).map(o => ({
-        slot: o.id === W.PLAYER_TAG.A ? 'A' : 'B', u: o.corners.reduce((a, c) => a + c[0] / 4, 0), v: o.corners.reduce((a, c) => a + c[1] / 4, 0), t: now() })));
     } catch {} finally { seen.busy = false; seen.ms = performance.now() - t0; }
   }
   const tagChecks = () => modeIds().map(id => {
@@ -239,8 +200,7 @@ export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => t
     const yawOf = b => Math.atan2(-b.R[6], b.R[0]); // body x axis = forward
     drone.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
     field.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot,
-      { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, hideBody: (skels[p.slot].has || phoneSk[p.slot].has) && cfg.skeleton }])));
-    updateSkels(est);
+      { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu}])));
     fx.step(dt);
     if (minimap) { const on = cfg.minimap && !setup; minimap.canvas.style.display = on ? '' : 'none'; if (on) minimap.draw(P, game.shots); }
     const sx = (Math.random() - .5) * 20 * S.shake, sy = (Math.random() - .5) * 20 * S.shake;
@@ -251,7 +211,7 @@ export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => t
     renderer.setScissorTest(false);
     if (S.mode === 'game') {
       drawGuide2d(false);
-      scene.background = field.background; field.group.visible = true; camHelper.visible = cfg.debug; guide.visible = false; showSkels(cfg.skeleton);
+      scene.background = field.background; field.group.visible = true; camHelper.visible = cfg.debug; guide.visible = false;
       overCam.aspect = S.aspect; overCam.updateProjectionMatrix();
       const keep = { p: camera.position.clone(), q: camera.quaternion.clone(), fov: camera.fov };
       camera.position.copy(overCam.position); camera.quaternion.copy(overCam.quaternion); camera.fov = overCam.fov; camera.aspect = S.aspect; camera.updateProjectionMatrix();
@@ -265,7 +225,7 @@ export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => t
     drawGuide2d(guiding);
     scene.background = fpv ? phoneTex : video.videoWidth ? videoTex : field.background;
     field.group.visible = !video.videoWidth && !fpv; // no picture yet: show the arena from phone C's place instead of black
-    camHelper.visible = false; guide.visible = guiding; showSkels(cfg.skeleton && !fpv);
+    camHelper.visible = false; guide.visible = guiding;
     fx.render();
     guide.visible = false;
     if (cfg.pip) { // drone view in the bottom-right corner (no bloom)
@@ -273,7 +233,7 @@ export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => t
       scene.background = field.background; field.group.visible = true; camHelper.visible = cfg.debug;
       overCam.aspect = w / h; overCam.updateProjectionMatrix();
       renderer.setScissorTest(true); renderer.setScissor(S.w - w - 10, 10, w, h); renderer.setViewport(S.w - w - 10, 10, w, h);
-      showSkels(true); renderer.render(scene, overCam);
+      renderer.render(scene, overCam);
       renderer.setScissorTest(false); renderer.setViewport(0, 0, S.w, S.h);
     }
   }
@@ -282,6 +242,6 @@ export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => t
     el, scene, camera, fx, drone, field, state: S, render, scan, clearScan, tagChecks, seenTags: seen, applyCam,
     attach(box, mode) { S.box = box; S.mode = mode; if (el.parentNode !== box) box.append(el); resize(); applyCam(); },
     attachMinimap(c) { minimap = createMinimap(c); minimap.canvas = c; },
-    resize, skels, phoneSk,
+    resize,
   };
 }

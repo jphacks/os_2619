@@ -21,7 +21,7 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 
 // ---- settings (localStorage) ----
 const DEFAULTS = {
-  posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len }, skeleton: false, skelSrc: 'both',
+  posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
   minimap: true, debug: false, pip: false, fpv: null, drone: 'auto', videoSrc: 'remote', tagMode: 4, tagMount: 'stand', tagHeight: 1.0, knownFov: null,
   matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 2,
 };
@@ -42,26 +42,12 @@ const smap = createMap();
 const detectors = createActions();
 const video = Object.assign(document.createElement('video'), { muted: true, playsInline: true });
 video.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none'; document.body.append(video);
-const vsrc = createVideoSource(video, { onChange: () => { stage?.resize(); syncTracker(); } });
+const vsrc = createVideoSource(video, { onChange: () => { stage?.resize(); } });
 
 let sfx = null; // sound: loaded lazily so a failing module never stops the picture
 import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const v = JSON.parse(localStorage.getItem('pd-vol')); if (v) for (const [k, x] of Object.entries(v)) sfx.setVolume(k, x); } catch {} }).catch(e => console.warn('audio', e));
 
-// positions from phone C's picture (posetrack.js), loaded only when that source can be used
-let tracker = null, trackerLoading = false, trackerErr = '';
-async function syncTracker() {
-  const want = (cfg.posSrc === 'camera' || cfg.posSrc === 'auto') && video.videoWidth > 0;
-  if (!want) { tracker?.stop(); tracker = null; return; }
-  if (tracker || trackerLoading) return;
-  trackerLoading = true;
-  try {
-    const P = await import('./posetrack.js');
-    tracker = P.createPoseTracker({ video, getCamera: () => stage.state.tagCam });
-    await tracker.start(); trackerErr = '';
-  } catch (e) { trackerErr = '骨格推定を読み込めない（ネット接続が必要）: ' + e.message; tracker = null; } finally { trackerLoading = false; }
-}
-
-const stage = createStage({ video, cfg, hub, PA, getTracker: () => tracker, isSetup: () => game.match.phase === 'setup' });
+const stage = createStage({ video, cfg, hub, PA, isSetup: () => game.match.phase === 'setup' });
 const hudFlash = { el: null };
 const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el) });
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
@@ -137,7 +123,7 @@ gameCtrl.innerHTML = `
   <h3>カメラ（ドローン視点）<kbd>D</kbd></h3>
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
   <h3>表示</h3>
-  <div class="row"><button data-tog="skeleton">骨格</button><button data-tog="minimap">ミニマップ<kbd>M</kbd></button><button data-tog="debug">デバッグ<kbd>G</kbd></button></div>
+  <div class="row"><button data-tog="minimap">ミニマップ<kbd>M</kbd></button><button data-tog="debug">デバッグ<kbd>G</kbd></button></div>
   <h3>攻撃・防御の記録</h3>
   <ul class="log" id="gameLog"></ul>`;
 for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.onclick = () => game.command({ cmd: 'phase', phase: b.dataset.phase });
@@ -177,7 +163,7 @@ finalBar.innerHTML = `
   <span class="kv" id="tagCheck"></span>
   <span class="msg" id="finalMsg"></span>
   <div class="seg" id="fpvs"><button data-fpv="">第三者カメラ</button><button data-fpv="A">A の胸</button><button data-fpv="B">B の胸</button></div>
-  <button data-tog="pip">小窓に 3D</button><button data-tog="skeleton">骨格</button>
+  <button data-tog="pip">小窓に 3D</button>
   <button id="fullBtn">全画面<kbd>F</kbd></button>`;
 $('#scanBtn').onclick = () => scan();
 for (const b of finalBar.querySelectorAll('[data-tog]')) b.onclick = () => toggle(b.dataset.tog);
@@ -193,9 +179,8 @@ const seg = (key, opts, after) => `<div class="seg" data-seg="${key}">${Object.e
 drawer.innerHTML = `
   <h2>設定<span class="grow"></span><button id="closeSettings">閉じる<kbd>Esc</kbd></button></h2>
   <section><h3>プレイヤーの位置</h3>${seg('posSrc', POS_JA)}
-    <p class="note">自動：胸スマホがタグで合っていればそれ、なければスマホ C の映像の骨格、どちらもなければ直前の位置。</p>
-    <h3>棒を持つ手（カメラ映像のとき）</h3><div class="row">${seg('hand', { R: '右手', L: '左手' })}<button id="swapAB">A・B を入れ替える</button></div>
-    <h3>3D に出す骨格</h3>${seg('skelSrc', { camera: 'スマホ C の映像', phones: '胸スマホ', both: '両方' })}</section>
+    <p class="note">自動：胸スマホがタグで合っていればそれ、なければ直前の位置。</p>
+  </section>
   <section><h3>タグのスキャン（スマホ C）</h3>${seg('tagMode', { 2: '2枚（ID 0・1）', 4: '4枚（ID 0〜3）' })}
     <div style="height:6px"></div>${seg('tagMount', { stand: '立てる', floor: '床に置く' })}
     <label class="f"><span>タグ中心の高さ</span><input type="number" id="tagHeight" min="0.1" max="3" step="0.05"><output>m</output></label>
@@ -217,10 +202,8 @@ $('#openSettings').onclick = () => drawer.classList.toggle('open');
 $('#closeSettings').onclick = () => drawer.classList.remove('open');
 for (const g of drawer.querySelectorAll('[data-seg]')) for (const b of g.querySelectorAll('button')) b.onclick = () => {
   const k = g.dataset.seg; cfg[k] = k === 'tagMode' ? +b.dataset.v : b.dataset.v; save();
-  if (k === 'posSrc') syncTracker();
 };
 for (const b of drawer.querySelectorAll('[data-tog]')) b.onclick = () => toggle(b.dataset.tog);
-$('#swapAB').onclick = () => tracker?.setSwap?.();
 const tagH = $('#tagHeight'); tagH.value = cfg.tagHeight; tagH.onchange = () => { cfg.tagHeight = Math.max(.1, Math.min(3, +tagH.value || 1)); save(); };
 $('#forgetFov').onclick = () => { cfg.knownFov = null; save(); };
 $('#clearScan').onclick = () => confirm('スキャンしたフィールドとカメラの位置を消しますか？') && stage.clearScan();
@@ -308,7 +291,7 @@ function updateSlowUi() {
   }
   const checks = stage.tagChecks(), fresh = performance.now() / 1000 - stage.seenTags.at < 3;
   $('#tagCheck').innerHTML = video.videoWidth && !video.__dummy ? checks.map(c => `<span class="${fresh && c.seen ? (c.px < 14 ? 'warn' : 'ok') : 'bad'}">ID${c.id}${fresh && c.seen ? (c.px < 14 ? ' 小さい' : ' ✓') : ' ×'}</span>`).join(' ') : '';
-  $('#finalMsg').textContent = [!video.videoWidth ? (vsrc.state.msg || '映像なし') : '', stage.state.msg, trackerErr].filter(Boolean).join('　');
+  $('#finalMsg').textContent = [!video.videoWidth ? (vsrc.state.msg || '映像なし') : '', stage.state.msg].filter(Boolean).join('　');
   $('#fovNote').textContent = cfg.knownFov ? `覚えた縦画角 ${cfg.knownFov.toFixed(1)}°（立てたタグのスキャンで使う）` : '画角はまだ覚えていない（床置きか、まっすぐ立てた状態のスキャンで覚える）';
   for (const r of drawer.querySelectorAll('[data-vol]')) { const v = sfx?.volumes?.[r.dataset.vol]; if (v != null && document.activeElement !== r) r.value = v; drawer.querySelector(`[data-volout=${r.dataset.vol}]`).textContent = v != null ? Math.round(v * 100) : '--'; }
   $('#mute').textContent = sfx?.muted ? '消音を解除' : '消音';
@@ -324,7 +307,7 @@ function frame(ts) {
   const t = performance.now() / 1000, raw = t - last, dt = Math.min(.05, raw); last = t;
   fps = .95 * fps + .05 / Math.max(raw, 1e-3);
   try { est = PA.estimate(nowS()); } catch (e) { console.warn('phonealign', e); }
-  game.step(dt, raw, est, tracker);
+  game.step(dt, raw, est);
   if (screen === 'game' || screen === 'final') { stage.render(dt, game, est); updateHud(); }
   else stage.fx.step(dt); // effects keep their time even when nobody looks
   if (screen === 'space') space.frame(nowS(), est);
@@ -334,7 +317,6 @@ function frame(ts) {
 
 stage.drone.setMode(cfg.drone);
 vsrc.set(new URLSearchParams(location.search).has('dummy') ? 'dummy' : cfg.videoSrc);
-video.addEventListener('playing', syncTracker);
 show(location.hash.slice(1) || cfg.screen);
 requestAnimationFrame(frame);
-window.__pd = { game, stage, PA, hub, cfg, vsrc, get est() { return est; }, get tracker() { return tracker; } }; // for the console and tests
+window.__pd = { game, stage, PA, hub, cfg, vsrc, get est() { return est; } }; // for the console and tests

@@ -1,4 +1,4 @@
-// Every phone's data in the FIELD world (world.js): ARCore poses, AprilTag sightings, IMU stick, opponent body / stick tip.
+// Every phone's data in the FIELD world (world.js): ARCore poses, AprilTag sightings, IMU stick.
 // Plain JS (node + browser), no DOM.
 //
 // Each phone's raw ARCore world (`ar.wp` / `wq`) is gravity-aligned (y up) but has its own yaw and origin, so
@@ -15,8 +15,6 @@ import { eulerRot } from './actions.js';
 const OTHER = { A: 'B', B: 'A' };
 const KEEP = 20;          // s of AR history and tag sightings kept for the fit
 const TRAIL = 15;         // s of trail
-const HIP_BELOW_CHEST = 0.4; // m, chest phone -> hip midpoint (MediaPipe's depth origin), as map.js
-const K0 = [1.04, 0.78, 0.5, 0.5]; // intrinsics guess (fx/W, fy/H, cx/W, cy/H) until the phone sends `k`
 const AXIS_M = 0.5;       // m along the tag axis for the yaw-pinning point
 const MIN_ALIGN = 3;      // sightings before `aligned`
 
@@ -32,7 +30,6 @@ export const rotY = (th, v) => { const c = Math.cos(th), s = Math.sin(th); retur
 const rotYMat = th => { const c = Math.cos(th), s = Math.sin(th); return [c, 0, s, 0, 1, 0, -s, 0, c]; }; // = rotY as a world.js matrix
 // ARCore quaternion [x,y,z,w] rotating v
 const qrot = ([x, y, z, w], v) => { const u = [x, y, z], c = cross(u, v); return add(v, add(mul(c, 2 * w), mul(cross(u, c), 2))); };
-const qinv = q => [-q[0], -q[1], -q[2], q[3]];
 const rodr = (r, v) => { // rotate v by a Rodrigues vector
   const th = Math.hypot(r[0], r[1], r[2]); if (th < 1e-9) return v;
   const k = mul(r, 1 / th), c = Math.cos(th);
@@ -43,9 +40,7 @@ const rodr = (r, v) => { // rotate v by a Rodrigues vector
 const swap = v => [v[1], v[0], -v[2]];
 const camToWorld = (pose, v) => add(pose.p, qrot(pose.q, swap(v)));  // cv point -> phone's AR world
 const camDir = (pose, v) => qrot(pose.q, swap(v));                   // cv direction -> AR world
-const worldToCam = (pose, p) => swap(qrot(qinv(pose.q), sub(p, pose.p)));
 const apply = (T, v) => add(rotY(T.th, v), T.t);
-const unapply = (T, v) => rotY(-T.th, sub(v, T.t));
 const wrapPi = a => Math.atan2(Math.sin(a), Math.cos(a));
 
 /** Weighted least squares a ≈ rotY(th, b) + t over pairs { a, b, w }. */
@@ -79,12 +74,11 @@ function robustFit(c) {
 
 /**
  * createPhoneAlign({ keep = 20, minAlign = 3, localizer, axis }) -> { ingest(k), get(slot), estimate(now), onFieldChange() }
- * - ingest(k): every relayed message (k.slot A/B; types ar, tags, imu, pose, color, calib, phones).
+ * - ingest(k): every relayed message (k.slot A/B; types ar, tags, imu, color, calib, phones).
  * - get(slot): { src: 'ar'|'localize'|'tag'|null, aligned, theta, t, rms, n, used, lastFix, world_T_ar, chest, fwd, yaw, cam (world_T_arcam),
  *   trail, check (cm, this phone's own position vs where the other phone saw its chest tag), checkT, seenBy (that sighting, world),
  *   sightings (last tags message: [{ id, p (world), d }]), k, online, calibAt, hz, lastT }.
- * - estimate(now): { slots: { A, B }, bodies: { A: 33x[x,y,z]|null }, tips: { A: { p, wrist, src, t } }, stick: { A: { dir, base, src } }, warn }.
- *   bodies[o] / tips[o] are what the OTHER phone sees of o, in the FIELD world; stick[s] is s's own IMU stick.
+ * - estimate(now): { slots: { A, B }, stick: { A: { dir, base, src } }, warn }; stick[s] is s's own IMU stick.
  * - onFieldChange(): the field tags moved (setField): refit from the stored sightings. Also subscribed to world.onFieldChange.
  */
 export function createPhoneAlign(opts = {}) {
@@ -93,8 +87,8 @@ export function createPhoneAlign(opts = {}) {
   const S = {};
   for (const s of ['A', 'B']) S[s] = {
     ar: [], trail: [], sight: [], T: null, dirty: false, fixes: 0, lastFix: null, oldApp: false, online: false,
-    k: null, imu: null, pose: null, color: null, lastTip: null, seen: [], lastTags: null, calibAt: null, calibPose: null, yaw0: 0,
-    rate: { ar: 0, tags: 0, imu: 0, pose: 0, color: 0 }, cnt: { ar: 0, tags: 0, imu: 0, pose: 0, color: 0 }, cntAt: 0, lastT: 0,
+    k: null, imu: null, color: null, seen: [], lastTags: null, calibAt: null, calibPose: null, yaw0: 0,
+    rate: { ar: 0, tags: 0, imu: 0, color: 0 }, cnt: { ar: 0, tags: 0, imu: 0, color: 0 }, cntAt: 0, lastT: 0,
   };
 
   /** AR pose of phone s at time t (own AR world), interpolated; null across a gap. Same shape as the wire: { p, q [x,y,z,w] }. */
@@ -187,7 +181,6 @@ export function createPhoneAlign(opts = {}) {
         return;
       }
       case 'imu': st.imu = k; return;
-      case 'pose': st.pose = k; return;
       case 'color': if (k.side !== 'me') st.color = k; return; // 'opp' (or the old app's single target)
       case 'calib': { // IMU tare + AR origin reset on the phone; the raw ARCore world does not move, so the fit stays
         st.calibAt = k.t; st.calibPose = latest(s); st.yaw0 = st.imu?.euler?.[2] ?? 0; st.imu = null; return; // heading 0 = facing at Calibrate (as actions.js)
@@ -274,64 +267,14 @@ export function createPhoneAlign(opts = {}) {
 
   /** Everything at once; `now` in PC seconds (k.t clock). */
   function estimate(now = Date.now() / 1000) {
-    const slots = { A: get('A', now), B: get('B', now) }, warn = [], bodies = {}, tips = {}, stickOut = {};
-    for (const s of ['A', 'B']) stickOut[s] = stick(s, slots[s]); // first: the tip search below uses the OTHER's stick
+    const slots = { A: get('A', now), B: get('B', now) }, warn = [], stickOut = {};
     for (const s of ['A', 'B']) {
-      const st = S[s], g = slots[s], ob = OTHER[s];
+      stickOut[s] = stick(s, slots[s]);
+      const st = S[s];
       if (st.oldApp) warn.push(`phone ${s}: app sends no gravity-aligned pose (wp/wq): using localize.js`);
-      else if (latest(s) && !st.k) warn.push(`phone ${s}: no camera intrinsics yet, using a guess`);
-      if (st.oldApp || !g.world_T_ar) continue;
-      const Ts = T(s), To = T(ob), K = st.k ?? K0;
-      // camera depth of the opponent's hip midpoint at time t: fresh chest-tag sighting, else their own aligned AR position
-      const hipDepth = (cam, t) => {
-        const v = st.seen[st.seen.length - 1], op = To && poseAt(ob, t);
-        const chest = v && Math.abs(v.t - t) < 0.3 ? v.b : op ? unapply(Ts, apply(To, op.p)) : null;
-        return chest && worldToCam(cam, sub(chest, [0, HIP_BELOW_CHEST, 0]))[2];
-      };
-      const ray = (u, v) => [(u - K[2]) / K[0], (v - K[3]) / K[1], 1];
-      const P = st.pose, pcam = P?.found && P.lm && now - P.t < 0.5 && poseAt(s, P.t);
-      const D = pcam && hipDepth(pcam, P.t);
-      // MediaPipe pose z: depth from the hip midpoint, in units of image width (map.js convention)
-      const lm = D > 0.3 ? P.lm.map(([u, v, z, vis]) => vis > 0.5 ? camToWorld(pcam, mul(ray(u, v), D + z * D / K[0])) : null) : null;
-      if (lm) bodies[ob] = lm.map(p => p && apply(Ts, p));
-      const C = st.color, cam = C?.found && now - C.t < 0.5 && poseAt(s, C.t);
-      const Dc = cam && hipDepth(cam, C.t);
-      if (!(Dc > 0.3)) continue;
-      const d = ray(C.x, C.y), len = W.STICK.len, a = dot(d, d);
-      const hand = lm && [15, 16].filter(i => lm[i]).sort((i, j) => Math.hypot(P.lm[i][0] - C.x, P.lm[i][1] - C.y) - Math.hypot(P.lm[j][0] - C.x, P.lm[j][1] - C.y))[0];
-      const wrist = hand != null ? worldToCam(cam, lm[hand]) : null;
-      let lam = null, src;
-      // With the opponent's own IMU (map.js has none): bearing from the colour ray, depth from the stick vector. The hand is
-      // the wrist nearest the blob, else the hand offset on the opponent's own aligned body (as app.js places the stick base).
-      // Near tangency a cm of wrist error moves the ray/sphere root by decimetres, so this comes first.
-      const sk = stickOut[ob], base = sk?.base && worldToCam(cam, unapply(Ts, sk.base));
-      if (sk) { // both anchors tried: the one whose IMU tip lies nearest the colour ray wins (the wrong wrist misses by ~40 cm)
-        const dirC = swap(qrot(qinv(cam.q), rotY(-Ts.th, sk.dir)));
-        let best = 0.3; // gate: beyond this the blob or both anchors are wrong
-        for (const [anchor, name] of [[wrist, 'imu + colour ray'], [base, 'imu from body + colour ray']]) {
-          if (!anchor) continue;
-          const guess = add(anchor, mul(dirC, len)), lg = dot(d, guess) / a, miss = dist(mul(d, lg), guess);
-          if (miss < best) { best = miss; lam = lg; src = name; }
-        }
-      }
-      if (lam === null && wrist) { // map.js: the tip is on my viewing ray, one stick length from the wrist
-        const b = dot(d, wrist), disc = b * b - a * (dot(wrist, wrist) - len * len);
-        if (disc >= 0) {
-          const r1 = (b - Math.sqrt(disc)) / a, r2 = (b + Math.sqrt(disc)) / a;
-          const prev = st.lastTip && C.t - st.lastTip.t < 0.3 ? worldToCam(cam, st.lastTip.p) : null;
-          const elbow = lm[hand - 2] && worldToCam(cam, lm[hand - 2]);
-          const along = r => dot(norm(sub(mul(d, r), wrist)), norm(sub(wrist, elbow)));
-          // two solutions (near / far): nearest the last tip, else continuing the forearm, else the nearer one
-          lam = prev ? (dist(mul(d, r1), prev) <= dist(mul(d, r2), prev) ? r1 : r2) : elbow ? (along(r1) >= along(r2) ? r1 : r2) : r1 > 0.2 ? r1 : r2;
-          src = 'stick length';
-        } else { lam = b / a; src = 'closest to wrist'; }
-      } else if (lam === null) { lam = Dc; src = 'opponent depth'; }
-      if (!(lam > 0.1)) continue;
-      const tw = camToWorld(cam, mul(d, lam));
-      st.lastTip = { t: C.t, p: tw };
-      tips[ob] = { t: C.t, p: apply(Ts, tw), wrist: wrist && apply(Ts, camToWorld(cam, wrist)), src };
+      else if (latest(s) && !st.k) warn.push(`phone ${s}: no camera intrinsics yet`);
     }
-    return { slots, bodies, tips, stick: stickOut, warn };
+    return { slots, stick: stickOut, warn };
   }
 
   return { ingest, get, estimate, onFieldChange: fieldChanged, poseAt, localizer: loc };
