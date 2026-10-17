@@ -101,7 +101,7 @@ gameCtrl.innerHTML = `
   <h3>試合の進行</h3>
   <div class="phase">
     <button data-phase="setup">準備中<kbd>1</kbd></button>
-    <button data-phase="fight" class="go">試合開始<kbd>3</kbd></button><button data-phase="demo" title="試合と同じだが、魔法が全部相手に向かって飛ぶ（ホーミング）">デモ試合開始<kbd>2</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
+    <button data-phase="fight" class="go">試合開始<kbd>3</kbd></button><button data-phase="demo" title="試合と同じだが、魔法は撃った瞬間に相手の方向へ真っすぐ飛ぶ。撃ったあとに素早く動けば避けられる">デモ試合開始<kbd>2</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
   </div>
   <div class="row" style="margin-top:6px"><button data-cmd="reset">やり直し<kbd>R</kbd></button><label class="kv">試合時間 <input id="secIn" type="number" min="10" max="600" step="10" style="width:64px"> 秒</label></div>
   <p class="why" id="why"></p>
@@ -201,7 +201,7 @@ drawer.innerHTML = `
     <div class="row"><button id="mute">消音</button><span class="note" id="audioInfo"></span></div>
     <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}</div></section>
   <section><h3>キー操作</h3><table class="keys">
-    <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ試合開始（ホーミング）・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
+    <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ試合開始（撃った瞬間に相手を狙う）・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
     <tr><td>Space / Enter</td><td>A / B が小の攻撃（溜めなし）</td></tr><tr><td>Q / P 長押し</td><td>A / B が溜める（離した時の溜め時間で小・中・大）</td></tr>
     <tr><td>K</td><td>タグでスキャン</td></tr><tr><td>D</td><td>ドローン視点の切り替え</td></tr><tr><td>M / G</td><td>ミニマップ / デバッグ表示</td></tr><tr><td>F</td><td>最終映像を全画面</td></tr><tr><td>S</td><td>設定</td></tr></table></section>`;
 $('#openSettings').onclick = () => drawer.classList.toggle('open');
@@ -264,7 +264,7 @@ function updateHud() {
   }
   const showTimer = m.phase === 'fight' || m.phase === 'result';
   setText(hud.querySelector('.timer'), showTimer ? `${Math.floor(Math.ceil(m.left) / 60)}:${String(Math.ceil(m.left) % 60).padStart(2, '0')}` : '');
-  const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : m.mode === 'demo' ? 'デモ試合（ホーミング）' : '';
+  const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : m.mode === 'demo' ? 'デモ試合（相手を狙って撃つ）' : '';
   setText(pp, pt); pp.style.display = pt ? '' : 'none';
   const bt = game.bannerText(), bn = hud.querySelector('.banner');
   bn.style.display = bt ? 'grid' : 'none'; setText(bn, bt);
