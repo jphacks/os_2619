@@ -12,6 +12,7 @@
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
 
     <application
+        android:name=".App"
         android:label="SensorLink"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
@@ -26,5 +27,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".CrashActivity"
+            android:exported="false"
+            android:process=":crash" />
     </application>
 </manifest>

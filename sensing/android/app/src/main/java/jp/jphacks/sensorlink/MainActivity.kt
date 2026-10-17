@@ -104,7 +104,8 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     private var hands: Hands? = null
     private var pose: Pose? = null
     private var lastVideoMs = 0L
-    private val yuv = Mat(); private val rgbaL = Mat(); private val rgbaU = Mat()
+    // lazy: Mat() needs the OpenCV native lib, which is only loaded in onCreate (after field initialisers run)
+    private val yuv by lazy { Mat() }; private val rgbaL by lazy { Mat() }; private val rgbaU by lazy { Mat() }
 
     @Volatile var frame: Frame? = null
     @Volatile var tags: JSONArray? = null
@@ -117,7 +118,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        OpenCVLoader.initLocal()
+        Log.i("SensorLink", "onCreate: OpenCV init=" + OpenCVLoader.initLocal())
 
         val id = prefs.getString("id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("id", it).apply() }
         link = Link(id, Build.MODEL)
@@ -157,6 +158,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         else listOf(Manifest.permission.ACCESS_FINE_LOCATION)
         requestPermissions(perms.toTypedArray(), 1)
 
+        Log.i("SensorLink", "onCreate: UI ready, connecting link")
         link.connect(prefs.getString("host", "192.168.0.10")!!, prefs.getInt("port", 8000))
     }
 
@@ -173,6 +175,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
 
     override fun onResume() {
         super.onResume()
+        Log.i("SensorLink", "onResume cam=${camGranted()} session=${session != null}")
         if (!camGranted()) return
         if (session == null) {
             try {
