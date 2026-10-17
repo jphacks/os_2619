@@ -8,11 +8,15 @@ const c = Object.values(CORNERS).reduce((a, p) => a.map((v, i) => v + p[i] / 4),
 const d = sub(CORNERS[3], CORNERS[0]), toRoom = v => rotY(Math.atan2(d[2], d[0]), sub(v, c));
 
 const m = createMap(), t0 = 1000, err = { A: [], B: [], tipA: [], tipB: [] };
-let tA = 0, tB = 0;
+let tA = 0, tB = 0, seed = 1;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 1073741823.5 - 1; // deterministic, -1..1
 for (let i = 0; i < 30 * 40; i++) {
   for (const [s, off] of [['A', 0], ['B', 0.4]]) { // the phones' frames are not simultaneous
     const t = t0 + (i + off) / 30; if (s === 'A') tA = t; else tB = t;
-    for (const k of packets(s, t, i % 2 === 0)) m.ingest({ ...k, slot: s });
+    for (const k of packets(s, t, i % 2 === 0)) {
+      if (k.type === 'tags') for (const g of k.tags) g.p = g.p.map(v => v * (1 + 0.01 * rnd()) + 0.005 * rnd()); // ~1% depth, 5 mm jitter
+      m.ingest({ ...k, slot: s });
+    }
   }
   if (i < 30 * 10 || i % 15) continue;
   const e = m.estimate({ now: tB, L });
