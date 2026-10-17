@@ -236,7 +236,7 @@ function render() {
     s.camMsg,
   ].filter(Boolean).map(x => `<div>${x}</div>`).join(''));
   const SIDE = { left: '左', right: '右' };
-  setHtml('#tagCheck', s.phase !== 'setup' ? '' : '<div>タグの見え方（準備中だけ確認）</div>' + s.setupTags.map(c => `<div>${dot(!c.seen ? '' : c.side !== c.want || c.px < 14 ? 'warn' : 'ok')}ID ${c.id}${c.want ? `（${SIDE[c.want]}側）` : ''}：${!c.seen ? '見えていない' : c.side !== c.want ? `画面の${SIDE[c.side]}に見えている。左右が逆かも` : c.px < 14 ? '小さい' : 'OK'}</div>`).join(''));
+  setHtml('#tagCheck', s.phase !== 'setup' ? '' : '<div>タグの見え方（準備中だけ確認）</div>' + s.setupTags.map(c => `<div>${dot(!c.seen ? '' : (c.want && c.side !== c.want) || c.px < 14 ? 'warn' : 'ok')}ID ${c.id}${c.want ? `（${SIDE[c.want]}側）` : ''}：${!c.seen ? '見えていない' : c.want && c.side !== c.want ? `画面の${SIDE[c.side]}に見えている。左右が逆かも` : c.px < 14 ? '小さい' : 'OK'}</div>`).join(''));
   $$('[data-pos]').forEach(b => b.classList.toggle('on', b.dataset.pos === s.posSrc));
   $$('[data-hand]').forEach(b => b.classList.toggle('on', b.dataset.hand === s.hand));
   $$('[data-tagmode]').forEach(b => b.classList.toggle('on', +b.dataset.tagmode === s.tagMode));

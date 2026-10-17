@@ -527,7 +527,7 @@ stage.append(guideCanvas);
 const guideEl = document.getElementById('guide');
 function tagChecks() {
   return modeIds().map(id => {
-    const want = W.LAYOUT === 'map4' ? null : W.TAGS[id].pos[0] < 0 ? 'left' : 'right', d = seenTags.list.find(o => o.id === id); // map4: anywhere
+    const want = W.LAYOUT === 'map4' ? null /* the scan names the left sheet A, whatever its id */ : W.TAGS[id].pos[0] < 0 ? 'left' : 'right', d = seenTags.list.find(o => o.id === id); // map4: anywhere
     const u = d && d.corners.reduce((a, c) => a + c[0], 0) / 4 / d.w;
     return { id, want, seen: !!d, side: d ? (u < .5 ? 'left' : 'right') : null, px: d ? Math.hypot(d.corners[0][0] - d.corners[1][0], d.corners[0][1] - d.corners[1][1]) : 0 };
   });
@@ -556,7 +556,7 @@ function updateGuideText() {
   if (now() - guideTextAt < .4) return; guideTextAt = now();
   const tc = cfg.camMode === 'tags' && cfg.tagCam, checks = tagChecks();
   const row = c => {
-    const where = W.LAYOUT !== 'map4' ? tagPlace(c.id) : cfg.tagMode === 2 ? `好きな場所の床。${c.id === 1 ? 'A' : 'B'} の端（カメラから見て${c.id === 1 ? '左' : '右'}）` : '好きな場所の床（4枚でだいたい四角形の角になるように）';
+    const where = W.LAYOUT !== 'map4' ? tagPlace(c.id) : cfg.tagMode === 2 ? '好きな場所の床。左に置いた方が A の端になる' : '好きな場所の床（4枚でだいたい四角形の角になるように）';
     const st = !c.seen ? '<b class="ng">見えていない</b>' : c.want && c.side !== c.want ? `<b class="warn">画面の${SIDE[c.side]}に見えている：左右が逆かも</b>` : c.px < 14 ? '<b class="warn">小さすぎる：iPhoneを近づける</b>' : '<b class="ok">OK</b>';
     return `<li>ID ${c.id}：${where}　${st}</li>`;
   };
