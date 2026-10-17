@@ -540,7 +540,7 @@ function drawGuide2d(show) {
   if (draw || guideDrawn) guideCtx.clearRect(0, 0, w, h); // a 5 MP clear every frame for nothing otherwise
   guideDrawn = draw;
   guideCanvas.style.display = show ? '' : 'none';
-  guideEl.style.display = show ? '' : 'none';
+  guideEl.style.display = 'none'; // no text panel on the players' screen: the tag check lives on admin.html
   if (!draw) return;
   for (const d of seenTags.list) { // what the detector found right now, on the live picture
     const k = w / d.w, ok = W.TAGS[d.id]?.pos;
@@ -721,7 +721,7 @@ function frame(ts = 0) {
   statusEl.style.display = cfg.debug ? '' : 'none'; // the operator reads all of this on admin.html
   const guiding = match.phase === 'setup' && !cfg.fpv && cfg.view !== 'full3d';
   dummy?.showPlayers(match.phase !== 'setup'); // the dummy room is scanned empty, like the real one
-  drawGuide2d(guiding); if (guiding) updateGuideText();
+  drawGuide2d(guiding);
   statusEl.textContent = `${cfg.view !== 'off' ? `ドローン:${drone.mode}(${drone.shot})  ` : ''}server ${host}: ${linkState}  ${locText('A')}  ${locText('B')}  カメラ:${cfg.fpv ? `スマホ${cfg.fpv}視点 fov ${intr[cfg.fpv]?.toFixed(1) ?? '推定待ち'}°` : cfg.camMode}${cfg.useTruth ? '  [正解位置]' : ''}  ${status.extra}`;
   pipLabel.style.display = cfg.view === 'pip' && cfg.debug ? '' : 'none';
   const sx = (Math.random() - .5) * 24 * shake, sy = (Math.random() - .5) * 24 * shake;
