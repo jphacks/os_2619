@@ -231,7 +231,7 @@ $('#mute').onclick = () => sfx?.setMuted(!sfx.muted);
 for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
   if (!sfx) return; sfx.unlock?.();
   ({ shotFire: () => sfx.shot('fire', 0, .6), shotThunder: () => sfx.shot('thunder', 0, .6), hitFire: () => sfx.hit('fire', 0, .7), hitThunder: () => sfx.hit('thunder', 0, .7),
-    specialFire: () => sfx.special('fire', 0), specialThunder: () => sfx.special('thunder', 0) })[b.dataset.sound]?.();
+    specialFire: () => sfx.special('fire', 0), specialThunder: () => { sfx.special('thunder', 0); sfx.hit('thunder', 0, 1); } })[b.dataset.sound]?.();
 };
 
 // ---- keys ----

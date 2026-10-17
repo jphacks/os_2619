@@ -14,13 +14,15 @@
 const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3'];
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
-const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.5 }; // fire3 / lightning3: their first 3 s (BED)
+const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2 }; // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
 const REF_LUFS = -16;
-// what plays what: 1 = shot, 2 = hit / special burst, 3 = aura bed
-const EL = { fire: { shot: 'fire1', hit: 'fire2', bed: 'fire3' }, thunder: { shot: 'lightning1', hit: 'lightning2', bed: 'lightning3' } };
+// what plays what: 1 = shot, 2 = hit / special burst, 3 = aura bed (fire) / the 大 hit (thunder, bigHit)
+const EL = { fire: { shot: 'fire1', hit: 'fire2', bed: 'fire3' }, thunder: { shot: 'lightning1', hit: 'lightning2', bigHit: 'lightning3' } };
+// thunder's 大: silent launch; on the hit lightning3 plays full until fadeAt, linearly down to silence at end (s) (10/18)
+const BIG_HIT = { fadeAt: 3, end: 6 };
 // loop regions [start, end, crossfade] s: the beds ramp in for ~1 s and decay for 10+ s, so only the steady middle loops
 const LOOPS = { charge: [.2, 4.4, .35] };
-// the beds (fire3 / lightning3) play once from the top: full until fadeAt, down to silence at end (s), no loop (10/18)
+// the bed (fire3) plays once from the top: full until fadeAt, down to silence at end (s), no loop (10/18)
 const BED = { fadeAt: 2, end: 3 };
 const BGM_LOOP = [.09, 82]; // music starts at .14 s and ends in a tail at ~81.3 s; both ends are below -45 dBFS
 // mix in dB relative to REF (hit at full power = 0 dB anchor)
@@ -104,7 +106,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     v.g.gain.cancelScheduledValues(t); v.g.gain.setValueAtTime(v.g.gain.value, t); v.g.gain.linearRampToValueAtTime(0, t + fade);
     try { v.src.stop(t + fade + .005); } catch {}
   }
-  function voice(key, name, { gain = 1, pan = 0, rate = 1, dur = 0, rel = .25, vary = true } = {}) {
+  function voice(key, name, { gain = 1, pan = 0, rate = 1, dur = 0, rel = .25, vary = true, fade = null } = {}) {
     const b = buf[name];
     if (!b || ctx.state !== 'running' || muted) return null;
     const t = ctx.currentTime, same = voices.filter(v => v.key === key);
@@ -121,6 +123,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     src.start(t);
     const len = b.duration / src.playbackRate.value;
     if (dur && dur < len) { g.gain.setValueAtTime(peak, t + dur); g.gain.setTargetAtTime(0, t + dur, rel / 4); src.stop(t + dur + rel * 1.5); }
+    if (fade && fade[0] < len) { g.gain.setValueAtTime(peak, t + fade[0]); g.gain.linearRampToValueAtTime(0, t + fade[1]); src.stop(t + fade[1] + .01); } // fade: [from, silent at] s
     src.connect(g).connect(p).connect(bus.sfx);
     const v = { key, src, g, t0: t };
     src.onended = () => { const i = voices.indexOf(v); if (i >= 0) voices.splice(i, 1); src.disconnect(); g.disconnect(); p.disconnect(); };
@@ -220,12 +223,15 @@ export function createAudio({ base = 'audio/' } = {}) {
   function hit(element, pan = 0, power = .5) {
     const e = EL[element]; if (!e) return;
     const p = clamp(power, 0, 1);
+    if (e.bigHit && p >= 1) { voice(key('special', element) + 'hit', e.bigHit, { pan: pan * .5, gain: db(MIX.special), vary: false, fade: [BIG_HIT.fadeAt, BIG_HIT.end] }); duck(DUCK.special); return; } // the 大 hit (game.js TIER.l.hit = 1)
     // fire2 is a 4 s roar: a normal hit takes its head and lets it go; a stronger hit lets more of it ring
     voice(key('hit', element), e.hit, { pan, gain: db(MIX.hit - MIX.hitSpan * (1 - p)), dur: .5 + .7 * p, rel: .35 });
     if (p >= .5) duck(DUCK.hit);
   }
   function special(element, pan = 0) {
     const e = EL[element]; if (!e) return;
+    if (element === 'fire') return shot(element, pan, .6); // trial (10/18): fire's 大 launches with the 中 shot sound (power .6 = game.js TIER.m), no 4.5 s fire2 burst
+    if (e.bigHit) return; // thunder's 大: no launch sound, only the hit (lightning3)
     voice(key('special', element), e.shot, { pan, gain: db(MIX.shot + 2), rate: .9, vary: false });  // launch
     voice(key('special', element) + 'b', e.hit, { pan: pan * .5, gain: db(MIX.special), rate: .88, vary: false }); // full, lower burst, wider
     duck(DUCK.special);
