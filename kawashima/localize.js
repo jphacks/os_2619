@@ -113,7 +113,9 @@ export function createLocalizer(opts = {}) {
     const m = meanPose(seen.map(({ id, cv_T_tag, w }) =>
       ({ p: compose(compose(compose(worldTagPose(id), invert(cv_T_tag)), cv_T_arcam), invert(calib)), w })));
     const varR = 1 / seen.reduce((a, { r }) => a + 1 / (o.rotNoise * r) ** 2, 0);
-    const varT = PR => 1 / seen.reduce((a, { r, d }) => a + 1 / ((o.posNoise * r) ** 2 + d * d * PR), 0);
+    // tag position noise is independent per tag; the rotation error is shared by every tag in the frame, so it is not averaged down
+    const W = seen.reduce((a, { w }) => a + w, 0), d2 = seen.reduce((a, { w, d }) => a + w * d * d, 0) / W;
+    const varT = PR => 1 / seen.reduce((a, { r }) => a + 1 / (o.posNoise * r) ** 2, 0) + d2 * PR;
     const take = R => { s.origin = pose(R, originT(seen, calib, R)); s.PR = varR; s.Pt = varT(varR); s.pending = []; };
     // judge the jump on the current phone pose, not on the origin (origin errors scale with the lever arm)
     const cur = compose(s.origin, calib), nxt = compose(m, calib);
