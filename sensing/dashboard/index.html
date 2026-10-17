@@ -352,11 +352,8 @@ function plan(c, e, top) { // top: x right, z down; side: x right, y up
     const col = css(who[s]);
     g.strokeStyle = g.fillStyle = col;
     g.globalAlpha = 0.35; g.lineWidth = 1.5; g.beginPath(); p.trail.forEach((q, i) => i ? g.lineTo(...P(q)) : g.moveTo(...P(q))); g.stroke(); g.globalAlpha = 1;
-    const b = e.bodies[s];
-    if (b) { g.lineWidth = 1.5; g.beginPath(); for (let i = 0; i < POSE.length; i += 2) { const a = b[POSE[i]], c = b[POSE[i + 1]]; if (a && c) { g.moveTo(...P(a)); g.lineTo(...P(c)); } } g.stroke(); }
     const [x, y] = P(p.p);
     g.beginPath(); g.arc(x, y, 7, 0, 7); g.fill();
-    if (top && p.fwd) { g.lineWidth = 2.5; g.beginPath(); g.moveTo(x, y); g.lineTo(x + p.fwd[0] * 0.5 * sc, y + p.fwd[2] * 0.5 * sc); g.stroke(); }
     g.fillStyle = css('--text-primary'); g.font = '600 12px system-ui'; g.fillText(s, x + 9, y + 4); g.font = '11px system-ui';
   }
   for (const [s, t] of Object.entries(e.tips)) {
@@ -384,7 +381,7 @@ const cam3Home = { ...cam3 };
   c.ondblclick = () => Object.assign(cam3, cam3Home);
 }
 
-/** The phone as a box (drawn PHONE_SCALE x life size so it reads at room scale): camera side filled, lens dot at the top, arrow along the viewing direction. */
+/** The phone as a box (drawn PHONE_SCALE x life size so it reads at room scale): camera side filled, lens dot at the top. */
 const PHONE = [0.07, 0.15, 0.01], PHONE_SCALE = 2.5;
 function phone3d(g, P, p, col) {
   const { right, down, fwd } = p.axes, [hw, hh, hd] = PHONE.map(v => v * PHONE_SCALE / 2);
@@ -398,7 +395,6 @@ function phone3d(g, P, p, col) {
   poly(face(-1), 0.25); poly(face(1), 0.8);
   for (const a of [-1, 1]) for (const b of [-1, 1]) { g.beginPath(); g.moveTo(...xy(V[key(a, b, -1)])); g.lineTo(...xy(V[key(a, b, 1)])); g.stroke(); }
   const [lx, ly] = xy(at(0.5, 0.75, 1)); g.fillStyle = css('--bg'); g.beginPath(); g.arc(lx, ly, 3, 0, 7); g.fill();
-  g.strokeStyle = col; g.lineWidth = 2.5; g.beginPath(); g.moveTo(...xy(p.p)); g.lineTo(...xy(p.p.map((v, i) => v + fwd[i] * 0.5))); g.stroke();
 }
 
 function view3d(c, e) {
@@ -439,8 +435,6 @@ function view3d(c, e) {
     const col = css(who[s]);
     g.strokeStyle = g.fillStyle = col;
     g.globalAlpha = 0.35; g.lineWidth = 1.5; g.beginPath(); p.trail.forEach((q, i) => i ? g.lineTo(...P(q).slice(0, 2)) : g.moveTo(...P(q).slice(0, 2))); g.stroke(); g.globalAlpha = 1;
-    const b = e.bodies[s];
-    if (b) { g.lineWidth = 1.5; g.beginPath(); for (let i = 0; i < POSE.length; i += 2) { const a = b[POSE[i]], d = b[POSE[i + 1]]; if (a && d) line(a, d); } g.stroke(); }
     drop(p.p, col);
     const [x, y] = P(p.p);
     if (p.axes) phone3d(g, P, p, col); else { g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill(); }
