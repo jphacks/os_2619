@@ -302,7 +302,7 @@ function makeAvatar(slot) {
     root, world, slot,
     update(dt, p) {
       const vis = !!p?.body;
-      root.visible = world.visible = vis;
+      root.visible = vis && !p.hideBody; world.visible = vis; // hideBody: the real skeleton from the camera is drawn instead
       if (!vis) return null;
       st.time += dt;
       // upright body frame from the forward direction (ignore pitch / roll), feet on the floor

@@ -5,7 +5,6 @@ import * as THREE from 'three';
 import * as W from './world.js';
 import { createLocalizer } from './localize.js';
 import { createFx } from './effects.js';
-import { createThumbSender } from './thumb.js';
 import { calibrateCamera, toThreeCamera, detectTags, solveCamera } from './extrinsics.js';
 import { createDrone } from './drone.js';
 import { createField, createMinimap } from './field3d.js';
@@ -41,6 +40,8 @@ const DEFAULTS = {
   posSrc: 'camera', // where the players' positions come from: 'camera' (pose estimation on the third-person video),
                     // 'phones' (chest phones: ARCore + tags, localize.js) or 'start' (fixed at the start marks)
   hand: 'R',        // which wrist holds the stick when positions come from the camera
+  tagMode: 4,       // map4 layout: scan with 2 sheets (ids 0 / 1 mark the A / B ends) or 4 sheets (ids 0-3 at the corners)
+  skeleton: false,  // the camera-tracked skeletons over the video too (they always show in the 3D views)
 };
 const STORE = params.has('dummy') ? '-dummy' : ''; // the dummy room keeps its own settings: its scans must never leak into the real setup
 const load = () => { try { return JSON.parse(localStorage.getItem('fx-cfg2' + STORE)) ?? {}; } catch { return {}; } };
@@ -329,30 +330,18 @@ const saveField = () => { try { localStorage.setItem(fieldKey, JSON.stringify({ 
 async function scanMap() {
   status.extra = '4枚のタグをスキャン中…';
   let FM; try { FM = await import('./fieldmap.js'); } catch (e) { status.extra = 'スキャン失敗：fieldmap.js を読み込めない ' + e.message; return; }
-  const m = await FM.scanField(dummy?.canvas ?? video, { fovYGuess: cfg.tagCam?.fovY ?? cfg.cam.fov });
-  if (!m) { status.extra = 'スキャン失敗：床のタグが3枚以上見えていない。カメラを高くするか、遠いタグを近づける'; return; }
+  const need = modeIds();
+  const m = await FM.scanField(dummy?.canvas ?? video, { fovYGuess: cfg.tagCam?.fovY ?? cfg.cam.fov, mode: cfg.tagMode });
+  if (!m) { status.extra = `スキャン失敗：床のタグ（ID ${need.join('・')}）が${cfg.tagMode === 2 ? '2枚' : '3枚以上'}見えていない。カメラを高くするか、遠いタグを近づける`; return; }
   applyField({ poly: m.poly, tags: m.tags }); saveField();
   cfg.tagCam = m.cam; cfg.camMode = 'tags'; save(); applyCam();
   const xs = m.poly.map(q => q[0]), zs = m.poly.map(q => q[1]), size = `${(Math.max(...xs) - Math.min(...xs)).toFixed(1)}m × ${(Math.max(...zs) - Math.min(...zs)).toFixed(1)}m`;
-  const good = m.ids.length >= 4 && m.reprojErrPx < 4;
+  const good = need.every(id => m.ids.includes(id)) && m.reprojErrPx < 4;
   if (good) match.ready = true;
   status.extra = good ? `スキャン完了：タグ ${m.ids.join(',')}  フィールド 約${size}  誤差 ${m.reprojErrPx.toFixed(1)}px  縦画角 ${m.fovY.toFixed(1)}°。試合を始められる`
-    : `スキャン不十分：${m.ids.length < 4 ? `タグが${m.ids.length}枚しか見えていない` : `誤差 ${m.reprojErrPx.toFixed(1)}px が大きい`}${m.warnings?.length ? '（' + m.warnings.join('、') + '）' : ''}。置き方を直してもう一度`;
+    : `スキャン不十分：${!need.every(id => m.ids.includes(id)) ? `タグが${m.ids.length}枚しか見えていない` : `誤差 ${m.reprojErrPx.toFixed(1)}px が大きい`}${m.warnings?.length ? '（' + m.warnings.join('、') + '）' : ''}。置き方を直してもう一度`;
 }
-// field corners clicked on the admin preview (u, v in 0..1 of the picture): reshape the outline without moving sheets
-const clicks = [];
-async function fieldClick(u, v) {
-  if (!cfg.tagCam) { status.extra = '先にスキャンする'; return; }
-  const FM = await import('./fieldmap.js'), tc = cfg.tagCam, q = FM.imageToFloor(tc, u * tc.width, v * tc.height);
-  if (!q) return;
-  clicks.push([q[0], q[2]]);
-  status.extra = `フィールドの角 ${clicks.length}/4`;
-  if (clicks.length < 4) return;
-  const c = clicks.reduce((a, q) => [a[0] + q[0] / 4, a[1] + q[1] / 4], [0, 0]);
-  const poly = clicks.splice(0).sort((a, b) => Math.atan2(a[1] - c[1], a[0] - c[0]) - Math.atan2(b[1] - c[1], b[0] - c[0]));
-  applyField({ poly }); saveField();
-  status.extra = 'フィールドの角をクリックで決めた';
-}
+const modeIds = () => W.LAYOUT === 'map4' && cfg.tagMode === 2 ? [0, 1] : W.CORNER_IDS;
 async function calibrate() {
   if (W.LAYOUT === 'map4') return scanMap();
   status.extra = 'タグでカメラ合わせ中…';
@@ -381,6 +370,30 @@ async function syncTracker() {
     await tracker.start();
   } catch (e) { status.extra = '骨格推定を読み込めない: ' + e.message; tracker = null; } finally { trackerLoading = false; }
 }
+
+// ---- tracked skeletons in 3D: MediaPipe's 33 joints placed in the world by posetrack.js ----
+const BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [15, 19], [16, 20], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [27, 29], [29, 31], [27, 31],
+  [24, 26], [26, 28], [28, 30], [30, 32], [28, 32], [0, 11], [0, 12]];
+const JOINTS = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28, 31, 32];
+const skels = Object.fromEntries(['A', 'B'].map(slot => {
+  const color = slot === 'A' ? 0xffa060 : 0x8fd8ff, pos = new Float32Array(99);
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(BONES.flat());
+  const jg = new THREE.BufferGeometry(); jg.setAttribute('position', g.getAttribute('position')); jg.setIndex(JOINTS);
+  const lines = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, transparent: true, depthTest: false }));
+  const dots = new THREE.Points(jg, new THREE.PointsMaterial({ color, size: .07, transparent: true, depthTest: false }));
+  lines.renderOrder = dots.renderOrder = 15; lines.frustumCulled = dots.frustumCulled = false;
+  const grp = new THREE.Group(); grp.add(lines, dots); grp.visible = false; scene.add(grp);
+  return [slot, { grp, pos, attr: g.getAttribute('position') }];
+}));
+function updateSkels() {
+  for (const slot of ['A', 'B']) {
+    const k = skels[slot], s = cfg.posSrc === 'camera' ? tracker?.get(slot) : null;
+    k.has = !!(s?.seen && s.skel);
+    if (!k.has) continue;
+    k.pos.set(s.skel); k.attr.needsUpdate = true;
+  }
+}
+const showSkels = on => { for (const k of Object.values(skels)) k.grp.visible = on && k.has; };
 
 // ---- phone view (F): a chest phone's own picture as the background, the camera at that phone's located pose ----
 const phoneCanvas = document.createElement('canvas'), phoneCtx = phoneCanvas.getContext('2d');
@@ -513,7 +526,7 @@ const guideCanvas = Object.assign(document.createElement('canvas'), { id: 'guide
 stage.append(guideCanvas);
 const guideEl = document.getElementById('guide');
 function tagChecks() {
-  return W.CORNER_IDS.map(id => {
+  return modeIds().map(id => {
     const want = W.LAYOUT === 'map4' ? null : W.TAGS[id].pos[0] < 0 ? 'left' : 'right', d = seenTags.list.find(o => o.id === id); // map4: anywhere
     const u = d && d.corners.reduce((a, c) => a + c[0], 0) / 4 / d.w;
     return { id, want, seen: !!d, side: d ? (u < .5 ? 'left' : 'right') : null, px: d ? Math.hypot(d.corners[0][0] - d.corners[1][0], d.corners[0][1] - d.corners[1][1]) : 0 };
@@ -543,14 +556,14 @@ function updateGuideText() {
   if (now() - guideTextAt < .4) return; guideTextAt = now();
   const tc = cfg.camMode === 'tags' && cfg.tagCam, checks = tagChecks();
   const row = c => {
-    const where = W.LAYOUT === 'map4' ? '好きな場所の床（4枚でだいたい四角形の角になるように）' : tagPlace(c.id);
+    const where = W.LAYOUT !== 'map4' ? tagPlace(c.id) : cfg.tagMode === 2 ? `好きな場所の床。${c.id === 1 ? 'A' : 'B'} の端（カメラから見て${c.id === 1 ? '左' : '右'}）` : '好きな場所の床（4枚でだいたい四角形の角になるように）';
     const st = !c.seen ? '<b class="ng">見えていない</b>' : c.want && c.side !== c.want ? `<b class="warn">画面の${SIDE[c.side]}に見えている：左右が逆かも</b>` : c.px < 14 ? '<b class="warn">小さすぎる：iPhoneを近づける</b>' : '<b class="ok">OK</b>';
     return `<li>ID ${c.id}：${where}　${st}</li>`;
   };
   const camLine = tc ? `合わせ済み：iPhone は中心から手前 ${tc.pose.t[2].toFixed(2)}m、横 ${tc.pose.t[0].toFixed(2)}m、高さ ${tc.pose.t[1].toFixed(2)}m にあると計算（目安は ${GUIDE_CAM.z}m・0m・${GUIDE_CAM.y}m）`
-    : W.LAYOUT === 'map4' ? 'タグは測らなくてよい。4枚の位置と向き、カメラの画角はスキャンで測る' : '緑の枠に実物のタグが重なるように、iPhone の位置と向きを動かす';
+    : W.LAYOUT === 'map4' ? `タグは測らなくてよい。${cfg.tagMode}枚の位置と向き、カメラの画角はスキャンで測る` : '緑の枠に実物のタグが重なるように、iPhone の位置と向きを動かす';
   guideEl.innerHTML = `<h4>設置ガイド（準備中）</h4><ol>${checks.map(row).join('')}
-    <li>iPhone：${W.LAYOUT === 'map4' ? '4枚とフィールド全体が映る位置' : `中心から手前へ ${GUIDE_CAM.z}m`}、高さ ${GUIDE_CAM.y}m 以上（高いほど床のタグが見やすい）・横向きで少し見下ろす</li></ol>
+    <li>iPhone：${W.LAYOUT === 'map4' ? `${cfg.tagMode}枚とフィールド全体が映る位置` : `中心から手前へ ${GUIDE_CAM.z}m`}、高さ ${GUIDE_CAM.y}m 以上（高いほど床のタグが見やすい）・横向きで少し見下ろす</li></ol>
     <p>${camLine}</p>${match.ready ? '<p><b class="ok">スキャン完了：試合を始められます</b></p>' : '<p class="dim">全部 OK になったら、人がいない状態で「タグでカメラ合わせ」(K) でスキャンする。スキャンが済むと試合を始められる</p>'}`;
 }
 
@@ -596,7 +609,7 @@ function buildPanel() {
 }
 
 // ---- commands: the same set from the keys here and from admin.html (BroadcastChannel, same browser) ----
-const VIEWS = ['pip', 'full3d', 'off'], TOGGLES = ['debug', 'minimap', 'useTruth', 'anchors'];
+const VIEWS = ['pip', 'full3d', 'off'], TOGGLES = ['debug', 'minimap', 'useTruth', 'anchors', 'skeleton'];
 function command(c) {
   const p = players[c.slot];
   switch (c.cmd) {
@@ -607,11 +620,10 @@ function command(c) {
     case 'calibrate': return calibrate();
     case 'camera': return startVideo(c.value);
     case 'camMode': cfg.camMode = c.value; break;
+    case 'tagMode': cfg.tagMode = +c.value === 2 ? 2 : 4; match.ready = false; save(); return;
     case 'posSrc': cfg.posSrc = c.value; save(); return syncTracker();
     case 'hand': cfg.hand = c.value === 'L' ? 'L' : 'R'; break;
     case 'swap': tracker?.setSwap?.(); return;
-    case 'fieldClick': return fieldClick(c.u, c.v);
-    case 'fieldClickReset': clicks.length = 0; status.extra = 'フィールドの角のクリックをやり直す'; return;
     case 'forceReady': match.ready = true; status.extra = 'スキャンを省いて開始可能にした（前回の合わせ結果を使う）'; return;
     case 'guideCam': cfg.cam = { ...GUIDE_CAM, fov: cfg.tagCam?.fovY ?? GUIDE_CAM.fov }; cfg.camMode = 'manual'; break; // show the guide from the recommended iPhone spot
     case 'view': cfg.view = VIEWS.includes(c.value) ? c.value : VIEWS[(VIEWS.indexOf(cfg.view) + 1) % 3]; break;
@@ -655,13 +667,11 @@ function publish() { // state for admin.html, a few times a second
     link: linkState, host, camMode: cfg.camMode, tagCam: tc && { ids: tc.ids, err: tc.reprojErrPx, fov: tc.fovY, t: tc.pose.t }, camMsg: status.extra,
     video: { w: video.videoWidth, h: video.videoHeight, label: video.srcObject?.getVideoTracks()[0]?.label ?? '', id: video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId }, devices,
     view: cfg.view, drone: drone.mode, shot: drone.shot, fpv: cfg.fpv, fovPhone: intr,
-    posSrc: cfg.posSrc, hand: cfg.hand, pose: tracker ? { ms: tracker.ms, hz: tracker.hz, ready: tracker.ready, A: !!tracker.get('A')?.seen, B: !!tracker.get('B')?.seen } : null,
-    field: { scanned: fieldScanned, poly: W.FIELD.poly }, clicks: clicks.length, setupTags: tagChecks(), tagCheckMs: Math.round(seenTags.ms), toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
+    posSrc: cfg.posSrc, hand: cfg.hand, tagMode: cfg.tagMode, layout: W.LAYOUT, pose: tracker ? { ms: tracker.ms, hz: tracker.hz, ready: tracker.ready, A: !!tracker.get('A')?.seen, B: !!tracker.get('B')?.seen } : null,
+    field: { scanned: fieldScanned, poly: W.FIELD.poly }, setupTags: tagChecks(), tagCheckMs: Math.round(seenTags.ms), toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
 }
 setInterval(publish, 250);
 // a small picture of this screen for the admin page (drawn right after a render, so the WebGL buffer is still there)
-const thumbSender = createThumbSender(canvas, { id: DISPLAY_ID }); // resized GPU copy here, JPEG encoded in thumbworker.js
-const sendThumb = () => thumbSender(aspect);
 
 // ---- main loop ----
 const banner = document.getElementById('banner'), statusEl = document.getElementById('status'), pipLabel = document.getElementById('pipLabel');
@@ -692,11 +702,11 @@ function frame(ts = 0) {
     p.hud.querySelector('.off').textContent = p.online ? '' : 'offline';
   }
   if (cfg.fpv) { placePhoneCamera(cfg.fpv); if (cfg.anchors) tagAnchors(); }
-  stepCharge(dt); stepShots(dt); fx.step(dt);
+  stepCharge(dt); stepShots(dt); fx.step(dt); updateSkels();
   const yawOf = b => Math.atan2(-b.R[6], b.R[0]); // body x axis = forward
   drone.update(dt, Object.fromEntries(Object.values(players).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
   field.update(dt, Object.fromEntries(Object.values(players).map(p => [p.slot,
-    { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu }])));
+    { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, hideBody: skels[p.slot].has }])));
   const mapOn = cfg.minimap && match.phase !== 'setup'; // the setup guide needs that corner
   minimapCanvas.style.display = mapOn ? '' : 'none';
   if (mapOn) minimap.draw(players, shots);
@@ -720,14 +730,14 @@ function frame(ts = 0) {
 
   renderer.setScissorTest(false);
   if (cfg.view === 'full3d') { // drone view with effects + bloom: fx renders through `camera`, so borrow it for a frame
-    scene.background = field.background; field.group.visible = true; world3d.visible = cfg.debug; camHelper.visible = false; guide.visible = false;
+    scene.background = field.background; field.group.visible = true; world3d.visible = cfg.debug; camHelper.visible = false; guide.visible = false; showSkels(true);
     overCam.aspect = aspect; overCam.updateProjectionMatrix();
     const keep = { p: camera.position.clone(), q: camera.quaternion.clone(), fov: camera.fov };
     camera.position.copy(overCam.position); camera.quaternion.copy(overCam.quaternion); camera.fov = overCam.fov; camera.updateProjectionMatrix();
     renderer.setViewport(0, 0, W_px, H_px); fx.render();
     camera.position.copy(keep.p); camera.quaternion.copy(keep.q); camera.fov = keep.fov; camera.updateProjectionMatrix();
   } else {
-    scene.background = cfg.fpv ? phoneTex : videoTex; field.group.visible = false; world3d.visible = cfg.debug; camHelper.visible = false; guide.visible = guiding;
+    scene.background = cfg.fpv ? phoneTex : videoTex; field.group.visible = false; world3d.visible = cfg.debug; camHelper.visible = false; guide.visible = guiding; showSkels(cfg.skeleton && !cfg.fpv);
     fx.render();
     guide.visible = false;
     if (cfg.view === 'pip') { // drone view in the bottom-right corner (no bloom)
@@ -735,11 +745,10 @@ function frame(ts = 0) {
       scene.background = field.background; field.group.visible = true; world3d.visible = cfg.debug; camHelper.visible = cfg.debug;
       overCam.aspect = w / h; overCam.updateProjectionMatrix();
       renderer.setScissorTest(true); renderer.setScissor(W_px - w - 8, 8, w, h); renderer.setViewport(W_px - w - 8, 8, w, h);
-      renderer.render(scene, overCam);
+      showSkels(true); renderer.render(scene, overCam);
       renderer.setScissorTest(false); renderer.setViewport(0, 0, W_px, H_px);
     }
   }
-  sendThumb();
   requestAnimationFrame(frame);
 }
 

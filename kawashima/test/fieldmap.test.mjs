@@ -168,3 +168,89 @@ test('near fronto-parallel view: no garbage (sane positions, focal warning or a 
     assert.ok(res.cam.focalFitted ? e.fov < 5 : res.warnings.length > 0);
   }
 });
+
+// ---- mode 2: sheets 0 and 1 at the A / B ends ----
+function scene2({ sep = uni(1, 5), height = uni(.8, 2.5), back = uni(1.5, 5), fov = uni(25, 75), noise = .3, minPx = 6 } = {}) {
+  const tags = {}, side = rand() < .5 ? 1 : -1; // id 0 at either end
+  tags[0] = { pos: [side * sep / 2, 0, uni(-.1, .1) * sep], yaw: uni(-Math.PI, Math.PI) };
+  tags[1] = { pos: [-side * sep / 2, 0, uni(-.1, .1) * sep], yaw: uni(-Math.PI, Math.PI) };
+  const cam = lookAt([uni(-.3, .3) * sep, height, back], [uni(-.2, .2), 0, uni(-.3, .3)], uni(-3, 3) * DEG), f = IMG[1] / 2 / Math.tan(fov * DEG / 2);
+  const dets = [];
+  for (const id of [0, 1]) {
+    const uv = corners(tags[id], W.TAGS[id].size / 2).map(P => project(cam, f, P));
+    if (uv.some(([u, v, d]) => d <= 0 || u < 5 || v < 5 || u > IMG[0] - 5 || v > IMG[1] - 5)) return null;
+    const e = k => Math.hypot(uv[k][0] - uv[(k + 1) % 4][0], uv[k][1] - uv[(k + 1) % 4][1]);
+    const area = Math.abs(uv.reduce((s, p, k) => s + p[0] * uv[(k + 1) % 4][1] - uv[(k + 1) % 4][0] * p[1], 0)) / 2;
+    if (area / Math.max(e(0), e(1), e(2), e(3)) < minPx) return null;
+    dets.push({ id, corners: uv.map(([u, v]) => [u + noise * gauss(), v + noise * gauss()]) });
+  }
+  return { tags, cam, f, fov, dets, sep, height, back };
+}
+const need2 = o => { for (let i = 0; i < 2000; i++) { const s = scene2(o); if (s) return s; } throw new Error('no 2-sheet scene fits'); };
+function errors2(sc, res) {
+  const d = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
+  const sepE = Math.abs(d(res.tags[0].pos, res.tags[1].pos) - d(sc.tags[0].pos, sc.tags[1].pos));
+  // truth world frame by the mode-2 convention: midpoint origin, +x from the left sheet (smaller u) to the right one
+  const u = id => sc.dets.find(q => q.id === id).corners.reduce((s, c) => s + c[0], 0) / 4;
+  const [a, b] = u(0) < u(1) ? [0, 1] : [1, 0], A = sc.tags[a].pos, B = sc.tags[b].pos, o = [(A[0] + B[0]) / 2, (A[2] + B[2]) / 2];
+  const L = d(A, B), dx = (B[0] - A[0]) / L, dz = (B[2] - A[2]) / L, th = Math.atan2(-dz, dx);
+  const toW = p => [(p[0] - o[0]) * dx + (p[2] - o[1]) * dz, p[1], -(p[0] - o[0]) * dz + (p[2] - o[1]) * dx];
+  const camE = Math.hypot(...toW(sc.cam.t).map((v, i) => v - res.cam.pose.t[i]));
+  const yaw = Math.max(...[0, 1].map(id => Math.abs(wrap(res.tags[id].yaw - (sc.tags[id].yaw - th))))) / DEG;
+  return { sep: sepE, fov: Math.abs(res.fovY - sc.fov), cam: camE, yaw, left: a };
+}
+
+test('mode 2: two sheets 1-5 m apart: distance, focal and camera recovered, frame and rectangle as specified', () => {
+  seed = 61;
+  const E = { sep: [], fov: [], cam: [], yaw: [] }, times = [], fb = []; let fitted = 0, n = 0;
+  while (n < 60) {
+    const sc = need2(); n++;
+    const t0 = performance.now(), res = solveFieldMap([...sc.dets, { id: 2, corners: sc.dets[0].corners }], ...IMG, { mode: 2 }); times.push(performance.now() - t0);
+    assert.ok(res && res.ids.length === 2 && !res.ids.includes(2), 'mode 2 ignores other ids');
+    const e = errors2(sc, res);
+    // frame: midpoint origin, left sheet at -x on the x axis, rectangle through the centres
+    const L = Math.hypot(res.tags[0].pos[0] - res.tags[1].pos[0], res.tags[0].pos[2] - res.tags[1].pos[2]);
+    assert.ok(Math.abs(res.tags[e.left].pos[0] + L / 2) < 1e-9 && Math.abs(res.tags[e.left].pos[2]) < 1e-9);
+    const D = Math.min(3, Math.max(1.5, .6 * L));
+    assert.deepEqual(res.poly.map(p => p.map(v => +v.toFixed(9))), [[L / 2, -D / 2], [-L / 2, -D / 2], [-L / 2, D / 2], [L / 2, D / 2]].map(p => p.map(v => +v.toFixed(9))));
+    if (!res.cam.focalFitted) { console.log(`fallback: sep ${sc.sep.toFixed(2)} h ${sc.height.toFixed(2)} back ${sc.back.toFixed(2)} fov ${sc.fov.toFixed(0)} -> sep err ${(e.sep * 100).toFixed(1)} cm; ${res.warnings.join("; ")}`); assert.ok(res.warnings.length); fb.push(e.sep); continue; }
+    fitted++; for (const k in E) E[k].push(e[k]);
+  }
+  if (fb.length) console.log(`fell back to fovYGuess: ${fb.length}, distance error ${fb.map(v => (v * 100).toFixed(1)).join(', ')} cm`);
+  const sS = stats(E.sep.map(v => v * 100)), sF = stats(E.fov), sC = stats(E.cam.map(v => v * 100)), sY = stats(E.yaw), tm = stats(times);
+  const pr = (k, s, u) => `${k.padEnd(18)} ${s.med.toFixed(2).padStart(7)} ${s.p90.toFixed(2).padStart(7)} ${s.max.toFixed(2).padStart(7)}  ${u}`;
+  console.log(`\nmode 2: ${n} scenes, ${fitted} with a fitted focal (the rest fell back to fovYGuess)`);
+  console.log('error'.padEnd(18) + '     med     p90     max');
+  console.log(pr('sheet distance', sS, 'cm')); console.log(pr('sheet yaw', sY, 'deg')); console.log(pr('vertical fov', sF, 'deg'));
+  console.log(pr('camera position', sC, 'cm')); console.log(pr('solve time', tm, 'ms'));
+  assert.ok(sS.med < 3 && sF.med < 1.5);
+});
+
+test("mode 2, today's room: 1.66 m apart, camera 0.9 m high ~2.5 m from the sheet line, fov 28°", () => {
+  seed = 71;
+  const E = { sep: [], fov: [], cam: [] }; let fitted = 0;
+  for (let i = 0; i < 20; i++) {
+    const sc = need2({ sep: 1.66, height: .9, back: 2.5, fov: 28 });
+    const res = solveFieldMap(sc.dets, ...IMG, { mode: 2, fovYGuess: 45 }), e = errors2(sc, res);
+    if (res.cam.focalFitted) fitted++;
+    for (const k in E) E[k].push(e[k]);
+  }
+  const sS = stats(E.sep.map(v => v * 100)), sF = stats(E.fov), sC = stats(E.cam.map(v => v * 100));
+  console.log(`today-like mode 2 (20 noise draws, ${fitted} fitted focal): distance med ${sS.med.toFixed(2)} p90 ${sS.p90.toFixed(2)} cm, fov med ${sF.med.toFixed(2)} p90 ${sF.p90.toFixed(2)}°, camera med ${sC.med.toFixed(1)} p90 ${sC.p90.toFixed(1)} cm`);
+  assert.ok(sS.med < 3);
+});
+
+test('mode 2, camera straight above the pair: guessed focal with a warning, distance still right', () => {
+  seed = 91;
+  const sc = need2({ sep: 1.5, height: 3, back: 0, fov: 60 });
+  const res = solveFieldMap(sc.dets, ...IMG, { mode: 2, fovYGuess: 45 }), e = errors2(sc, res);
+  console.log(`mode 2 face-on: focal ${res.cam.focalFitted ? 'fitted' : 'guessed'}, distance err ${(e.sep * 100).toFixed(2)} cm; ${res.warnings.join('; ')}`);
+  assert.ok(e.sep < .05 && (res.cam.focalFitted ? e.fov < 5 : res.warnings.length));
+});
+
+test('mode 2 needs both sheets 0 and 1; mode 4 still refuses 2', () => {
+  seed = 81;
+  const sc = need2();
+  assert.equal(solveFieldMap(sc.dets.slice(0, 1), ...IMG, { mode: 2 }), null);
+  assert.equal(solveFieldMap(sc.dets, ...IMG), null);
+});

@@ -11,7 +11,8 @@
 //  3. LM over [log f, camera 6-dof, per tag (x, z, yaw) on the floor] from the best few focals, the largest tag
 //     fixed at the floor origin (gauge), re-expressed afterwards;
 //  4. world frame of setField: origin at the outline's area centroid, y up (toward the camera), +x from A's side
-//     (the two sheets further left in the picture) to B's side.
+//     (the two sheets further left in the picture) to B's side. Mode 2 (only sheets 0 and 1, at the A and B ends):
+//     origin at their midpoint, +x from the left one to the right one, poly a rectangle between them.
 // The focal is observable because the floor's homography across the whole field gives 2 constraints on the
 // intrinsics (Zhang); a camera looking straight down at the floor (fronto-parallel) cannot fix it, so when its
 // 1-sigma exceeds FOV_SIGMA_MAX the fit is redone with fovYGuess and a warning (positions stay right: the in-plane
@@ -20,8 +21,12 @@ import * as W from './world.js';
 import { detectTags } from './extrinsics.js';
 
 export const FIELD_IDS = [0, 1, 2, 3];
+export const PAIR_IDS = [0, 1]; // mode 2: the A-end and B-end sheets
 const OBJ = [[-1, 1], [1, 1], [1, -1], [-1, -1]]; // tag-frame corners, OpenCV / detectTags order
 const FOV_SIGMA_MAX = 1.5; // deg
+// mode 2: two sheets often leave the focal loosely fixed (sigma 1.5-3°) yet still far closer than a 45° guess, which
+// at an oblique view scales the sheet distance with it (tests: 10-30 cm off): keep the fit up to here, with a warning
+const FOV_SIGMA_MAX2 = 3.5;
 const DEG = Math.PI / 180;
 const fToFov = (f, h) => 2 * Math.atan(h / 2 / f) / DEG;
 const fovToF = (fov, h) => h / 2 / Math.tan(fov * DEG / 2);
@@ -174,17 +179,22 @@ function refine(init, f0, tags, g, fitF) {
 }
 
 /**
- * solveFieldMap(dets, width, height, { fovYGuess }) -> null or { cam, tags, poly, fovY, reprojErrPx, ids, warnings }.
- * dets: [{ id, corners: [[u,v] x4] }] in OpenCV corner order (detectTags / calibrateCamera). Needs >= 3 of ids 0-3.
+ * solveFieldMap(dets, width, height, { fovYGuess, mode }) -> null or { cam, tags, poly, fovY, reprojErrPx, ids, warnings }.
+ * dets: [{ id, corners: [[u,v] x4] }] in OpenCV corner order (detectTags / calibrateCamera).
+ * mode 4 (default): needs >= 3 of ids 0-3, the sheets are the field's corners.
+ * mode 2: uses only ids 0 and 1 (both needed), which mark the A end (further left in the picture) and the B end:
+ *   origin at their midpoint, +x from A's sheet to B's; poly = a rectangle whose x = ±L/2 edges pass through the
+ *   two centres (L = their distance), depth D = clamp(0.6 L, 1.5, 3) m centred on z = 0. The focal is fitted the
+ *   same way (two coplanar sheets still constrain the floor homography), only less firmly: more face-on fallbacks.
  * cam: calibrateCamera's shape ({ pose: world_T_cam, OpenCV cam frame, fovY, focalPx, width, height, ids,
  *      reprojErrPx, focalFitted, fovSigma }), so toThreeCamera / projectWorld work on it.
  * tags: { id: { pos: [x, 0, z], yaw } } in world.js worldTagPose's floor convention -> setField({ poly, tags }).
- * poly: the tag centres [[x, z] x N] counter-clockwise seen from above (y toward the viewer): +x, then -z, -x, +z.
+ * poly: the tag centres (mode 4) [[x, z] x N] counter-clockwise seen from above (y toward the viewer): +x, then -z, -x, +z.
  */
-export function solveFieldMap(dets, width, height, { fovYGuess = 45 } = {}) {
-  const warnings = [], seen = new Set();
-  const ds = dets.filter(d => FIELD_IDS.includes(d.id) && W.TAGS[d.id]?.size && !seen.has(d.id) && seen.add(d.id));
-  if (ds.length < 3) return null;
+export function solveFieldMap(dets, width, height, { fovYGuess = 45, mode = 4 } = {}) {
+  const warnings = [], seen = new Set(), use = mode === 2 ? PAIR_IDS : FIELD_IDS;
+  const ds = dets.filter(d => use.includes(d.id) && W.TAGS[d.id]?.size && !seen.has(d.id) && seen.add(d.id));
+  if (ds.length < (mode === 2 ? 2 : 3)) return null;
   if (ds.length === 3) warnings.push('only 3 sheets seen: the field is their triangle');
   const cx = width / 2, cy = height / 2;
   const tags = ds.map(d => {
@@ -209,7 +219,9 @@ export function solveFieldMap(dets, width, height, { fovYGuess = 45 } = {}) {
   const sLogF = colF ? Math.sqrt(Math.max(0, colF[0])) * sPx : Infinity;
   let fovSigma = Math.abs(fToFov(best.f * Math.exp(-sLogF), height) - fToFov(best.f, height)), focalFitted = true;
   const fovFit = fToFov(best.f, height);
-  if (!(fovSigma < FOV_SIGMA_MAX) || fovFit < 12 || fovFit > 100) {
+  if (fovSigma >= FOV_SIGMA_MAX && fovSigma < FOV_SIGMA_MAX2 && mode === 2 && fovFit >= 12 && fovFit <= 100)
+    warnings.push(`focal only loosely fixed by two sheets: fov ${fovFit.toFixed(1)} ± ${fovSigma.toFixed(1)}°`);
+  else if (!(fovSigma < FOV_SIGMA_MAX) || fovFit < 12 || fovFit > 100) {
     const f = fovToF(fovYGuess, height), s = initAt(f, tags, g);
     if (!s) return null;
     best = { ...refine(s, f, tags, g, false), spread: s.spread }; focalFitted = false;
@@ -225,7 +237,8 @@ export function solveFieldMap(dets, width, height, { fovYGuess = 45 } = {}) {
   const C = best.poses.map(([x, z]) => [x, z]);
   const imgU = tags.map(t => t.uv.reduce((s, p) => s + p[0], 0) / 4);
   let dir;
-  if (tags.length >= 4) { // A's side = the two sheets further left in the picture
+  if (tags.length === 2) { const [a, b] = imgU[0] < imgU[1] ? [0, 1] : [1, 0]; dir = [C[b][0] - C[a][0], C[b][1] - C[a][1]]; }
+  else if (tags.length >= 4) { // A's side = the two sheets further left in the picture
     const o = imgU.map((u, i) => [u, i]).sort((a, b) => a[0] - b[0]).map(a => a[1]);
     const m = ids => [0, 1].map(a => ids.reduce((s, i) => s + C[i][a], 0) / ids.length);
     const A = m(o.slice(0, 2)), B = m(o.slice(-2));
@@ -237,7 +250,7 @@ export function solveFieldMap(dets, width, height, { fovYGuess = 45 } = {}) {
   const order = C.map((p, i) => i).sort((i, j) => Math.atan2(-(C[i][1] - mean[1]), C[i][0] - mean[0]) - Math.atan2(-(C[j][1] - mean[1]), C[j][0] - mean[0]));
   let A2 = 0, gx = 0, gz = 0; // area centroid of the outline
   order.forEach((i, k) => { const [x0, z0] = C[i], [x1, z1] = C[order[(k + 1) % order.length]], cr = x0 * z1 - x1 * z0; A2 += cr; gx += (x0 + x1) * cr; gz += (z0 + z1) * cr; });
-  const org = Math.abs(A2) > 1e-9 ? [gx / (3 * A2), gz / (3 * A2)] : mean;
+  const org = tags.length === 2 ? mean : Math.abs(A2) > 1e-9 ? [gx / (3 * A2), gz / (3 * A2)] : mean;
   const fl_T_world = W.pose(W.fromCols([dir[0], 0, dir[1]], [0, 1, 0], [-dir[1], 0, dir[0]]), [org[0], 0, org[1]]);
   const world_T_fl = W.invert(fl_T_world), world_T_cam = W.compose(world_T_fl, flT);
   const toW = ([x, z]) => { const p = W.apply(world_T_fl, [x, 0, z]); return [p[0], p[2]]; };
@@ -249,20 +262,25 @@ export function solveFieldMap(dets, width, height, { fovYGuess = 45 } = {}) {
   });
   const ids = tags.map(t => t.id), fovY = fToFov(best.f, height);
   const cam = { pose: world_T_cam, fovY, focalPx: best.f, width, height, ids, reprojErrPx, focalFitted, fovSigma: focalFitted ? fovSigma : null };
-  return { cam, tags: out, poly: order.map(i => toW(C[i])), fovY, reprojErrPx, ids, warnings };
+  let poly = order.map(i => toW(C[i]));
+  if (tags.length === 2) { // A and B ends: the rectangle between them, same winding as above
+    const L = Math.hypot(C[1][0] - C[0][0], C[1][1] - C[0][1]), x = L / 2, z = Math.min(3, Math.max(1.5, .6 * L)) / 2;
+    poly = [[x, -z], [-x, -z], [-x, z], [x, z]];
+  }
+  return { cam, tags: out, poly, fovY, reprojErrPx, ids, warnings };
 }
 
 /**
- * scanField(videoOrCanvas, { fovYGuess, frames, intervalMs }) -> Promise of solveFieldMap's result (plus dets) or null.
+ * scanField(videoOrCanvas, { fovYGuess, mode, frames, intervalMs }) -> Promise of solveFieldMap's result (plus dets) or null.
  * Like calibrateCamera: `frames` frames `intervalMs` apart (tripod), each tag's corners averaged over the frames it
  * fit the pattern well in, so someone walking past a sheet for a moment does not lose it.
  */
 const MAX_MISFIT = .15;
-export async function scanField(videoOrCanvas, { fovYGuess = 45, frames = 5, intervalMs = 150 } = {}) {
+export async function scanField(videoOrCanvas, { fovYGuess = 45, mode = 4, frames = 5, intervalMs = 150 } = {}) {
   const acc = {}; let size = null;
   for (let i = 0; i < frames; i++) {
     if (i) await new Promise(r => setTimeout(r, intervalMs));
-    const dets = await detectTags(videoOrCanvas, FIELD_IDS);
+    const dets = await detectTags(videoOrCanvas, mode === 2 ? PAIR_IDS : FIELD_IDS);
     if (dets.width) size = [dets.width, dets.height];
     for (const d of dets) (acc[d.id] ??= []).push(d);
   }
@@ -273,7 +291,7 @@ export async function scanField(videoOrCanvas, { fovYGuess = 45, frames = 5, int
     if (m0 > MAX_MISFIT) continue;
     dets.push({ id: +id, corners: [0, 1, 2, 3].map(k => [0, 1].map(a => ok.reduce((s, d) => s + d.corners[k][a], 0) / ok.length)), seen: ok.length, misfit: m0 });
   }
-  const r = solveFieldMap(dets, size[0], size[1], { fovYGuess });
+  const r = solveFieldMap(dets, size[0], size[1], { fovYGuess, mode });
   return r && { ...r, dets };
 }
 

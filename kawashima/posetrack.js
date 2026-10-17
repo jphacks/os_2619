@@ -76,7 +76,7 @@ class OneEuro {
   }
 }
 const filters = () => ({ foot: new OneEuro(), chest: new OneEuro(), L: new OneEuro(), R: new OneEuro(), yaw: new OneEuro(1, .5), yaw2: new OneEuro(1, .5), yaw3: new OneEuro(1, .5) });
-const empty = () => ({ seen: false, age: Infinity, t: 0, img: null, foot: null, chest: null, yaw: null, yaw2: null, yaw3: null, wrist: null, conf: 0, footFrom: null });
+const empty = () => ({ seen: false, age: Infinity, t: 0, img: null, foot: null, chest: null, yaw: null, yaw2: null, yaw3: null, wrist: null, conf: 0, footFrom: null, skel: null, skelVis: null });
 
 // ---- one raw pose -> per-person measurement ----
 export function measure(p, vw, vh, cam) {
@@ -109,6 +109,13 @@ export function measure(p, vw, vh, cam) {
   const W = i => [p.wl[3 * i], p.wl[3 * i + 1], p.wl[3 * i + 2]], rs = sub(W(N.rSh), W(N.lSh));
   const r = mv(cam.pose.R, toRay(ray(hip).dc, rs));
   m.yaw3 = Math.atan2(r[0], r[2]);
+  // whole skeleton in the world: the model's metric hip-centred shape, turned like r, hung at the hips above `foot`,
+  // then lifted / lowered so the lowest visible foot point touches the floor
+  const hipW = rayToVertical(ray(hip), foot[0], foot[2]) ?? [foot[0], .95, foot[2]], dc = ray(hip).dc;
+  const sk = new Float32Array(99);
+  for (let i = 0; i < 33; i++) { const q = mv(cam.pose.R, toRay(dc, W(i))); sk[3 * i] = hipW[0] + q[0]; sk[3 * i + 1] = hipW[1] + q[1]; sk[3 * i + 2] = hipW[2] + q[2]; }
+  if (feetVis > .3) { let lo = Infinity; for (const i of [N.lAnk, N.rAnk, N.lHeel, N.rHeel]) lo = Math.min(lo, sk[3 * i + 1]); for (let i = 0; i < 33; i++) sk[3 * i + 1] -= lo - FOOT_H * .5; }
+  m.skel = sk; m.skelVis = Float32Array.from({ length: 33 }, (_, i) => p.lm[4 * i + 3]);
   return m;
 }
 function toRay(dc, v) { // minimal rotation taking [0,0,1] to dc, applied to v (Rodrigues)
@@ -203,6 +210,10 @@ export function createPoseTracker({ video, getCamera = () => null, hz = 15, work
         yaw2: fy(F.yaw2, m.yaw2), yaw3: fy(F.yaw3, m.yaw3),
       });
       o.yaw = o.yaw3 ?? o.yaw2;
+      if (m.skel) { // light exponential smoothing in place (33 joints: a One Euro each would cost more than it gives)
+        if (!o.skel || o.age > 0 || !k) o.skel = Float32Array.from(m.skel); else for (let i = 0; i < 99; i++) o.skel[i] += .55 * (m.skel[i] - o.skel[i]);
+        o.skelVis = m.skelVis;
+      } else o.skel = null;
     }
   }
 
