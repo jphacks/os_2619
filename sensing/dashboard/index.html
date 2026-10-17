@@ -332,7 +332,7 @@ function plan(c, e, top) { // top: x right, z down; side: x right, y up
   const V = p => top ? p[2] : p[1];
   const pts = [];
   for (const p of Object.values(e.people)) pts.push(p.p, ...p.trail);
-  for (const t of Object.values(e.tips)) pts.push(t.p);
+  for (const t of Object.values(e.sticks)) pts.push(t.base, t.tip);
   if (!pts.length) { g.fillStyle = css('--text-muted'); g.font = '13px system-ui'; g.fillText('waiting for AR tracking', 12, 20); return; }
   let x0 = Infinity, x1 = -Infinity, v0 = top ? Infinity : 0, v1 = top ? -Infinity : 2;
   for (const p of pts) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); v0 = Math.min(v0, V(p)); v1 = Math.max(v1, V(p)); }
@@ -356,10 +356,10 @@ function plan(c, e, top) { // top: x right, z down; side: x right, y up
     g.beginPath(); g.arc(x, y, 7, 0, 7); g.fill();
     g.fillStyle = css('--text-primary'); g.font = '600 12px system-ui'; g.fillText(s, x + 9, y + 4); g.font = '11px system-ui';
   }
-  for (const [s, t] of Object.entries(e.tips)) {
-    const [x, y] = P(t.p);
-    if (t.wrist) { g.strokeStyle = css(who[s]); g.lineWidth = 3; g.beginPath(); g.moveTo(...P(t.wrist)); g.lineTo(x, y); g.stroke(); }
-    g.fillStyle = hsvCss(t.target); g.strokeStyle = css('--text-primary'); g.lineWidth = 1.5;
+  for (const [s, t] of Object.entries(e.sticks)) {
+    const [x, y] = P(t.tip), seen = t.src === 'camera';
+    g.strokeStyle = css(who[s]); g.lineWidth = 3; g.setLineDash(seen ? [] : [6, 4]); g.beginPath(); g.moveTo(...P(t.base)); g.lineTo(x, y); g.stroke(); g.setLineDash([]);
+    g.fillStyle = seen ? hsvCss(t.target) : css(who[s]); g.strokeStyle = css('--text-primary'); g.lineWidth = 1.5;
     g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill(); g.stroke();
   }
 }
@@ -402,7 +402,7 @@ function view3d(c, e) {
   g.clearRect(0, 0, w, h);
   const pts = [];
   for (const p of Object.values(e.people)) pts.push(p.p, ...p.trail);
-  for (const t of Object.values(e.tips)) pts.push(t.p);
+  for (const t of Object.values(e.sticks)) pts.push(t.base, t.tip);
   if (!pts.length) { g.fillStyle = css('--text-muted'); g.font = '13px system-ui'; g.fillText('waiting for AR tracking', 12, 20); return; }
   let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, y1 = 1.5;
   for (const p of pts) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[2]); z1 = Math.max(z1, p[2]); y1 = Math.max(y1, p[1]); }
@@ -440,11 +440,11 @@ function view3d(c, e) {
     if (p.axes) phone3d(g, P, p, col); else { g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill(); }
     g.fillStyle = css('--text-primary'); g.font = '600 12px system-ui'; g.fillText(s, x + 9, y + 4); g.font = '11px system-ui';
   }
-  for (const [s, t] of Object.entries(e.tips)) {
-    drop(t.p, css(who[s]));
-    const [x, y] = P(t.p);
-    if (t.wrist) { g.strokeStyle = css(who[s]); g.lineWidth = 3; g.beginPath(); line(t.wrist, t.p); g.stroke(); }
-    g.fillStyle = hsvCss(t.target); g.strokeStyle = css('--text-primary'); g.lineWidth = 1.5;
+  for (const [s, t] of Object.entries(e.sticks)) {
+    drop(t.tip, css(who[s]));
+    const [x, y] = P(t.tip), seen = t.src === 'camera';
+    g.strokeStyle = css(who[s]); g.lineWidth = 3; g.setLineDash(seen ? [] : [6, 4]); g.beginPath(); line(t.base, t.tip); g.stroke(); g.setLineDash([]); // dashed = from the sensor
+    g.fillStyle = seen ? hsvCss(t.target) : css(who[s]); g.strokeStyle = css('--text-primary'); g.lineWidth = 1.5;
     g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill(); g.stroke();
   }
 }
@@ -461,8 +461,10 @@ function mapPanel(e) {
     L.push(p ? `<b>${s}</b>: x ${m(p.p[0])} z ${m(p.p[2])} m, chest ${m(p.p[1])} m high (${p.src})${p.check != null ? `, tag check ±${cm(p.check)}` : ''}` : `<b>${s}</b>: not located`);
   }
   if (P.A && P.B) L.push(`A–B: ${m(Math.hypot(P.A.p[0] - P.B.p[0], P.A.p[2] - P.B.p[2]))} m apart`);
-  for (const [s, t] of Object.entries(e.tips))
-    L.push(`${s}'s stick tip: ${m(t.p[1])} m high${t.hit != null ? `, ${m(t.hit)} m from ${s === 'A' ? 'B' : 'A'}'s chest` : ''} (${t.src})`);
+  for (const [s, t] of Object.entries(e.sticks)) {
+    const hit = e.tips[s]?.hit;
+    L.push(`${s}'s stick tip: ${m(t.tip[1])} m high${hit != null ? `, ${m(hit)} m from ${s === 'A' ? 'B' : 'A'}'s chest` : ''} (${t.src})`);
+  }
   const a = e.align;
   L.push(e.aligned ? `A↔B frames: ${a.pairs} pairs, rms ${cm(a.rms)}, ${a.shared} shared floor tags`
     : 'A↔B not aligned yet: walk around while each phone sees the other\'s chest tag, or let both see one floor tag');

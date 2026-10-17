@@ -18,8 +18,8 @@ for (let i = 0; i < 30 * 40; i++) {
       m.ingest({ ...k, slot: s });
     }
   }
-  if (i < 30 * 10 || i % 15) continue;
-  const e = m.estimate({ now: tB, L });
+  const e = m.estimate({ now: tB, L }); // every frame, like the dashboard: the stick sensors' yaw offsets are learned inside estimate()
+  if (i < 30 * 13 || i % 15) continue; // A-B alignment and the sticks' yaw offsets settle in the first ~12 s
   assert.ok(e.aligned, `aligned at ${i}`); assert.equal(e.corners.length, 1); assert.deepEqual(e.warn, []);
   err.A.push(dist(e.people.A.p, toRoom(truth(tA).A.chest)));
   err.B.push(dist(e.people.B.p, toRoom(truth(tB).B.chest)));

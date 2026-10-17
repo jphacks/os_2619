@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node server.mjs",
     "fake": "node fake-phone.mjs",
-    "test": "node test.mjs && node test-map.mjs && node test-map-3tags.mjs"
+    "test": "node test.mjs && node test-map.mjs && node test-map-3tags.mjs && node test-sticks.mjs"
   },
   "dependencies": {
     "ws": "8.18.0"

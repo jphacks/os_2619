@@ -32,6 +32,16 @@ const HIP_BELOW_CHEST = 0.4; // m, chest mount to hip midpoint (MediaPipe pose d
 const K0 = [1.04, 0.78, 0.5, 0.5]; // fx/W, fy/H, cx/W, cy/H guess for apps that don't send intrinsics
 const KEEP = 20; // s of AR history and chest sightings used for the A<->B fit
 const other = s => s === 'A' ? 'B' : 'A';
+const YAW_WINDOW = 10; // s of camera-vs-sensor stick directions used to find each IMU's yaw offset
+const HAND_OFFSET = [0.2, -0.3, 0.3]; // m, hand relative to the chest phone along (right, up, forward) until a hand has been seen
+const UP = [0, 1, 0];
+
+/** Direction of the IMU's +Y axis (the stick) in its own gravity-aligned world, converted to y-up room axes (yaw still unknown). WitMotion angles are Z-Y-X, degrees. */
+function imuStick([roll, pitch, yaw]) {
+  const d = Math.PI / 180, cr = Math.cos(roll * d), sr = Math.sin(roll * d), cp = Math.cos(pitch * d), sp = Math.sin(pitch * d), cy = Math.cos(yaw * d), sy = Math.sin(yaw * d);
+  const X = cy * sp * sr - sy * cr, Y = sy * sp * sr + cy * cr, Z = cp * sr; // IMU world: Z up
+  return [X, Z, -Y];
+}
 
 /** Weighted least-squares yaw + translation with a ≈ rotY(th, b) + t. */
 function fit4(c) {
@@ -65,7 +75,7 @@ function robustFit(c) {
 
 export function createMap() {
   const slots = {};
-  for (const s of ['A', 'B']) slots[s] = { ar: [], trail: [], floor: {}, seen: [], k: null, color: null, pose: null, lastTip: null, oldApp: false };
+  for (const s of ['A', 'B']) slots[s] = { ar: [], trail: [], floor: {}, seen: [], k: null, color: null, pose: null, lastTip: null, oldApp: false, imu: null, wrist: null, off: null, yaw: null, yawSamples: [], lastYawT: 0 };
 
   /** Camera pose of phone s at time t, interpolated, in its own AR world. */
   function poseAt(s, t) {
@@ -80,6 +90,9 @@ export function createMap() {
     const qq = p.q.map((v, i) => v + f * (sg * q.q[i] - v)), n = Math.hypot(...qq);
     return { t, p: add(p.p, mul(sub(q.p, p.p), f)), q: qq.map(v => v / n) };
   }
+
+  /** The wrist (pose landmark 16 right / 15 left) that holds the stick: the right hand. Picking the wrist nearest to the tip in the image flips between the two too often. */
+  const holdingHand = lm => lm[16] ? 16 : lm[15] ? 15 : null;
 
   function ingest(k) {
     const s = slots[k.slot]; if (!s) return;
@@ -109,6 +122,7 @@ export function createMap() {
       }
     } else if (k.type === 'color') s.color = k;
     else if (k.type === 'pose') s.pose = k;
+    else if (k.type === 'imu') s.imu = { t: k.t, euler: k.euler };
   }
 
   /** Everything in room coordinates (m): x/z on the floor, y up from the floor. L = stick length per holder. */
@@ -192,13 +206,17 @@ export function createMap() {
       const D = pcam && hipDepth(pcam, P.t);
       // MediaPipe pose z: depth from the hip midpoint, in units of image width
       const lm = D > 0.3 ? P.lm.map(([u, v, z, vis]) => vis > 0.5 ? camToWorld(pcam, mul(ray(u, v), D + z * D / K[0])) : null) : null;
-      if (lm) bodies[o] = lm.map(p => p && R(s, p));
+      if (lm) {
+        bodies[o] = lm.map(p => p && R(s, p));
+        const i = holdingHand(lm);
+        if (i != null) slots[o].wrist = { t: P.t, p: R(s, lm[i]) };
+      }
 
       const C = S.color, cam = C?.found && now - C.t < 0.5 && poseAt(s, C.t);
       const Dc = cam && hipDepth(cam, C.t);
       if (!(Dc > 0.3)) continue;
       const d = ray(C.x, C.y), len = L[o] ?? 1;
-      const hand = lm && [15, 16].filter(i => lm[i]).sort((i, j) => Math.hypot(P.lm[i][0] - C.x, P.lm[i][1] - C.y) - Math.hypot(P.lm[j][0] - C.x, P.lm[j][1] - C.y))[0];
+      const hand = lm && holdingHand(lm);
       const wrist = hand != null ? worldToCam(cam, lm[hand]) : null;
       let lam, src;
       if (wrist) { // tip is on my viewing ray, one stick length from the wrist nearest to it in the image
@@ -220,8 +238,36 @@ export function createMap() {
       tips[o] = { t: C.t, p: R(s, tw), wrist: wrist && R(s, camToWorld(cam, wrist)), src, target: C.target, hit: people[s] ? dist(R(s, tw), people[s].p) : null };
     }
 
+    // 5. sticks. Tip: seen by a camera, else hand + IMU direction, else chest phone + IMU direction.
+    // The IMU sits at the stick's base (+Y along the stick) and is gravity-aligned; only its yaw offset to the room is unknown, found from camera-seen sticks.
+    const sticks = {};
+    for (const o of ['A', 'B']) {
+      const S = slots[o], tp = tips[o], pe = people[o], len = L[o] ?? 1;
+      const imu = S.imu && now - S.imu.t < 0.5 ? imuStick(S.imu.euler) : null;
+      if (imu && tp?.wrist && tp.src === 'stick length' && tp.t !== S.lastYawT) {
+        const d = sub(tp.p, tp.wrist), h = Math.hypot(d[0], d[2]) / Math.hypot(...d), hi = Math.hypot(imu[0], imu[2]);
+        S.lastYawT = tp.t;
+        if (h > 0.3 && hi > 0.3) S.yawSamples.push({ t: now, psi: Math.atan2(imu[2], imu[0]) - Math.atan2(d[2], d[0]), w: h * hi });
+      }
+      while (S.yawSamples.length && S.yawSamples[0].t < now - YAW_WINDOW) S.yawSamples.shift();
+      let re = 0, im = 0, W = 0;
+      for (const y of S.yawSamples) { re += y.w * Math.cos(y.psi); im += y.w * Math.sin(y.psi); W += y.w; }
+      if (S.yawSamples.length >= 5 && Math.hypot(re, im) / W > 0.5) S.yaw = Math.atan2(im, re); // kept when the tip goes out of sight: IMU yaw drifts slowly
+      const dir = imu && S.yaw != null ? rotY(S.yaw, imu) : null;
+      if (imu && S.yaw == null) warn.push(`phone ${o}'s stick sensor: yaw not aligned yet, let the other phone see the tip with the hand visible`);
+
+      const hand = S.wrist && now - S.wrist.t < 0.5 ? S.wrist.p : null;
+      const right = pe?.fwd && cross(pe.fwd, UP); // fwd is horizontal and unit length
+      const body = (off) => pe && right ? add(pe.p, add(mul(right, off[0]), add(mul(UP, off[1]), mul(pe.fwd, off[2])))) : null;
+      let base = tp?.wrist ?? hand;
+      if (base && right) { const r = sub(base, pe.p); S.off = [dot(r, right), r[1], dot(r, pe.fwd)]; }
+      else if (!base) base = body(S.off ?? HAND_OFFSET);
+      if (tp) sticks[o] = { base, tip: tp.p, src: 'camera', target: tp.target };
+      else if (base && dir) sticks[o] = { base, tip: add(base, mul(dir, len)), src: hand ? 'hand + sensor' : 'sensor' };
+    }
+
     return {
-      people, tips, bodies, floorKnown: tags.length > 0, aligned, warn,
+      people, tips, bodies, sticks, floorKnown: tags.length > 0, aligned, warn,
       corners: tags.map(e => ({ id: e.id, p: toRoom(e.p) })),
       align: T && { pairs: T.n, rms: T.rms, spread: T.spread, shared },
     };

@@ -2,7 +2,7 @@
 // AR, tags, colour and pose come from the geometric scene in sim.mjs, so the space map has something real to fit.
 // Run: node fake-phone.mjs [count=2] [host=localhost:8000]
 import WebSocket from 'ws';
-import { packets } from './sim.mjs';
+import { packets, stickEuler } from './sim.mjs';
 
 const n = +(process.argv[2] ?? 2), host = process.argv[3] ?? 'localhost:8000';
 for (let i = 0; i < n; i++) fake(`fake-${i}`, i);
@@ -21,11 +21,11 @@ function fake(id, i) {
     timers.push(setInterval(() => ws.send(JSON.stringify({ type: 'ping', t0: now() })), 1000));
     timers.push(setInterval(() => { // 100 Hz IMU
       const a = now() - t0 + i;
-      s({ type: 'imu', euler: [30 * Math.sin(a), 20 * Math.sin(a * 1.3), (a * 20) % 360 - 180], acc: [Math.sin(a * 5), Math.cos(a * 3), 9.8], gyro: [100 * Math.cos(a), 50 * Math.sin(a * 2), 20], q: [Math.cos(a / 2), 0, Math.sin(a / 2), 0] });
+      s({ type: 'imu', euler: slot ? stickEuler(slot, now()) : [0, 0, 0], acc: [Math.sin(a * 5), Math.cos(a * 3), 9.8], gyro: [100 * Math.cos(a), 50 * Math.sin(a * 2), 20], q: [Math.cos(a / 2), 0, Math.sin(a / 2), 0] });
     }, 10));
     timers.push(setInterval(() => { // 30 Hz camera: AR every frame, detectors every other frame
       if (!slot || ws.readyState !== 1) return;
-      for (const k of packets(slot, now(), frame++ % 2 === 0)) ws.send(JSON.stringify(k));
+      for (const k of packets(slot, now(), frame++ % 2 === 0)) if (k.type !== 'imu') ws.send(JSON.stringify(k)); // IMU goes out at 100 Hz above
       const a = now() - t0 + i;
       s({ type: 'hands', hands: [{ side: 'Right', score: 0.9, lm: Array.from({ length: 21 }, (_, j) => [0.3 + 0.01 * j * Math.cos(a), 0.6 - 0.012 * j, 0]) }] });
     }, 33));

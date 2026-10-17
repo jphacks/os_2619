@@ -9,6 +9,14 @@ const TARGET = { A: [0, 220, 220], B: [115, 220, 200] }; // tip colour of each p
 const WORLD = { A: { psi: 0.7, tau: [0.3, -1.2, -0.5] }, B: { psi: -2.1, tau: [2, -1.1, 1] } }; // room = rotY(psi, w) + tau
 const UP = [0, 1, 0], other = s => s === 'A' ? 'B' : 'A';
 
+const IMU_PSI = { A: 1.1, B: -0.6 }; // yaw offset of each stick IMU's world to the room, unknown to the map
+
+/** What the IMU at the base of s's stick (+Y along the stick, pitch 0 / roll free) reports at time t: WitMotion [roll, pitch, yaw] in degrees. */
+export function stickEuler(s, t) {
+  const T = truth(t)[s], d = norm(sub(T.tip, T.wrist)), v = rotY(-IMU_PSI[s], d), X = v[0], Y = -v[2], Z = v[1]; // room -> IMU world (Z up)
+  return [Math.asin(Z) * 180 / Math.PI, 0, Math.atan2(-X, Y) * 180 / Math.PI];
+}
+
 export function truth(t) {
   const chest = { A: [1 + 0.5 * Math.sin(0.3 * t), 1.3, 1.3 + 0.4 * Math.sin(0.5 * t)], B: [3 + 0.4 * Math.sin(0.4 * t + 1), 1.35, 1.3 + 0.45 * Math.cos(0.35 * t)] };
   const out = {};
@@ -48,6 +56,7 @@ export function packets(s, t, vision = true) {
   const dirW = v => rotY(-W.psi, v), wp = dirW(sub(me.chest, W.tau));
   const wq = quat(dirW(cam.d), dirW(cam.r), dirW(mul(cam.f, -1))); // ARCore camera axes = (portrait down, right, back)
   const out = [{ type: 'ar', t, tracking: 'TRACKING', reason: 'NONE', p: wp, q: wq, wp, wq, planes: 2 }];
+  out.push({ type: 'imu', t, euler: stickEuler(s, t) });
   if (!vision) return out;
 
   const dirCam = v => [dot(v, cam.r), dot(v, cam.d), dot(v, cam.f)], inCam = v => dirCam(sub(v, me.chest));
