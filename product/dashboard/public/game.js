@@ -181,7 +181,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       const a = foe.chest.clone().setY(foe.chest.y - 1.05), b = foe.chest.clone().setY(foe.chest.y + .15);
       const hit = (match.phase === 'fight' || s.test) && new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .3 + T.radius * (s.size ?? 1);
       if (hit) {
-        fx.hit(s.owner.element, s.pos.clone(), T.hit, { tier: s.tier }); sfx()?.hit(s.owner.element, panOf(s.pos), T.hit);
+        fx.hit(s.owner.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.owner.element, panOf(s.pos), T.hit, s.tier);
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
         if (!s.test) damage(foe, s.owner, s.tier); // try-out shots only show
       }

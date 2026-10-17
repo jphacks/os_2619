@@ -15,10 +15,13 @@ const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightn
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
 const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2 }; // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
+// fire3 is also the 大 hit: its 0-6 s faded from 3 s measures differently from the 3 s bed, so that use is corrected by this
+const BIG_LUFS = { fire3: -11.8, lightning3: -7.2 };
 const REF_LUFS = -16;
-// what plays what: 1 = shot, 2 = hit / special burst, 3 = aura bed (fire) / the 大 hit (thunder, bigHit)
-const EL = { fire: { shot: 'fire1', hit: 'fire2', bed: 'fire3' }, thunder: { shot: 'lightning1', hit: 'lightning2', bigHit: 'lightning3' } };
-// thunder's 大: silent launch; on the hit lightning3 plays full until fadeAt, linearly down to silence at end (s) (10/18)
+// what plays what (10/18): every launch (小・中・大) = 1; the hit by tier: 小 = 1, 中 = 2, 大 = 3. fire3 is also fire's aura bed.
+const EL = { fire: { 1: 'fire1', 2: 'fire2', 3: 'fire3', bed: 'fire3' }, thunder: { 1: 'lightning1', 2: 'lightning2', 3: 'lightning3' } };
+const HIT_FILE = { s: 1, m: 2, l: 3 };
+// the 大 hit (3): full until fadeAt, linearly down to silence at end (s)
 const BIG_HIT = { fadeAt: 3, end: 6 };
 // loop regions [start, end, crossfade] s: the beds ramp in for ~1 s and decay for 10+ s, so only the steady middle loops
 const LOOPS = { charge: [.2, 4.4, .35] };
@@ -218,24 +221,22 @@ export function createAudio({ base = 'audio/' } = {}) {
   function shot(element, pan = 0, power = .5) {
     const e = EL[element]; if (!e) return;
     const p = clamp(power, 0, 1);
-    voice(key('shot', element), e.shot, { pan, gain: db(MIX.shot - MIX.shotSpan * (1 - p)), rate: 1.06 - .12 * p }); // heavier shot: lower
+    voice(key('shot', element), e[1], { pan, gain: db(MIX.shot - MIX.shotSpan * (1 - p)), rate: 1.06 - .12 * p }); // heavier shot: lower
   }
-  function hit(element, pan = 0, power = .5) {
+  /** tier 's' | 'm' | 'l' picks the file (1 / 2 / 3); without it the power decides (game.js TIER hit: .25 / .65 / 1). */
+  function hit(element, pan = 0, power = .5, tier = null) {
     const e = EL[element]; if (!e) return;
-    const p = clamp(power, 0, 1);
-    if (e.bigHit && p >= 1) { voice(key('special', element) + 'hit', e.bigHit, { pan: pan * .5, gain: db(MIX.special), vary: false, fade: [BIG_HIT.fadeAt, BIG_HIT.end] }); duck(DUCK.special); return; } // the 大 hit (game.js TIER.l.hit = 1)
-    // fire2 is a 4 s roar: a normal hit takes its head and lets it go; a stronger hit lets more of it ring
-    voice(key('hit', element), e.hit, { pan, gain: db(MIX.hit - MIX.hitSpan * (1 - p)), dur: .5 + .7 * p, rel: .35 });
+    const p = clamp(power, 0, 1), t = HIT_FILE[tier] ? tier : p >= 1 ? 'l' : p >= .5 ? 'm' : 's', name = e[HIT_FILE[t]];
+    if (t === 'l') { // 大: the long one, faded out from 3 s to 6 s
+      voice(key('special', element) + 'hit', name, { pan: pan * .5, gain: db(MIX.special + (LUFS[name] - (BIG_LUFS[name] ?? LUFS[name]))), vary: false, fade: [BIG_HIT.fadeAt, BIG_HIT.end] });
+      duck(DUCK.special); return;
+    }
+    // 中 (2): fire2 is a 4 s roar, so a hit takes its head and lets it go; 小 (1): the short shot sound, whole
+    voice(key('hit', element), name, { pan, gain: db(MIX.hit - MIX.hitSpan * (1 - p)), ...(t === 'm' ? { dur: .5 + .7 * p, rel: .35 } : {}) });
     if (p >= .5) duck(DUCK.hit);
   }
-  function special(element, pan = 0) {
-    const e = EL[element]; if (!e) return;
-    if (element === 'fire') return shot(element, pan, .6); // trial (10/18): fire's 大 launches with the 中 shot sound (power .6 = game.js TIER.m), no 4.5 s fire2 burst
-    if (e.bigHit) return; // thunder's 大: no launch sound, only the hit (lightning3)
-    voice(key('special', element), e.shot, { pan, gain: db(MIX.shot + 2), rate: .9, vary: false });  // launch
-    voice(key('special', element) + 'b', e.hit, { pan: pan * .5, gain: db(MIX.special), rate: .88, vary: false }); // full, lower burst, wider
-    duck(DUCK.special);
-  }
+  /** 大 launch: the same launch sound (1) as 中 (power .6 = game.js TIER.m). The 大 sound is the hit (3). */
+  function special(element, pan = 0) { shot(element, pan, .6); }
   function play(name, { gain = 1, pan = 0, rate = 1 } = {}) { return !!voice(key('play', name), name, { gain, pan, rate, vary: false }); }
 
   function setVolume(b, v) {
