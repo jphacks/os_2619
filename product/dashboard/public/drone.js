@@ -14,7 +14,8 @@ const flat = v => V(v.x, 0, v.z);
 const az = (p, c) => Math.atan2(p.z - c.z, p.x - c.x);
 const fromAz = (c, a, r, y) => V(c.x + Math.cos(a) * r, y, c.z + Math.sin(a) * r);
 
-const MODES = ['auto', 'orbit', 'chaseA', 'chaseB', 'top', 'side', 'free'];
+// fixed: the drone does not move the camera; stage.js puts it where phone C is (the same view as the final render)
+const MODES = ['fixed', 'auto', 'orbit', 'chaseA', 'chaseB', 'top', 'side', 'free'];
 const DEFAULTS = {
   fovWide: 50, fovTight: 32,   // vertical degrees
   blend: 0.8,                  // s, mode switch blend (longer for big sweeps around the players)
@@ -269,6 +270,7 @@ export function createDrone(camera, domElement, opts = {}) {
     if (!MODES.includes(m)) return;
     mode = m;
     if (controls) { controls.enabled = m === 'free'; if (m === 'free') { controls.target.copy(cur.look); controls.update(); } }
+    if (m === 'fixed') { shot = { name: 'fixed' }; blend = null; return; }
     if (m === 'free') {
       if (!inited) { camera.position.copy(cur.pos); camera.lookAt(cur.look); controls?.target.copy(cur.look); inited = true; }
       shot = { name: 'free' }; blend = null; return;
@@ -301,6 +303,7 @@ export function createDrone(camera, domElement, opts = {}) {
     syncField();
     trackPlayers(players, dt);
     if (!shot) setMode(mode);
+    if (mode === 'fixed') return;
     if (mode === 'free') {
       controls?.update();
       cur.pos.copy(camera.position); cur.look.copy(controls?.target ?? cur.look); cur.vel.set(0, 0, 0); cur.lookV.set(0, 0, 0);
@@ -354,7 +357,7 @@ export function createDrone(camera, domElement, opts = {}) {
   return {
     modes: MODES,
     get mode() { return mode; },
-    get shot() { return mode === 'free' ? 'free' : shot?.name ?? ''; },
+    get shot() { return mode === 'free' || mode === 'fixed' ? mode : shot?.name ?? ''; },
     get blending() { return !!blend; },
     opts: o,
     setMode,

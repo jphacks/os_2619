@@ -26,12 +26,13 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷' };
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, size: { s: 1, m: 1, l: 1 } }; // size: ball size × (looks and hit radius)
-// how each tier looks and flies (provisional effects: size tells the tiers apart)
+export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, chargeHold: 1.5, size: { s: 1, m: 1, l: 1 } }; // size: ball size × (looks and hit radius)
+// how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
+// a little larger than the ball looks so near misses still count (10/18: .12 / .28 / .5 were too strict)
 const TIER = {
-  s: { power: .15, big: .7, speed: 11, radius: .12, hit: .25 },
-  m: { power: .6, big: 1.5, speed: 8, radius: .28, hit: .65 },
-  l: { power: 1, big: 2.8, speed: 6.5, radius: .5, hit: 1 },
+  s: { power: .15, big: .7, speed: 11, radius: .2, hit: .25 },
+  m: { power: .6, big: 1.5, speed: 8, radius: .38, hit: .65 },
+  l: { power: 1, big: 2.8, speed: 6.5, radius: .62, hit: 1 },
 };
 export const POS_JA = { auto: '自動', phones: '胸スマホ', start: '立ち位置' };
 
@@ -180,7 +181,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       const a = foe.chest.clone().setY(foe.chest.y - 1.05), b = foe.chest.clone().setY(foe.chest.y + .15);
       const hit = (match.phase === 'fight' || s.test) && new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .3 + T.radius * (s.size ?? 1);
       if (hit) {
-        fx.hit(s.owner.element, s.pos.clone(), T.hit, { tier: s.tier }); sfx()?.hit(s.owner.element, panOf(s.pos), T.hit);
+        fx.hit(s.owner.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.owner.element, panOf(s.pos), T.hit, s.tier);
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
         if (!s.test) damage(foe, s.owner, s.tier); // try-out shots only show
       }
@@ -193,7 +194,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   // ---- moves ----
   function startCharge(p) {
     if (!canAct() || p.charging) return;
-    Object.assign(p, { charging: true, charge: 0, chargeT: 0, tier: 's', chargeFrom: p.chest.clone(), autoRelease: null });
+    Object.assign(p, { charging: true, chargeSeen: now(), charge: 0, chargeT: 0, tier: 's', chargeFrom: p.chest.clone(), autoRelease: null });
     showAct(p, '溜め'); log(p.slot, 'charge', '溜め開始');
   }
   /** Swing while charging: the tier comes from how long it was held. */
@@ -212,8 +213,14 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   /** A detector event from actions.js ({ slot, name, dir, power, speed }). Guard / Dodge are not part of the game. */
   function onSensed(ev) {
     const p = players[ev.slot]; if (!p || !canAct()) return;
-    if (ev.name === 'Charge') startCharge(p);
-    else if (ev.name === 'Swing') attack(p);
+    if (ev.name === 'Charge') { p.chargeSeen = now(); startCharge(p); }
+    else if (ev.name === 'Swing') { if (inFront(p)) attack(p); else log(p.slot, 'shot', '背中側で止めたので撃たない'); }
+  }
+  /** A swing only fires when the stick stops in front of the body: tip ahead of the chest along the body's facing
+   *  (horizontal). A stick that comes to rest behind the back (wind-up, putting it down) is not a shot. */
+  function inFront(p) {
+    const f = W.app3(p.body.R, [1, 0, 0]);
+    return (p.tip.x - p.chest.x) * f[0] + (p.tip.z - p.chest.z) * f[2] > 0;
   }
   function stepCharge(dt) {
     const R = rules();
@@ -221,6 +228,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       // feet must stay put: the chest may sway, but more than moveFail m (horizontal) from where the charge began drops it
       const moved = p.chargeFrom ? Math.hypot(p.chest.x - p.chargeFrom.x, p.chest.z - p.chargeFrom.z) : 0;
       if (moved > R.moveFail) { failCharge(p, `${Math.round(moved * 100)} cm 動いた`); continue; }
+      if (R.chargeHold > 0 && p.autoRelease == null && p.tier !== 'l' && now() - p.chargeSeen > R.chargeHold) { failCharge(p, '棒の動きが止まった'); continue; } // short pauses are fine; a long stop drops it (a full charge just waits for the swing)
       p.chargeT += dt;
       p.charge = Math.min(1, p.chargeT / R.t2);
       const t = tierOf(p.chargeT);

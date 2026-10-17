@@ -848,7 +848,11 @@ export function createFx(renderer, scene, camera, opts = {}) {
       (s.st.end ?? classicEnd)(s, reason);
     },
     /** opt: { tier } */
-    hit(element, pos, power = .5, opt = {}) { (style.hit ?? classicHit)(element, pos, power, opt); },
+    /** opt.target: the struck player's chest. Thunder lands on it in plan (x, z), keeping the hit's height, whatever the style. */
+    hit(element, pos, power = .5, opt = {}) {
+      if (element === 'thunder' && opt.target) pos = pos.clone().set(opt.target.x, pos.y, opt.target.z);
+      (style.hit ?? classicHit)(element, pos, power, opt);
+    },
     /** Adds a style: make(kit) -> handlers (see above). */
     addStyle(name, make) { styles[name] = { ...make(kit) }; if (name === styleName) style = styles[name]; },
     setStyle(name) { styleName = name; style = styles[name] ?? classic; },

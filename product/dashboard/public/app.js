@@ -18,6 +18,7 @@ import { createConnect } from './connect.js';
 import { createFinalControls } from './final-controls.js';
 import { createVision } from './vision.js';
 import { createVisionFx } from './visionfx.js';
+import { createPlayable } from './playable.js';
 
 const $ = s => document.querySelector(s);
 const nowS = () => Date.now() / 1000;
@@ -26,8 +27,8 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 // ---- settings (localStorage) ----
 const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
-  minimap: true, debug: false, pip: false, fpv: null, drone: 'auto', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
-  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 4, fxStyle: 'smash',
+  minimap: true, debug: false, pip: false, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
+  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 5, fxStyle: 'smash',
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
@@ -35,7 +36,8 @@ if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s match
 for (const s of ['A', 'B']) if (cfg.stickLen[s] === .8) cfg.stickLen[s] = W.STICK.len; // the old default, saved before the real 1.0 m stick was measured
 if ((saved.rulesVer ?? 0) < 2) cfg.aim = 'motion'; // ...and the aim from the tip's motion
 if ((saved.rulesVer ?? 0) < 4) cfg.fxStyle = 'smash'; // the program-drawn set is the one used in the show (10/18)
-cfg.rulesVer = 4;
+if ((saved.rulesVer ?? 0) < 5) cfg.drone = 'fixed'; // the game screen starts on phone C's view, the same as screen 4 (10/18)
+cfg.rulesVer = 5;
 cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg }, size: { ...RULES.size, ...saved.rules?.size } };
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
 const axis = { A: W.STICK.axis, B: W.STICK.axis }; // the IMU's +Y points to the stick tip, on both sticks
@@ -62,14 +64,18 @@ const hudFlash = { el: null };
 const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), getDummyFrame: () => vsrc.dummy?.frame });
 stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: プログラム版 (smash, default) / 画像素材版 (textured) / いつもの (classic)
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
+// A / B: keyboard / random / still (screens 3 / 4, dummy room only), through the dummy's truth input and game.command
+const playable = createPlayable({ vsrc, game, cfg, save, isActive: () => screen === 'game' || screen === 'final' });
+let phones = [];
+playable.onChange(() => game.setOnline(playable.withSelf(phones)));
 
 hub.on(k => {
   PA.ingest(k); smap.ingest(k);
-  if (k.type === 'phones') { game.setOnline(k.list); return; }
+  if (k.type === 'phones') { phones = k.list; game.setOnline(playable.withSelf(k.list)); return; }
   connect.ingest(k); game.ingest(k);
-  if (k.type === 'truth') vsrc.dummy?.setTruth(k.slot, k); // fake-world.mjs: the dummy room shows the simulated players
+  if (k.type === 'truth' && !playable.owns(k.slot)) vsrc.dummy?.setTruth(k.slot, k); // fake-world.mjs: the dummy room shows the simulated players
   if (k.type === 'imu' || k.type === 'ar' || k.type === 'calib')
-    for (const ev of detectors.ingest(k, axis[k.slot])) { connect.logAction(ev); game.onSensed(ev); }
+    for (const ev of detectors.ingest(k, axis[k.slot])) { if (!ev.keep) connect.logAction(ev); if (!playable.owns(ev.slot)) game.onSensed(ev); }
 });
 
 // ---- screens ----
@@ -119,6 +125,8 @@ gameCtrl.innerHTML = `
       <div class="facts"></div>
       <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
   </div>
+  <h3>プレイヤーの動き（ダミー映像）</h3>
+  <div id="playGame"></div>
   <h3>ゲームの数値（試遊で調整）</h3>
   <div class="rules">
     <label>中になる溜め時間 <input data-rule="t1" type="number" min="0.1" max="20" step="0.1"> 秒</label>
@@ -182,7 +190,8 @@ for (const b of document.querySelectorAll('[data-tog]')) b.onclick = () => toggl
 
 // ---- final screen toolbar ----
 const finalBar = $('#finalBar');
-const finalControls = createFinalControls({ bar: finalBar, stage, game, vsrc, cfg, save, scan, fullscreen, vision });
+playable.mountControl($('#playGame'));
+const finalControls = createFinalControls({ bar: finalBar, stage, game, vsrc, cfg, save, scan, fullscreen, playable, vision });
 function fullscreen() { const box = $('#finalBox'); document.fullscreenElement ? document.exitFullscreen() : box.requestFullscreen?.().then(() => setTimeout(stage.resize, 100)); }
 document.addEventListener('fullscreenchange', () => setTimeout(stage.resize, 50));
 async function scan() { game.command({ cmd: 'phase', phase: 'setup' }); vsrc.dummy?.showPlayers(false); await stage.scan(); vsrc.dummy?.showPlayers(true); }
@@ -230,7 +239,7 @@ $('#mute').onclick = () => sfx?.setMuted(!sfx.muted);
 for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
   if (!sfx) return; sfx.unlock?.();
   ({ shotFire: () => sfx.shot('fire', 0, .6), shotThunder: () => sfx.shot('thunder', 0, .6), hitFire: () => sfx.hit('fire', 0, .7), hitThunder: () => sfx.hit('thunder', 0, .7),
-    specialFire: () => sfx.special('fire', 0), specialThunder: () => sfx.special('thunder', 0) })[b.dataset.sound]?.();
+    specialFire: () => { sfx.special('fire', 0); sfx.hit('fire', 0, 1, 'l'); }, specialThunder: () => { sfx.special('thunder', 0); sfx.hit('thunder', 0, 1, 'l'); } })[b.dataset.sound]?.();
 };
 
 // ---- keys ----
@@ -340,6 +349,7 @@ function frame(ts) {
   const t = performance.now() / 1000, raw = t - last, dt = Math.min(.05, raw); last = t;
   fps = .95 * fps + .05 / Math.max(raw, 1e-3);
   try { est = PA.estimate(nowS()); } catch (e) { console.warn('phonealign', e); }
+  playable.step(dt, t);
   vsrc.dummy?.render(t); // the picture and game placement consume this exact same pose snapshot
   game.step(dt, raw, est, { sensorOnly: screen === 'final' });
   if (screen === 'final') finalControls.step(t);

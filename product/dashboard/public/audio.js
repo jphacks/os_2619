@@ -14,12 +14,19 @@
 const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3'];
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
-const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -13.9, lightning1: -5.1, lightning2: -12.8, lightning3: -6.9 };
+const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2 }; // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
+// fire3 is also the 大 hit: its 0-6 s faded from 3 s measures differently from the 3 s bed, so that use is corrected by this
+const BIG_LUFS = { fire3: -11.8, lightning3: -7.2 };
 const REF_LUFS = -16;
-// what plays what: 1 = shot, 2 = hit / special burst, 3 = aura bed
-const EL = { fire: { shot: 'fire1', hit: 'fire2', bed: 'fire3' }, thunder: { shot: 'lightning1', hit: 'lightning2', bed: 'lightning3' } };
+// what plays what (10/18): every launch (小・中・大) = 1; the hit by tier: 小 = 1, 中 = 2, 大 = 3. fire3 is also fire's aura bed.
+const EL = { fire: { 1: 'fire1', 2: 'fire2', 3: 'fire3', bed: 'fire3' }, thunder: { 1: 'lightning1', 2: 'lightning2', 3: 'lightning3' } };
+const HIT_FILE = { s: 1, m: 2, l: 3 };
+// the 大 hit (3): full until fadeAt, linearly down to silence at end (s)
+const BIG_HIT = { fadeAt: 3, end: 6 };
 // loop regions [start, end, crossfade] s: the beds ramp in for ~1 s and decay for 10+ s, so only the steady middle loops
-const LOOPS = { fire3: [1.5, 9.5, .8], lightning3: [1, 14, .8], charge: [.2, 4.4, .35] };
+const LOOPS = { charge: [.2, 4.4, .35] };
+// the bed (fire3) plays once from the top: full until fadeAt, down to silence at end (s), no loop (10/18)
+const BED = { fadeAt: 2, end: 3 };
 const BGM_LOOP = [.09, 82]; // music starts at .14 s and ends in a tail at ~81.3 s; both ends are below -45 dBFS
 // mix in dB relative to REF (hit at full power = 0 dB anchor)
 const CHARGE_PITCH = { s: .85, m: 1.1, l: 1.45 }; // playback rate (pitch) per charge tier
@@ -102,7 +109,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     v.g.gain.cancelScheduledValues(t); v.g.gain.setValueAtTime(v.g.gain.value, t); v.g.gain.linearRampToValueAtTime(0, t + fade);
     try { v.src.stop(t + fade + .005); } catch {}
   }
-  function voice(key, name, { gain = 1, pan = 0, rate = 1, dur = 0, rel = .25, vary = true } = {}) {
+  function voice(key, name, { gain = 1, pan = 0, rate = 1, dur = 0, rel = .25, vary = true, fade = null } = {}) {
     const b = buf[name];
     if (!b || ctx.state !== 'running' || muted) return null;
     const t = ctx.currentTime, same = voices.filter(v => v.key === key);
@@ -119,6 +126,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     src.start(t);
     const len = b.duration / src.playbackRate.value;
     if (dur && dur < len) { g.gain.setValueAtTime(peak, t + dur); g.gain.setTargetAtTime(0, t + dur, rel / 4); src.stop(t + dur + rel * 1.5); }
+    if (fade && fade[0] < len) { g.gain.setValueAtTime(peak, t + fade[0]); g.gain.linearRampToValueAtTime(0, t + fade[1]); src.stop(t + fade[1] + .01); } // fade: [from, silent at] s
     src.connect(g).connect(p).connect(bus.sfx);
     const v = { key, src, g, t0: t };
     src.onended = () => { const i = voices.indexOf(v); if (i >= 0) voices.splice(i, 1); src.disconnect(); g.disconnect(); p.disconnect(); };
@@ -177,6 +185,17 @@ export function createAudio({ base = 'audio/' } = {}) {
     v.src.playbackRate.setTargetAtTime(CHARGE_PITCH[tier] ?? CHARGE_PITCH.s, t, .03); // a riser in steps: each tier is higher, the same tier keeps one pitch
     v.p.pan.setTargetAtTime(clamp(pan, -1, 1) * PAN_MAX, t, .05);
   }
+  /** One 3 s pass of a bed: plays from 0, full until BED.fadeAt, linearly down to silence at BED.end, then stops. The level
+   *  (g, set by aura()) and this fade (f) are separate gains, so level changes never undo the fade. The voice stays in
+   *  beds[slot] after it ends, so a continuing aura does not restart it; it plays again once the aura has gone quiet. */
+  function bedVoice(name) {
+    const src = ctx.createBufferSource(), f = ctx.createGain(), g = node(0), p = ctx.createStereoPanner(), t = ctx.currentTime;
+    src.buffer = buf[name]; src.connect(f).connect(g).connect(p).connect(bus.amb);
+    f.gain.setValueAtTime(1, t); f.gain.setValueAtTime(1, t + BED.fadeAt); f.gain.linearRampToValueAtTime(0, t + BED.end);
+    src.start(t, 0); src.stop(t + BED.end + .02);
+    src.onended = () => { src.disconnect(); f.disconnect(); };
+    return { src, g, p, name, t0: t };
+  }
   // beds: called every frame. Only touches AudioParams when the value moved, allocates nothing on the steady path.
   const beds = { A: { v: null, el: '', lvl: -1, pan: 9, zero: 0, seen: 0 }, B: { v: null, el: '', lvl: -1, pan: 9, zero: 0, seen: 0 } };
   function aura(slot, element, level = 0, pan = 0) {
@@ -187,8 +206,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     if (s.v && s.el !== element) { release(s.v, .15); s.v = null; }
     if (!s.v) {
       if (l <= 0 || !buf[name]) return;
-      s.v = loopVoice(name, bus.amb, { start: Math.random() * buf[name].duration }); // random offset: A and B never phase
-      s.el = element; s.lvl = -1; s.pan = 9;
+      s.v = bedVoice(name); s.el = element; s.lvl = -1; s.pan = 9;
     }
     if (l > 0) s.zero = 0; else if (!s.zero) s.zero = t;
     if (Math.abs(l - s.lvl) > .01) { s.v.g.gain.setTargetAtTime(db(MIX.bed) * norm[name] * l, t, .15); s.lvl = l; }
@@ -203,21 +221,22 @@ export function createAudio({ base = 'audio/' } = {}) {
   function shot(element, pan = 0, power = .5) {
     const e = EL[element]; if (!e) return;
     const p = clamp(power, 0, 1);
-    voice(key('shot', element), e.shot, { pan, gain: db(MIX.shot - MIX.shotSpan * (1 - p)), rate: 1.06 - .12 * p }); // heavier shot: lower
+    voice(key('shot', element), e[1], { pan, gain: db(MIX.shot - MIX.shotSpan * (1 - p)), rate: 1.06 - .12 * p }); // heavier shot: lower
   }
-  function hit(element, pan = 0, power = .5) {
+  /** tier 's' | 'm' | 'l' picks the file (1 / 2 / 3); without it the power decides (game.js TIER hit: .25 / .65 / 1). */
+  function hit(element, pan = 0, power = .5, tier = null) {
     const e = EL[element]; if (!e) return;
-    const p = clamp(power, 0, 1);
-    // fire2 is a 4 s roar: a normal hit takes its head and lets it go; a stronger hit lets more of it ring
-    voice(key('hit', element), e.hit, { pan, gain: db(MIX.hit - MIX.hitSpan * (1 - p)), dur: .5 + .7 * p, rel: .35 });
+    const p = clamp(power, 0, 1), t = HIT_FILE[tier] ? tier : p >= 1 ? 'l' : p >= .5 ? 'm' : 's', name = e[HIT_FILE[t]];
+    if (t === 'l') { // 大: the long one, faded out from 3 s to 6 s
+      voice(key('special', element) + 'hit', name, { pan: pan * .5, gain: db(MIX.special + (LUFS[name] - (BIG_LUFS[name] ?? LUFS[name]))), vary: false, fade: [BIG_HIT.fadeAt, BIG_HIT.end] });
+      duck(DUCK.special); return;
+    }
+    // 中 (2): fire2 is a 4 s roar, so a hit takes its head and lets it go; 小 (1): the short shot sound, whole
+    voice(key('hit', element), name, { pan, gain: db(MIX.hit - MIX.hitSpan * (1 - p)), ...(t === 'm' ? { dur: .5 + .7 * p, rel: .35 } : {}) });
     if (p >= .5) duck(DUCK.hit);
   }
-  function special(element, pan = 0) {
-    const e = EL[element]; if (!e) return;
-    voice(key('special', element), e.shot, { pan, gain: db(MIX.shot + 2), rate: .9, vary: false });  // launch
-    voice(key('special', element) + 'b', e.hit, { pan: pan * .5, gain: db(MIX.special), rate: .88, vary: false }); // full, lower burst, wider
-    duck(DUCK.special);
-  }
+  /** 大 launch: the same launch sound (1) as 中 (power .6 = game.js TIER.m). The 大 sound is the hit (3). */
+  function special(element, pan = 0) { shot(element, pan, .6); }
   function play(name, { gain = 1, pan = 0, rate = 1 } = {}) { return !!voice(key('play', name), name, { gain, pan, rate, vary: false }); }
 
   function setVolume(b, v) {
