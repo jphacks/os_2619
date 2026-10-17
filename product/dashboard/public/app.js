@@ -119,7 +119,7 @@ gameCtrl.innerHTML = `
   <div class="players2">${['A', 'B'].map(s => `
     <div class="pc" data-s="${s}"><div class="row" style="justify-content:space-between"><b style="color:var(--${s})">${s} ${ELEMENT_JA[s === 'A' ? 'fire' : 'thunder']}</b><span class="num hpv"></span></div>
       <div class="facts"></div>
-      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special">大</button></div></div>`).join('')}
+      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
   </div>
   <h3>ゲームの数値（試遊で調整）</h3>
   <div class="rules">

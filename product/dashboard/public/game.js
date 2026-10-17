@@ -141,7 +141,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   // ---- moves ----
   function startCharge(p) {
     if (!canAct() || p.charging) return;
-    Object.assign(p, { charging: true, charge: 0, chargeT: 0, tier: 's', chargeFrom: p.chest.clone() });
+    Object.assign(p, { charging: true, charge: 0, chargeT: 0, tier: 's', chargeFrom: p.chest.clone(), autoRelease: null });
     showAct(p, '溜め'); log(p.slot, 'charge', '溜め開始');
   }
   /** Swing while charging: the tier comes from how long it was held. */
@@ -149,12 +149,12 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     if (!p.charging) return;
     const tier = tierOf(p.chargeT);
     p.charging = false; p.lastShot = -9; shoot(p, tier);
-    p.charge = 0; p.chargeT = 0; p.tier = null;
+    p.charge = 0; p.chargeT = 0; p.tier = null; p.autoRelease = null;
   }
   function attack(p) { if (p.charging) release(p); else shoot(p, 's'); }
   function failCharge(p, why) {
     if (!p.charging) return;
-    p.charging = false; p.charge = 0; p.chargeT = 0; p.tier = null; p.fails++;
+    p.charging = false; p.charge = 0; p.chargeT = 0; p.tier = null; p.autoRelease = null; p.fails++;
     fx.hit(p.element, p.tip.clone(), .1); showAct(p, '溜め失敗'); log(p.slot, 'charge', `溜め失敗（${why}）`);
   }
   /** A detector event from actions.js ({ slot, name, dir, power, speed }). Guard / Dodge are not part of the game. */
@@ -177,12 +177,13 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         if (t !== 's') { showAct(p, `溜め ${TIER_JA[t]}`); log(p.slot, 'charge', `溜めが${TIER_JA[t]}になった`); }
         if (t === 'l') drone?.event('charge', { owner: p.slot, level: 1 });
       }
+      if (p.autoRelease != null && p.chargeT >= p.autoRelease) release(p); // the 大 test button: charged long enough, swing
     }
   }
 
   // ---- match flow: setup -> countdown -> fight -> result ----
   function reset() {
-    for (const p of Object.values(players)) Object.assign(p, { hp: 100, charge: 0, chargeT: 0, charging: false, tier: null, act: null, lastShot: -9, shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 });
+    for (const p of Object.values(players)) Object.assign(p, { hp: 100, charge: 0, chargeT: 0, charging: false, tier: null, autoRelease: null, act: null, lastShot: -9, shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 });
     for (const s of shots) fx.endShot(s.id); shots.length = 0; winner = null;
   }
   function setPhase(ph) {
@@ -212,7 +213,9 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       case 'reset': return setPhase(match.phase === 'result' || match.phase === 'countdown' ? 'fight' : match.phase); // again from the top
       case 'matchSec': match.sec = Math.max(10, +c.value || 60); if (match.phase !== 'fight') match.left = match.sec; return;
       case 'shoot': if (p) shoot(p, c.tier ?? 's'); return;
-      case 'special': if (p) shoot(p, 'l'); return;
+      case 'special': // test button: really charge (小 → 中 → 大, moving still fails it), then swing just past the 大 line
+        if (!p || !canAct()) return;
+        startCharge(p); p.autoRelease = rules().t2 + .3; return;
       case 'charge': if (!p) return;
         if (c.on) startCharge(p); else release(p);
         return;

@@ -112,6 +112,19 @@ scenario('溜め中にもう一度「溜め」が来ても、溜め時間はリ�
   expect(S.A.chargeT > 5.4, `溜め時間 ${S.A.chargeT.toFixed(1)} 秒`); eq(S.A.tier, 'l', '段階');
 });
 
+scenario('大ボタンを押すと、実際に溜めて小→中→大と上がってから撃つ', () => {
+  const S = setup(); S.fight(); S.g.command({ cmd: 'special', slot: 'A' });
+  eq(S.A.charging, true, '押した直後に溜め中か'); eq(S.A.shots, 0, '押した直後の発射数');
+  S.run(3); const mid = S.A.tier;
+  S.run(3); S.run(1);
+  eq(mid, 'm', '3秒後の段階'); eq(S.A.shots, 1, '発射数'); eq(S.A.charging, false, '撃ったあと溜め中か'); eq(S.B.hp, 40, 'B の HP（大1発）');
+  return '押す → 3秒で中 → 5.3秒で撃つ';
+});
+scenario('大ボタンで溜めている途中に動くと失敗し、撃たない', () => {
+  const S = setup(); S.fight(); S.g.command({ cmd: 'special', slot: 'A' }); S.run(2); S.walk('A', 0, .6); S.run(5);
+  eq(S.A.fails, 1, '失敗数'); eq(S.A.shots, 0, '発射数'); eq(S.B.hp, 100, 'B の HP');
+});
+
 // ---- 溜めのリスク ----
 scenario('溜め中に30cm動いても溜めは続く', () => {
   const S = setup(); S.fight(); S.charge('A'); S.run(1); S.walk('A', 0, .3); S.run(.5);
