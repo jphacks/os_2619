@@ -184,6 +184,7 @@
   @media (max-width: 520px) { .tests { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .tests button { font-size: 13px; }
 </style>
+<script src="./cdn/npm/qrcode-generator@1.4.4/qrcode.js" defer onerror="this.remove()"></script>
 </head>
 <body>
 <div class="top">
@@ -230,8 +231,26 @@
   <div class="cols">
     <div class="col">
       <section class="card">
+        <h2><span class="no">0</span>つなぐ</h2>
+        <div id="connInfo" class="msg">サーバーの情報を取得中</div>
+        <div class="row" style="align-items:flex-start;gap:16px;flex-wrap:wrap">
+          <div id="qr" aria-label="カメラ用ページのQRコード"></div>
+          <div class="msg" id="connUrls"></div>
+        </div>
+        <h3>映像の入力</h3>
+        <div class="seg" id="videoSrcs"><button data-vsrc="remote">LANのスマホ（カメラ用ページ）</button><button data-vsrc="local">このMacのカメラ</button><button data-vsrc="dummy">ダミーの部屋</button></div>
+        <div class="msg" id="camLink"></div>
+        <div class="row"><button id="camFallback">JPEGに切り替える</button><button id="camWebRTC">WebRTCに戻す</button></div>
+        <details class="help"><summary>スマホのつなぎ方</summary>
+          <p><b>A・Bのスマホ</b>：センサーアプリの LAN 欄に、上のIPとポートを入れて Connect。先につないだ方が A（炎）、次が B（雷）です。</p>
+          <p><b>カメラ用スマホ</b>：QRコード（または上のURL）をスマホのブラウザで開き、「開始」を押します。初回は「証明書の入れ方」のページの手順で証明書を信頼させる必要があります（iPhoneは設定→一般→情報→証明書信頼設定でオン）。</p>
+          <p>映像画面がこのMacのカメラしか出さないときは、「映像の入力」を「LANのスマホ」にしてください。</p>
+        </details>
+      </section>
+
+      <section class="card">
         <h2><span class="no">1</span>準備する</h2>
-        <label class="f"><span>カメラ</span><select id="device"></select><span></span></label>
+        <label class="f"><span>このMacのカメラ</span><select id="device"></select><span></span></label>
         <h3>プレイヤーの位置の取り方</h3>
         <div class="seg" id="posSrcs"><button data-pos="camera">カメラ映像（骨格）</button><button data-pos="phones">胸スマホ（ARCore＋タグ）</button><button data-pos="start">固定（立ち位置）</button></div>
         <h3>棒を持つ手</h3>
@@ -272,6 +291,11 @@
         </div>
         <h3 style="margin-top:16px">判定の設定</h3>
         <label class="f"><span>振り判定 deg/s</span><input id="swing" type="range" min="100" max="1500" step="10"><output id="swingOut" class="num"></output></label>
+        <label class="f"><span>溜め：棒の角度 °</span><input data-set="chargeUpDeg" type="range" min="20" max="85" step="1"><output class="num"></output></label>
+        <label class="f"><span>溜め：静止 deg/s</span><input data-set="chargeStillDps" type="range" min="30" max="400" step="10"><output class="num"></output></label>
+        <label class="f"><span>溜め：開始まで 秒</span><input data-set="chargeDelay" type="range" min="0.1" max="1.5" step="0.05"><output class="num"></output></label>
+        <div class="msg" id="gestInfo"></div>
+        <p class="note">IMU からの仮の判定です。棒の先を上げてほぼ静止すると溜め始め、そのまま振ると放ちます（1.5秒以上で必殺技）。振らずに下ろすと取り消しです。センサー班の判定が届いたら差し替えます。</p>
         <label class="f"><span>狙い</span><select id="aim"><option value="stick">棒の向き（stick）</option><option value="eye">目から棒先（eye）</option></select><span></span></label>
       </section>
 
@@ -364,6 +388,30 @@ $$('[data-charge]').forEach(b => {
   b.onpointerup = b.onpointercancel = () => send({ cmd: 'charge', slot, on: false });
 });
 $('#device').onchange = e => send({ cmd: 'camera', value: e.target.value });
+$$('[data-vsrc]').forEach(b => b.onclick = () => send({ cmd: 'videoSrc', value: b.dataset.vsrc }));
+$('#camFallback').onclick = () => send({ cmd: 'camFallback' });
+$('#camWebRTC').onclick = () => send({ cmd: 'camWebRTC' });
+// server.mjs (:8002 / :8443) tells us the LAN addresses; when this page is served by the old serve.mjs (:8080) ask :8002 directly
+const infoUrl = location.port === '8080' ? `http://${location.hostname}:8002/info` : '/info';
+let info = null, qrText = '';
+function drawQr(text) {
+  if (text === qrText) return; qrText = text;
+  const el = $('#qr'); el.innerHTML = '';
+  try { if (text && window.qrcode) { const q = qrcode(0, 'M'); q.addData(text); q.make(); el.innerHTML = q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); el.firstChild.style.width = '168px'; el.firstChild.style.height = '168px'; el.firstChild.style.background = '#fff'; el.firstChild.style.borderRadius = '6px'; } } catch {}
+}
+async function pollInfo() {
+  try { info = await (await fetch(infoUrl, { cache: 'no-store' })).json(); } catch { info = null; }
+  const u = info?.urls ?? {};
+  setHtml('#connInfo', info ? `このMacのIP: <b>${(info.ips ?? []).map(esc).join(' / ')}</b>　センサーアプリに入れる値: <b>${esc(u.sensorApp ?? '')}</b>　中継: ${info.relayAlive ? '動作中' : '<span class="ng">止まっている</span>'}　カメラ用スマホ: ${(info.cams ?? []).length ? (info.cams.map(c => esc(c.name || c.id)).join(', ') + ' 接続中') : '未接続'}`
+    : `サーバー（server.mjs, :8002）につながらない。<code>node kawashima/server.mjs</code> で起動してから、この管理画面を <code>http://localhost:8002/admin.html</code> で開き直す`);
+  setHtml('#connUrls', info ? [
+    `カメラ用ページ: <a href="${esc(u.camera)}" target="_blank" rel="noopener">${esc(u.camera)}</a>`,
+    `証明書の入れ方（初回だけ）: <a href="${esc(u.trust)}" target="_blank" rel="noopener">${esc(u.trust)}</a>`,
+    `生の3D表示: <a href="space.html" target="_blank" rel="noopener">space.html</a>`,
+  ].map(x => `<div>${x}</div>`).join('') : '');
+  drawQr(u.camera ?? '');
+}
+pollInfo(); setInterval(pollInfo, 5000);
 $('#camMode').onchange = e => send({ cmd: 'camMode', value: e.target.value });
 $('#calibrate').onclick = () => send({ cmd: 'calibrate' });
 $('#guideCam').onclick = () => send({ cmd: 'guideCam' });
@@ -375,6 +423,7 @@ $$('[data-toggle]').forEach(b => b.onclick = () => send({ cmd: 'toggle', key: b.
 const swing = $('#swing');
 swing.oninput = () => { dragging = true; $('#swingOut').textContent = swing.value; send({ cmd: 'set', key: 'swingDps', value: +swing.value }); };
 swing.onchange = () => { dragging = false; };
+$$('input[data-set]').forEach(i => { i.oninput = () => { dragging = true; i.nextElementSibling.textContent = i.value; send({ cmd: 'set', key: i.dataset.set, value: +i.value }); }; i.onchange = () => { dragging = false; }; });
 $('#aim').onchange = e => send({ cmd: 'set', key: 'aim', value: e.target.value });
 // sound
 const pct = v => `${Math.round(v * 100)}%`;
@@ -482,6 +531,10 @@ function render() {
   }
 
   // setup
+  $$('[data-vsrc]').forEach(b => setOn(b, b.dataset.vsrc === (s.videoSrc ?? 'local')));
+  const cs = s.cam;
+  setHtml('#camLink', s.videoSrc !== 'remote' ? '' : !cs ? 'LANカメラ: 受信の準備中' : cs.mode ? `LANカメラ: ${cs.mode === 'webrtc' ? 'WebRTC' : 'JPEG'}　${cs.width ? `${cs.width}×${cs.height}` : ''}　${cs.fps ? `${Math.round(cs.fps)} fps` : ''}　${cs.latencyMs != null ? `遅延 約${Math.round(cs.latencyMs)} ms` : ''}` : 'LANカメラ: スマホの接続を待っている（カメラ用ページを開いて「開始」）');
+  $('#camFallback').style.display = $('#camWebRTC').style.display = s.videoSrc === 'remote' ? '' : 'none';
   const dev = $('#device'), devs = [...(s.devices ?? [])];
   if (s.video?.id && !devs.some(d => d.id === s.video.id)) devs.unshift({ id: s.video.id, label: s.video.label || '使用中のカメラ' }); // the camera in use, even when the list missed it
   const want = devs.map(d => d.id).join();
@@ -522,6 +575,9 @@ function render() {
   $$('[data-fpv]').forEach(b => setOn(b, (b.dataset.fpv || null) === s.fpv));
   $$('[data-toggle]').forEach(b => setOn(b, !!s.toggles?.[b.dataset.toggle]));
   if (!dragging) { if (swing.value != s.swingDps) swing.value = s.swingDps; setText('#swingOut', String(s.swingDps)); }
+  if (!dragging) $$('input[data-set]').forEach(i => { const v = s[i.dataset.set]; if (v != null) { if (i.value != v) i.value = v; if (i.nextElementSibling.textContent !== String(v)) i.nextElementSibling.textContent = String(v); } });
+  const G = { charging: '溜め中', up: '棒を上げている', idle: '待機', '-': 'IMU なし' };
+  setHtml('#gestInfo', s.gest ? `IMU の動作: A ${G[s.gest.A] ?? s.gest.A}　B ${G[s.gest.B] ?? s.gest.B}` : '');
   if (document.activeElement !== $('#aim')) $('#aim').value = s.aim;
 
   // sound

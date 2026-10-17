@@ -39,6 +39,9 @@ const DEFAULTS = {
   camMode: 'manual',
   aim: 'stick',     // 'stick': along the stick, 'eye': eye -> stick tip
   swingDps: 400,    // provisional swing trigger until the sensor team sends actions
+  chargeUpDeg: 55,  // provisional charge gesture: stick tip raised more than this above horizontal ...
+  chargeStillDps: 120, // ... and nearly still (gyro below this) ...
+  chargeDelay: .3,  // ... for this long starts charging; a swing then releases it, lowering it slowly cancels
   debug: false,     // grid / tags / capsules in the main view
   view: 'pip',      // 'pip' | 'full3d' | 'off'
   drone: 'auto',    // drone camera mode for the 3D view (D cycles)
@@ -49,6 +52,7 @@ const DEFAULTS = {
   posSrc: 'camera', // where the players' positions come from: 'camera' (pose estimation on the third-person video),
                     // 'phones' (chest phones: ARCore + tags, localize.js) or 'start' (fixed at the start marks)
   hand: 'R',        // which wrist holds the stick when positions come from the camera
+  videoSrc: 'remote', // third-person picture: 'remote' (a phone's browser on the LAN via camlink.js), 'local' (a camera of this Mac), 'dummy'
   tagMode: 4,       // map4 layout: scan with 2 sheets (ids 0 / 1 mark the A / B ends) or 4 sheets (ids 0-3 at the corners)
   tagMount: 'stand',// the sheets lie on the floor ('floor') or stand upright ('stand': floor height from tagHeight)
   tagHeight: 1.0,   // standing sheets: height of every sheet's centre above the floor (m), the one number the user sets
@@ -221,6 +225,24 @@ function stepShots(dt) {
     if (hit || now() - s.born > 1.5) { fx.endShot(s.id); shots.splice(i, 1); }
   }
 }
+// Provisional IMU gestures (the sensor team's action messages replace this when they exist). p.dir is the stick direction
+// from the last frame. States: idle -> (raised & still for chargeDelay) charging -> (swing) release = shot with the charge,
+// special at full; charging -> (lowered without a swing for .4 s) cancel. Key / admin charging (held) is left alone.
+function gesture(p, dps, t) {
+  const g = p.gest ??= { upSince: 0, downSince: 0, imuCharge: false, lastT: t };
+  const up = p.dir.y > Math.sin(cfg.chargeUpDeg * Math.PI / 180), still = dps < cfg.chargeStillDps;
+  if (!canAct()) { if (g.imuCharge) { p.charging = false; p.charge = 0; g.imuCharge = false; } return; }
+  if (!g.imuCharge) {
+    if (p.charging) return; // held from the keys / admin
+    g.upSince = up && still ? (g.upSince || t) : 0;
+    if (g.upSince && t - g.upSince >= cfg.chargeDelay) { p.charging = true; p.charge = 0; g.imuCharge = true; g.downSince = 0; }
+    else if (dps > cfg.swingDps) shoot(p, Math.min(.9, dps / (2 * cfg.swingDps)));
+    return;
+  }
+  if (dps > cfg.swingDps) { const c = p.charge; p.charging = false; g.imuCharge = false; g.upSince = 0; p.lastShot = 0; shoot(p, c); p.charge = 0; return; }
+  g.downSince = up ? 0 : (g.downSince || t);
+  if (g.downSince && t - g.downSince > .4) { p.charging = false; p.charge = 0; g.imuCharge = false; g.upSince = 0; } // lowered quietly: cancel
+}
 function stepCharge(dt) {
   for (const p of Object.values(players)) if (p.charging) {
     const full = p.charge < 1;
@@ -262,10 +284,13 @@ function flash(el) {
 }
 
 // ---- sensing server link (same protocol as sensing/dashboard) ----
-const host = params.get('host') ?? `${location.hostname}:8000`;
+const SAME_ORIGIN_WS = location.port !== '8080' && location.protocol !== 'file:'; // server.mjs proxies /ws and /cam on its own ports
+const wsBase = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
+const relayUrl = params.get('host') ? `ws://${params.get('host')}/ws` : SAME_ORIGIN_WS ? `${wsBase}/ws` : `ws://${location.hostname}:8000/ws`;
+const host = relayUrl.replace(/^wss?:\/\//, '').replace(/\/ws$/, ''); // for the status line
 let linkState = 'connecting', dummy = null;
 function connect() {
-  const ws = new WebSocket(`ws://${host}/ws`);
+  const ws = new WebSocket(relayUrl);
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => { ws.send(JSON.stringify({ type: 'hello', role: 'dashboard', id: 'kawashima-fx' })); linkState = 'connected'; };
   ws.onclose = () => { linkState = 'disconnected, retrying'; for (const p of Object.values(players)) p.online = false; setTimeout(connect, 1000); };
@@ -276,11 +301,7 @@ function connect() {
     const p = players[k.slot]; if (!p) return;
     loc.onMessage(k); smap.ingest(k);
     if (k.type === 'tags') fitIntrinsics(k);
-    if (k.type === 'imu') {
-      p.imu = k;
-      const dps = Math.hypot(...k.gyro);
-      if (dps > cfg.swingDps) shoot(p, Math.min(.9, dps / (2 * cfg.swingDps)));
-    } else if (k.type === 'truth') { p.truth = k; dummy?.setTruth(k.slot, k); }
+    if (k.type === 'imu') { p.imu = k; gesture(p, Math.hypot(...k.gyro), k.t ?? now()); } else if (k.type === 'truth') { p.truth = k; dummy?.setTruth(k.slot, k); }
     else if (k.type === 'calib') p.imu = null;
   };
 }
@@ -295,10 +316,29 @@ async function startVideo(deviceId) {
   } catch (e) { status.extra = e.name === 'OverconstrainedError' ? 'カメラ: 前回の iPhone が見えない。ケーブルを挿し直すと自動でつながる' : 'camera: ' + e.message; }
   fillDevices();
 }
+// a phone on the LAN as the camera (cam.html + camlink.js): WebRTC, JPEG frames when that fails. Falls back to a local camera.
+let camRx = null;
+const camUrl = params.get('cam') ? `ws://${params.get('cam')}/cam` : SAME_ORIGIN_WS ? `${wsBase}/cam` : `ws://${location.hostname}:8002/cam`;
+async function startRemote() {
+  try {
+    const M = await import('./camlink.js');
+    camRx?.close?.();
+    camRx = M.createCamReceiver({ url: camUrl, id: 'display-' + DISPLAY_ID,
+      onStream: stream => { video.srcObject?.getTracks().forEach(t => t.stop()); video.srcObject = stream; status.extra = ''; },
+      onState: st => { status.extra = st?.error ? 'LANカメラ: ' + st.error : status.extra; } });
+    status.extra = 'LANカメラ: スマホの接続を待っている（管理画面のURLをスマホで開く）';
+  } catch (e) { status.extra = 'LANカメラの部品を読み込めない: ' + e.message + '。このMacのカメラを使う'; cfg.videoSrc = 'local'; save(); startVideo(localStorage.getItem('fx-cam') || undefined); }
+}
+function startSource() {
+  camRx?.close?.(); camRx = null;
+  if (params.has('dummy') || cfg.videoSrc === 'dummy') return startDummy();
+  if (cfg.videoSrc === 'remote') return startRemote();
+  return startVideo(localStorage.getItem('fx-cam') || undefined);
+}
 // the iPhone (Continuity Camera) drops out now and then: when the remembered camera comes back, switch to it by itself
 navigator.mediaDevices.addEventListener?.('devicechange', async () => {
   const want = localStorage.getItem('fx-cam'), cur = video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId;
-  if (!want || want === cur || params.has('dummy')) return;
+  if (!want || want === cur || params.has('dummy') || cfg.videoSrc !== 'local') return;
   if ((await navigator.mediaDevices.enumerateDevices()).some(d => d.deviceId === want)) startVideo(want);
 });
 async function startDummy() {
@@ -682,7 +722,10 @@ function command(c) {
     case 'reset': return setPhase(match.phase === 'result' || match.phase === 'countdown' ? 'fight' : match.phase); // again from the top
     case 'matchSec': match.sec = Math.max(10, +c.value || 90); if (match.phase !== 'fight') match.left = match.sec; return;
     case 'calibrate': return calibrate();
-    case 'camera': return startVideo(c.value);
+    case 'camera': cfg.videoSrc = 'local'; save(); return startVideo(c.value);
+    case 'videoSrc': cfg.videoSrc = ['remote', 'local', 'dummy'].includes(c.value) ? c.value : 'remote'; save(); return startSource();
+    case 'camFallback': return camRx?.requestFallback?.();
+    case 'camWebRTC': return camRx?.requestWebRTC?.();
     case 'camMode': cfg.camMode = c.value; break;
     case 'tagMode': cfg.tagMode = +c.value === 2 ? 2 : 4; match.ready = false; save(); return;
     case 'tagMount': cfg.tagMount = c.value === 'floor' ? 'floor' : 'stand'; match.ready = false; save(); return;
@@ -698,7 +741,7 @@ function command(c) {
     case 'drone': if (c.value) drone.setMode(c.value); else drone.next(); cfg.drone = drone.mode; break;
     case 'toggle': if (TOGGLES.includes(c.key)) cfg[c.key] = !cfg[c.key]; break;
     case 'fpv': cfg.fpv = 'value' in c ? c.value : { null: 'A', A: 'B', B: null }[cfg.fpv]; save(); return resize();
-    case 'set': if (c.key === 'swingDps') cfg.swingDps = +c.value; else if (c.key === 'aim') cfg.aim = c.value; break;
+    case 'set': if (['swingDps', 'chargeUpDeg', 'chargeStillDps', 'chargeDelay'].includes(c.key)) cfg[c.key] = +c.value; else if (c.key === 'aim') cfg.aim = c.value; break;
     case 'shoot': if (p) shoot(p, c.power ?? .5); return;
     case 'charge': if (!p) return;
       if (c.on) { if (!canAct()) return; p.charging = true; p.charge = 0; }
@@ -743,11 +786,12 @@ function publish() { // state for admin.html, a few times a second
     winner: winner?.slot ?? null,
     players: Object.fromEntries(Object.values(players).map(p => [p.slot, { hp: p.hp, online: p.online, imu: !!p.imu, fake: !!p.truth, charge: p.charge, charging: p.charging, loc: L(p.slot) }])),
     link: linkState, host, camMode: cfg.camMode, tagCam: tc && { ids: tc.ids, err: tc.reprojErrPx, fov: tc.fovY, t: tc.pose.t }, camMsg: status.extra,
+    videoSrc: params.has('dummy') ? 'dummy' : cfg.videoSrc, cam: camRx ? { ...(camRx.stats ?? {}), url: camUrl } : null,
     video: { w: video.videoWidth, h: video.videoHeight, label: video.srcObject?.getVideoTracks()[0]?.label ?? '', id: video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId }, devices,
     view: cfg.view, drone: drone.mode, shot: drone.shot, fpv: cfg.fpv, fovPhone: intr,
     audio: sfx && { unlocked: sfx.unlocked, loaded: sfx.loaded, muted: sfx.muted, vol: sfx.volumes },
     posSrc: cfg.posSrc, hand: cfg.hand, skelSrc: cfg.skelSrc, phoneBodies: { A: phoneSk.A.has, B: phoneSk.B.has, aligned: !!roomToWorld, warn: phoneEst?.warn?.slice(0, 2) ?? [] }, tagMode: cfg.tagMode, tagMount: cfg.tagMount, tagHeight: cfg.tagHeight, knownFov: cfg.knownFov ?? null, layout: W.LAYOUT, pose: tracker ? { ms: tracker.ms, hz: tracker.hz, ready: tracker.ready, A: !!tracker.get('A')?.seen, B: !!tracker.get('B')?.seen } : null,
-    field: { scanned: fieldScanned, poly: W.FIELD.poly }, setupTags: tagChecks(), tagCheckMs: Math.round(seenTags.ms), toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
+    field: { scanned: fieldScanned, poly: W.FIELD.poly }, setupTags: tagChecks(), tagCheckMs: Math.round(seenTags.ms), toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, chargeUpDeg: cfg.chargeUpDeg, chargeStillDps: cfg.chargeStillDps, chargeDelay: cfg.chargeDelay, gest: Object.fromEntries(Object.values(players).map(p => [p.slot, p.gest?.imuCharge ? 'charging' : p.imu ? (p.dir.y > Math.sin(cfg.chargeUpDeg * Math.PI / 180) ? 'up' : 'idle') : '-'])), aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
 }
 setInterval(publish, 250);
 // a small picture of this screen for the admin page (drawn right after a render, so the WebGL buffer is still there)
@@ -843,6 +887,6 @@ buildPanel();
 addEventListener('resize', resize);
 resize();
 connect();
-if (params.has('dummy')) startDummy(); else startVideo(localStorage.getItem('fx-cam') || undefined);
+startSource();
 video.addEventListener('playing', syncTracker, { once: true });
 frame();

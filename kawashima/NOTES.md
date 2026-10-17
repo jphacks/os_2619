@@ -5,12 +5,15 @@
 ## 動かし方
 
 ```
-cd sensing/dashboard && npm install && npm start   # センサーの中継サーバー（:8000）
-npm run fake                                        # 実機がないときのテストデータ
-cd kawashima && node serve.mjs                      # エフェクト画面（:8080）
+cd sensing/dashboard && npm install     # 初回だけ（中継サーバーの依存）
+node kawashima/server.mjs               # これ1つで全部動く（:8002、HTTPS は :8443、中継 :8000 も中で起動）
 ```
 
-`http://localhost:8080` を開く。別のPCで中継サーバーが動いているときは `?host=IP:8000` を付ける。`?demo` を付けると、両者が相手を狙って自動で撃ち合う。
+- 管理画面 `http://localhost:8002/admin.html`、映像画面 `http://localhost:8002/`、生の3D表示 `http://localhost:8002/space.html`
+- **A・Bのスマホ**はセンサーアプリで、このMacのIPとポート 8000（8002 でも可）を入れてつなぐ。IPは管理画面の「0 つなぐ」に出る
+- **第三者視点カメラ**はスマホのブラウザで `https://<MacのIP>:8443/cam.html` を開いて「開始」を押す。HTTPSでないとブラウザがカメラを開けないため、初回だけ `http://<MacのIP>:8002/trust.html`（証明書を入れる前なので HTTP）の手順で証明書を信頼させる。映像は WebRTC で届き、つながらないときは JPEG の連送に自動で切り替わる
+- このMacのカメラ（連係カメラなど）を使うときは、管理画面の「映像の入力」を「このMacのカメラ」にする
+- 旧来の `node kawashima/serve.mjs`（:8080、中継は別に `npm start`）もそのまま使える。`?host=IP:8000` で別のPCの中継を指せる。`?demo` で自動の撃ち合い
 
 キー操作は次のとおり。C で設定パネル、G でデバッグ表示（グリッド・当たり判定の範囲）、Space で A が発射、Enter で B が発射、R でリセット。
 

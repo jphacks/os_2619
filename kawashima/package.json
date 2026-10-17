@@ -2,9 +2,10 @@
   "name": "bou-battle-display",
   "private": true,
   "type": "module",
-  "description": "PC side: projector display + admin page. No bundling: plain ES modules served by serve.mjs.",
+  "description": "PC side: projector display + admin page. No bundling: plain ES modules served by server.mjs (http 8002, https 8443, /ws proxy to the sensing relay, /cam).",
   "scripts": {
-    "start": "node serve.mjs",
+    "start": "node server.mjs",
+    "serve": "node serve.mjs",
     "prefetch": "node serve.mjs --prefetch",
     "test": "node --test test/"
   }

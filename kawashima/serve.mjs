@@ -1,16 +1,17 @@
 // Serves this folder. The page talks to the sensing server (sensing/dashboard/server.mjs, port 8000) directly.
 // Run: node serve.mjs   then open http://localhost:8080   (?host=IP:8000 to point at another PC)
+// server.mjs (http+https+ws proxy, the normal way to start everything) imports `handle` from here instead of listening itself.
 // /cdn/npm/<pkg>@<x.y.z>/<file> is cdn.jsdelivr.net/npm/... cached in vendor/cdn/: fetched once while online, served from disk
 // afterwards (venue Wi-Fi down, no Internet at all). `node serve.mjs --prefetch` fills the cache with what the pages use.
 import http from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, extname, join, normalize } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const PORT = +process.env.PORT || 8080;
-const root = fileURLToPath(new URL('.', import.meta.url));
+export const root = fileURLToPath(new URL('.', import.meta.url));
 const cache = join(root, 'vendor', 'cdn');
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.wasm': 'application/wasm', '.mp3': 'audio/mpeg', '.svg': 'image/svg+xml' };
+export const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.wasm': 'application/wasm', '.mp3': 'audio/mpeg', '.svg': 'image/svg+xml' };
 const PREFETCH = [
   'npm/three@0.160.0/build/three.module.js', 'npm/three@0.160.0/examples/jsm/controls/OrbitControls.js',
   'npm/js-aruco2@2.0.0/src/cv.js', 'npm/js-aruco2@2.0.0/src/aruco.js', 'npm/js-aruco2@2.0.0/src/dictionaries/apriltag_36h11.js',
@@ -27,12 +28,13 @@ async function fromCdn(p) {
   return body;
 }
 
-if (process.argv.includes('--prefetch')) {
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain && process.argv.includes('--prefetch')) {
   for (const p of PREFETCH) { await fromCdn(p); console.log('cached', p); }
   process.exit(0);
 }
 
-http.createServer(async (req, res) => {
+export async function handle(req, res) {
   let path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^(\.\.[/\\])+/, '');
   if (path === '/') path = '/index.html';
   if (path.startsWith('/cdn/')) {
@@ -47,4 +49,6 @@ http.createServer(async (req, res) => {
     const body = await readFile(join(root, path));
     res.writeHead(200, { 'content-type': types[extname(path)] ?? 'application/octet-stream' }).end(body);
   } catch { res.writeHead(404).end(); }
-}).listen(PORT, () => console.log(`effects: http://localhost:${PORT}`));
+}
+
+if (isMain) http.createServer(handle).listen(PORT, () => console.log(`effects: http://localhost:${PORT}`));

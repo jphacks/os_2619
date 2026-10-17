@@ -1,1 +1,3 @@
+# local CA + server certificates made by server.mjs: private keys, and bound to this machine's IPs anyway
+cert/
 .DS_Store
