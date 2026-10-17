@@ -1,5 +1,5 @@
 // 接続: how to connect, and everything each phone sends, as the sensing dashboard shows it.
-//  - phones A / B (SensorLink app): chest-camera video with the tags it detects, stream rates and latency, IMU orientation /
+//  - phones A / B (SensorLink app): the tags its chest camera detects (where they sit in its frame; no picture is sent), stream rates and latency, IMU orientation /
 //    gyro / acceleration charts, calibrated IMU axes, ARCore state + top-down track, AprilTag table
 //  - phone C (cam.html in the browser): live picture, WebRTC / JPEG, fps, bitrate, delay; video source switch
 //  - server: IP and port to type into the app, QR codes for phone C's page and the certificate page
@@ -39,7 +39,7 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
       <header><h2 style="color:var(--${s})">スマホ ${s}</h2><span class="sub name">未接続</span><span class="badge off state">オフライン</span><span class="sub">${s === 'A' ? '炎' : '雷'}</span></header>
       <div class="cols">
         <div>
-          <canvas class="video" width="480" height="640" aria-label="胸カメラの映像と検出したタグ"></canvas>
+          <canvas class="video" width="480" height="640" aria-label="胸カメラが検出したタグ（画面内の位置）"></canvas>
           <h3>ストリーム</h3>
           <table class="rates"><thead><tr><th>種類</th><th>Hz</th><th>遅延</th></tr></thead><tbody></tbody></table>
         </div>
@@ -216,11 +216,9 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
   }
   function videoView(s, ph) {
     const c = s.q('canvas.video'), g = c.getContext('2d');
-    if (ph.img && (c.width !== ph.img.width || c.height !== ph.img.height)) { c.width = ph.img.width; c.height = ph.img.height; }
     const w = c.width, h = c.height, lw = Math.max(2, w / 200);
     g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
-    if (ph.img) g.drawImage(ph.img, 0, 0);
-    else { g.fillStyle = '#666'; g.font = `${w / 18}px system-ui`; g.fillText(ph.online ? '映像を待っています…' : '未接続', w * 0.06, h / 2); }
+    if (!ph.online) { g.fillStyle = '#666'; g.font = `${w / 18}px system-ui`; g.fillText('未接続', w * 0.06, h / 2); }
     const fresh = k => k && now() - k.rx < 0.5; // don't leave stale detections on screen
     g.lineWidth = lw; g.font = `${w / 22}px system-ui`;
     const tg = ph.last.tags;

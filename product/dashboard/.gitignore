@@ -1,3 +1,6 @@
 node_modules/
 # local CA + server certificates made by server.mjs: private keys, and bound to this machine's IPs anyway
 cert/
+# MediaPipe's wasm and models (~20 MB): server.mjs downloads them into vendor/cdn on first use
+vendor/cdn/npm/@mediapipe/
+vendor/cdn/mp-models/

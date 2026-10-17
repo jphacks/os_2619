@@ -2,10 +2,11 @@
 // Everything is on port 8000. The first byte of each connection says which protocol it speaks: 0x16 is a TLS handshake
 // (https / wss, needed by the camera phone's browser for getUserMedia), anything else is plain http / ws.
 //  /ws    phones A and B (the SensorLink app) and the dashboards. Same protocol as sensing/dashboard/server.mjs:
-//         slots A / B, packets relayed with `slot` added, video as binary (first byte = slot), ping → pong, `phones` list.
+//         slots A / B, packets relayed with `slot` added, ping → pong, `phones` list. Phones A / B send no picture.
 //  /cam   phone C, the third-person camera (cam.html + camlink.js): WebRTC signalling and a JPEG fallback relay
 //  /info  JSON for the dashboard;  /ca.crt /ca.pem  the local CA phone C trusts once (trust.html)
 //  /cdn/npm/<pkg>@<x.y.z>/<file>  cdn.jsdelivr.net cached in vendor/cdn/ (works offline once fetched)
+//  /cdn/mp-models/<path>.task      MediaPipe's models (storage.googleapis.com/mediapipe-models), cached the same way
 // Env: PORT (8000), OPENSSL (path to openssl). Without openssl only plain http runs: everything but phone C's page works.
 import http from 'node:http';
 import https from 'node:https';
@@ -68,29 +69,36 @@ const send = (ws, k) => ws.readyState === 1 && ws.send(JSON.stringify(k));
 
 // ---- /ws: phones A and B + dashboards (sensing/dashboard/server.mjs, unchanged protocol) ----
 const SLOTS = ['A', 'B'];
-const phones = new Map(); // phone id -> { slot, name, ws, seen, addr, since, n: { msg, video, bytes } (since the last stats line), gap }
-// A phone is dropped after SILENCE ms with nothing from it on either socket (data or video). 5 s was too short on a
-// two-hop link (phone -> hotspot -> this PC as another hotspot client): a burst of video could hold the pings back that long.
+const phones = new Map(); // phone id -> { slot, name, ws, seen, addr, since, n: { msg, bytes } (since the last stats line), gap }
+// A phone is dropped after SILENCE ms with nothing from it. 5 s was too short on a two-hop link (phone -> hotspot -> this
+// PC as another hotspot client): a slow stretch could hold the pings back that long.
 const SILENCE = 10e3;
 const hms = () => new Date().toLocaleTimeString('ja-JP', { hour12: false });
 const log = (...a) => console.log(hms(), ...a);
 const alive = p => { const t = Date.now(); p.gap = Math.max(p.gap ?? 0, t - p.seen); p.seen = t; };
 const dashboards = new Set();
-const toDashboards = (data, video) => {
-  for (const d of dashboards) if (d.readyState === 1 && !(video && d.bufferedAmount > 2e6)) d.send(data); // slow dashboard: skip frames, never sensor data
-};
+const toDashboards = data => { for (const d of dashboards) if (d.readyState === 1) d.send(data); };
 const phoneList = () => [...phones.values()].map(({ slot, name, addr }) => ({ slot, name, addr }));
 const status = () => toDashboards(JSON.stringify({ type: 'phones', list: phoneList() }));
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
 wss.on('connection', (ws, req) => {
   let role = null, id = null;
+  const dbg = process.env.NET_DEBUG && lanAddr(req.socket.remoteAddress), port = req.socket.remotePort;
+  if (dbg) { log(`net ${port} ws open`); ws.on('close', (c, r) => log(`net ${port} ws close ${c} ${r}`)); ws.on('error', e => log(`net ${port} ws error ${e.message}`)); }
+  // The phone's first ping fits in a small packet, but the hello and sensor data behind it ride in full 1500-byte
+  // packets. On a link with a smaller MTU that drops them silently (seen on a Windows hotspot: 1492), the phone says
+  // "connected" while nothing reaches us. A socket that pinged yet never said hello is that case.
+  let heard = false;
+  const noHello = setTimeout(() => {
+    if (heard && role === null && ws.readyState === 1) log(`phone at ${req.socket.remoteAddress?.replace(/^::ffff:/, '')} pings but its hello never arrives: large packets are being dropped on the way (MTU). Fix on the PC: sudo ifconfig en0 mtu 1400 (macOS) / netsh interface ipv4 set subinterface "Wi-Fi" mtu=1400 store=persistent (Windows)`);
+  }, 5e3);
+  ws.on('close', () => clearTimeout(noHello));
   ws.on('message', (data, isBinary) => {
+    heard = true;
+    if (dbg && (ws.__n = (ws.__n ?? 0) + 1) <= 12 && !(isBinary && ws.__n > 2)) log(`net ${port} ws message #${ws.__n}: ${isBinary ? `binary ${data.length} B` : String(data).slice(0, 120)}`);
     const p = id && phones.get(id);
-    if (isBinary) {
-      if (role === 'video' && p) { alive(p); p.n.video++; p.n.bytes += data.length; toDashboards(Buffer.concat([Buffer.from(p.slot), data]), true); } // first byte = slot
-      return;
-    }
+    if (isBinary) return;
     let k;
     try { k = JSON.parse(data); } catch { return; }
     if (k.type === 'ping') {
@@ -105,12 +113,12 @@ wss.on('connection', (ws, req) => {
       const slot = old?.slot ?? SLOTS.find(s => ![...phones.values()].some(q => q.slot === s));
       if (!slot) { send(ws, { type: 'full' }); return ws.close(); }
       old?.ws.terminate();
-      phones.set(id, { slot, name: String(k.name).slice(0, 40), ws, seen: Date.now(), since: Date.now(), gap: 0, n: { msg: 0, video: 0, bytes: 0 }, addr: req.socket.remoteAddress?.replace(/^::ffff:/, '') });
+      phones.set(id, { slot, name: String(k.name).slice(0, 40), ws, seen: Date.now(), since: Date.now(), gap: 0, n: { msg: 0, bytes: 0 }, addr: req.socket.remoteAddress?.replace(/^::ffff:/, '') });
       log(`phone ${slot} (${k.name}) connected from ${req.socket.remoteAddress}`);
       send(ws, { type: 'welcome', slot });
       return status();
     }
-    if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; k.slot = p.slot; toDashboards(JSON.stringify(k)); }
+    if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); }
   });
   ws.on('close', (code, reason) => {
     dashboards.delete(ws);
@@ -119,17 +127,17 @@ wss.on('connection', (ws, req) => {
       phones.delete(id);
       log(`phone ${p.slot} disconnected after ${((Date.now() - p.since) / 1000).toFixed(1)} s (${p.dropped ? `nothing for ${(p.dropped / 1000).toFixed(1)} s` : `close ${code}${reason?.length ? ' ' + reason : ''}`})`);
       status();
-    } else if (role === 'video' && p) log(`phone ${p.slot} video socket closed (close ${code})`);
+    }
   });
 });
-// a phone that drops off WiFi never sends a close; free its slot after SILENCE of nothing on either socket
+// a phone that drops off WiFi never sends a close; free its slot after SILENCE of nothing from it
 setInterval(() => { for (const p of phones.values()) { const q = Date.now() - p.seen; if (q > SILENCE && !p.dropped) { p.dropped = q; p.ws.terminate(); } } }, 1000).unref();
-// every 10 s per phone: sensor messages / s, video frames / s and KB / s, the longest silence (this tells a link that is
-// saturated by video, with pings stuck behind it, from one that is quiet or gone)
+// every 10 s per phone: messages / s and KB / s, the longest silence (this tells a link that is saturated, with pings
+// stuck behind the data, from one that is quiet or gone)
 setInterval(() => {
   for (const p of phones.values()) {
-    log(`phone ${p.slot}: ${(p.n.msg / 10).toFixed(0)} msg/s, video ${(p.n.video / 10).toFixed(1)} fps ${(p.n.bytes / 10240).toFixed(0)} KB/s, longest gap ${((p.gap ?? 0) / 1000).toFixed(1)} s`);
-    p.n = { msg: 0, video: 0, bytes: 0 }; p.gap = 0;
+    log(`phone ${p.slot}: ${(p.n.msg / 10).toFixed(0)} msg/s ${(p.n.bytes / 10240).toFixed(0)} KB/s, longest gap ${((p.gap ?? 0) / 1000).toFixed(1)} s`);
+    p.n = { msg: 0, bytes: 0 }; p.gap = 0;
   }
 }, 10e3).unref();
 
@@ -176,15 +184,30 @@ camWss.on('connection', (ws, req) => {
 
 // ---- static files + the CDN cache ----
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.wasm': 'application/wasm', '.mp3': 'audio/mpeg', '.svg': 'image/svg+xml' };
-const pinned = p => /^npm\/(@[\w.-]+\/)?[\w.-]+@\d+\.\d+\.\d+\/[\w./@-]+$/.test(p) && !p.includes('..'); // exact versions only: the cache never goes stale
+// exact versions only: the cache never goes stale. mp-models/... is MediaPipe's model bucket (versioned paths too)
+const pinned = p => (/^npm\/(@[\w.-]+\/)?[\w.-]+@\d+\.\d+\.\d+\/[\w./@-]+$/.test(p) || /^mp-models\/[\w-]+\/[\w-]+\/[\w-]+\/\d+\/[\w-]+\.task$/.test(p)) && !p.includes('..');
+const upstream = p => p.startsWith('mp-models/') ? 'https://storage.googleapis.com/mediapipe-models/' + p.slice(10) : 'https://cdn.jsdelivr.net/' + p;
+const fetching = new Map(); // p -> promise: on a slow uplink the browser asks again before the first download ends; fetch it once
 async function fromCdn(p) {
   const file = join(cdnCache, p);
   try { return await readFile(file); } catch {}
-  const r = await fetch('https://cdn.jsdelivr.net/' + p);
-  if (!r.ok) throw new Error(`cdn ${r.status} ${p}`);
-  const body = Buffer.from(await r.arrayBuffer());
-  await mkdir(dirname(file), { recursive: true }); await writeFile(file, body);
-  return body;
+  if (fetching.has(p)) return fetching.get(p);
+  const job = (async () => {
+    const t0 = Date.now(); log(`cdn: downloading ${p}`);
+    const r = await fetch(upstream(p));
+    if (!r.ok) throw new Error(`cdn ${r.status} ${p}`);
+    const size = +r.headers.get('content-length') || 0, parts = []; let got = 0, said = Date.now();
+    for await (const c of r.body) { // a 10 MB file takes minutes on a slow uplink: say how far it is every 10 s
+      parts.push(c); got += c.length;
+      if (Date.now() - said > 10e3) { said = Date.now(); log(`cdn: ${p} ${(got / 1048576).toFixed(1)}${size ? ` / ${(size / 1048576).toFixed(1)}` : ''} MB, ${(got / 1024 / ((said - t0) / 1000)).toFixed(0)} KB/s`); }
+    }
+    const body = Buffer.concat(parts);
+    await mkdir(dirname(file), { recursive: true }); await writeFile(file, body);
+    log(`cdn: ${p} ${(body.length / 1048576).toFixed(1)} MB in ${((Date.now() - t0) / 1000).toFixed(0)} s (kept in vendor/cdn)`);
+    return body;
+  })().finally(() => fetching.delete(p));
+  fetching.set(p, job);
+  return job;
 }
 function info(host) {
   const list = ips(), ip = list[0] ?? 'localhost', base = `${ip}:${PORT}`;
@@ -210,8 +233,13 @@ async function onRequest(req, res) {
     res.writeHead(200, { 'content-type': types[extname(path)] ?? 'application/octet-stream', 'cache-control': 'no-cache' }).end(body);
   } catch (e) { console.warn(e.message); if (!res.headersSent) res.writeHead(500).end(); }
 }
+const lanAddr = a => !/^(::1|127\.)/.test(a?.replace(/^::ffff:/, '') ?? '');
 function onUpgrade(req, socket, head) {
   const path = new URL(req.url, 'http://x').pathname, to = path === '/ws' ? wss : path === '/cam' ? camWss : null;
+  if (process.env.NET_DEBUG && lanAddr(socket.remoteAddress)) {
+    log(`net ${socket.remoteAddress?.replace(/^::ffff:/, '')}:${socket.remotePort} upgrade ${req.url} headers ${JSON.stringify(req.headers)}`);
+    socket.once('close', () => log(`net ${socket.remotePort} upgraded socket closed, wrote ${socket.bytesWritten} B`));
+  }
   if (!to) return socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
   to.handleUpgrade(req, socket, head, ws => to.emit('connection', ws, req));
 }
@@ -220,6 +248,14 @@ const secure = tls && https.createServer({ key: tls.key, cert: tls.cert }, onReq
 
 // one port, two protocols: peek at the first byte and hand the socket to the matching server
 const front = net.createServer(sock => {
+  if (process.env.NET_DEBUG) { // NET_DEBUG=1: every TCP connection from the LAN — when it opens, its first bytes, when it ends
+    const who = `${sock.remoteAddress?.replace(/^::ffff:/, '')}:${sock.remotePort}`, t0 = Date.now(), ms = () => Date.now() - t0;
+    if (!/^(::1|127\.)/.test(sock.remoteAddress?.replace(/^::ffff:/, '') ?? '')) {
+      log(`net ${who} open`);
+      sock.once('data', b => log(`net ${who} first data after ${ms()} ms: ${b.length} B ${JSON.stringify(b.subarray(0, 60).toString('latin1'))}`));
+      sock.on('close', () => log(`net ${who} closed after ${ms()} ms, read ${sock.bytesRead} B, wrote ${sock.bytesWritten} B`));
+    }
+  }
   sock.once('data', buf => {
     sock.pause(); sock.unshift(buf);
     (buf[0] === 0x16 && secure ? secure : plain).emit('connection', sock);

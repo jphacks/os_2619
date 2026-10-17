@@ -132,10 +132,11 @@ export function createVision({ getSource, hz = 15, stickLen = () => 1, getFps = 
   const persons = { A: null, B: null };
   let wk = null, busy = false, timer = null, hints = {}, ticks = [], lastKey = null;
   const base = `${location.origin}/cdn/npm/@mediapipe/tasks-vision@${MP_VER}`; // server.mjs caches the CDN (offline once fetched)
+  const model = MODEL.replace('https://storage.googleapis.com/mediapipe-models/', `${location.origin}/cdn/mp-models/`); // the model too
 
   function boot() {
     if (wk) return;
-    wk = new Worker(URL.createObjectURL(new Blob([workerSrc(base, MODEL)], { type: 'text/javascript' })));
+    wk = new Worker(URL.createObjectURL(new Blob([workerSrc(base, model)], { type: 'text/javascript' })));
     wk.onmessage = ({ data: d }) => {
       if (d.type === 'ready') { S.ready = true; S.delegate = d.delegate; }
       else if (d.type === 'error') { S.error = 'MediaPipe を読み込めない: ' + d.msg; busy = false; }
