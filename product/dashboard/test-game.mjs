@@ -280,11 +280,16 @@ scenario('テストモードでは当たってもHPが減らない', () => {
 // ---- report ----
 // ---- 溜めは棒を動かし続けている間だけ ----
 scenario('溜めの検知が途切れると、溜めがやめになる（動かし続ければ続く）', () => {
-  const S = setup({ rules: { chargeHold: .6 } }); S.fight();
+  const S = setup({ rules: { chargeHold: 1.5 } }); S.fight();
   S.charge('A'); for (let i = 0; i < 20; i++) { S.run(.1); S.charge('A'); }
   eq(S.A.charging, true, '動かしている間');
   S.run(1);
-  eq(S.A.charging, false, '止めたあと');
+  eq(S.A.charging, true, '1秒止めても続く');
+  S.run(1);
+  eq(S.A.charging, false, '2秒止めたら終わり');
+  S.charge('A'); for (let i = 0; i < 55; i++) { S.run(.1); S.charge('A'); }
+  eq(S.A.tier, 'l', '溜め切り'); S.run(4);
+  eq(S.A.charging, true, '溜め切ったら止めていても待つ');
 });
 
 const w = Math.max(...results.map(r => r.name.length));

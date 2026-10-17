@@ -26,7 +26,7 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷' };
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, chargeHold: .6, size: { s: 1, m: 1, l: 1 } }; // size: ball size × (looks and hit radius)
+export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, chargeHold: 1.5, size: { s: 1, m: 1, l: 1 } }; // size: ball size × (looks and hit radius)
 // how each tier looks and flies (provisional effects: size tells the tiers apart)
 const TIER = {
   s: { power: .15, big: .7, speed: 11, radius: .12, hit: .25 },
@@ -221,7 +221,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       // feet must stay put: the chest may sway, but more than moveFail m (horizontal) from where the charge began drops it
       const moved = p.chargeFrom ? Math.hypot(p.chest.x - p.chargeFrom.x, p.chest.z - p.chargeFrom.z) : 0;
       if (moved > R.moveFail) { failCharge(p, `${Math.round(moved * 100)} cm 動いた`); continue; }
-      if (R.chargeHold > 0 && p.autoRelease == null && now() - p.chargeSeen > R.chargeHold) { failCharge(p, '棒の動きが止まった'); continue; } // keep moving to keep charging
+      if (R.chargeHold > 0 && p.autoRelease == null && p.tier !== 'l' && now() - p.chargeSeen > R.chargeHold) { failCharge(p, '棒の動きが止まった'); continue; } // short pauses are fine; a long stop drops it (a full charge just waits for the swing)
       p.chargeT += dt;
       p.charge = Math.min(1, p.chargeT / R.t2);
       const t = tierOf(p.chargeT);

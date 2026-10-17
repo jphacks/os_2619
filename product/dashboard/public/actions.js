@@ -68,8 +68,9 @@ export function createActions() {
 
       // Swing: starts where the stick was last calm, ends when it slows down again
       if (gap) S.sw = null;
-      if (!S.sw && w > 300 && S.still) S.sw = { t: S.still.t, from: S.still };
+      if (!S.sw && w > 300 && (S.still || S.prev)) S.sw = S.still && k.t - S.still.t < .5 ? { t: S.still.t, from: S.still } : { t: S.prev.t, from: S.prev }; // right out of a charge shake there is no calm moment: start from the sample before
       if (w < 120) S.still = { ...pos, t: k.t };
+      S.prev = { ...pos, t: k.t };
       if (S.sw && w < 100) {
         const a = S.sw.from, dur = k.t - S.sw.t, ang = Math.acos(Math.max(-1, Math.min(1, dot(a.d, d))));
         const twirl = a.el > 60 * D && pos.el > 60 * D; // stays overhead: that's charging, not a swing
