@@ -18,6 +18,7 @@ import { createConnect } from './connect.js';
 import { createFinalControls } from './final-controls.js';
 import { createVision } from './vision.js';
 import { createVisionFx } from './visionfx.js';
+import { personTo3D } from './avatarpose.js';
 import { createPlayable } from './playable.js';
 
 const $ = s => document.querySelector(s);
@@ -29,6 +30,7 @@ const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
   minimap: true, debug: false, pip: false, mirrorX: false, mirrorY: false, swordFlip: false, fovC: 40, viewVer: 2, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
   matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 5, fxStyle: 'smash',
+  mimic: true, // the avatars copy the poses MediaPipe finds in phone C's picture (screen 3, and the small 3D window of screen 4)
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
@@ -58,7 +60,7 @@ import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const 
 
 // recognition on the final screen (vision.js) and its layers under the effects (visionfx.js); nothing runs unless it is switched on (cfg.visOn) and a layer is on
 const VIS_KEYS = ['visDraw', 'visGhost', 'visSpot', 'visTrail'], EL_COLOR = { fire: '#ff7a1a', thunder: '#6cc8ff' };
-const vision = createVision({ getSource: () => video.__dummy?.canvas ?? video, stickLen: () => (cfg.stickLen.A + cfg.stickLen.B) / 2 });
+const vision = createVision({ getSource: () => video.__dummy?.canvas ?? video, stickLen: () => (cfg.stickLen.A + cfg.stickLen.B) / 2, getFps: () => fps }); // fps (below): the recognition backs off while the page itself is slow
 const vfx = createVisionFx();
 const overlay = { compose: (src, w, h, dt) => vfx.compose(src, w, h, dt, vision, cfg.visOn ? { draw: cfg.visDraw, ghost: cfg.visGhost, spot: cfg.visSpot, trail: cfg.visTrail } : {}, { A: EL_COLOR[game.players.A.element], B: EL_COLOR[game.players.B.element] }) };
 const stage = createStage({ video, cfg, hub, PA, isSetup: () => game.match.phase === 'setup', overlay });
@@ -151,6 +153,7 @@ gameCtrl.innerHTML = `
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
   <h3>表示</h3>
   <div class="row"><button data-tog="minimap">ミニマップ<kbd>M</kbd></button><button data-tog="debug">デバッグ<kbd>G</kbd></button></div>
+  <div class="row"><button data-tog="mimic" title="第三者視点カメラの映像を MediaPipe で見て、アバターに同じ姿勢をとらせる（別スレッドで 1 秒に最大 15 回）">カメラの姿勢をアバターに反映</button><span class="muted" id="mimicStatus" style="font-size:12px"></span></div>
   <h3>攻撃・防御の記録</h3>
   <ul class="log" id="gameLog"></ul>`;
 for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.onclick = () => game.command({ cmd: 'phase', phase: b.dataset.phase });
@@ -327,20 +330,39 @@ function updateSlowUi() {
   $('#fovNote').textContent = cfg.knownFov ? `覚えた縦画角 ${cfg.knownFov.toFixed(1)}°（立てたタグのスキャンで使う）` : '画角はまだ覚えていない（床置きか、まっすぐ立てた状態のスキャンで覚える）';
   for (const r of drawer.querySelectorAll('[data-vol]')) { const v = sfx?.volumes?.[r.dataset.vol]; if (v != null && document.activeElement !== r) r.value = v; drawer.querySelector(`[data-volout=${r.dataset.vol}]`).textContent = v != null ? Math.round(v * 100) : '--'; }
   $('#mute').textContent = sfx?.muted ? '消音を解除' : '消音';
+  const v = vision.state;
+  $('#mimicStatus').textContent = !cfg.mimic ? '' : !v.on ? '待機中（カメラの映像が届くと動く）' : v.error ? v.error : !v.ready ? 'MediaPipe を読み込み中…（初回は数十秒）'
+    : `${v.delegate} ${v.hz.toFixed(0)} 回/秒 · 1回 ${v.ms.toFixed(0)} ms · 反映 ${['A', 'B'].filter(s => game.players[s].skel).join('・') || 'なし'}`;
   $('#audioInfo').textContent = !sfx ? '読み込み中' : !sfx.unlocked ? 'ページを一度クリックすると音が出ます' : '';
 }
 
 /** Where the sensors put each player in phone C's picture (0..1), for naming the people found and as the stick's prior. */
 function visionHints() {
   if (cfg.fpv || !(stage.state.scanned || video.__dummy)) return {};
-  const uv = p => { const q = p.clone().project(stage.camera); return q.z < 1 && Math.abs(q.x) < 1.5 && Math.abs(q.y) < 1.5 ? [(q.x + 1) / 2, (1 - q.y) / 2] : null; };
+  const uv = p => { const q = p.clone().project(cam); return q.z < 1 && Math.abs(q.x) < 1.5 && Math.abs(q.y) < 1.5 ? [(q.x + 1) / 2, (1 - q.y) / 2] : null; };
   const out = {}, w = video.__dummy?.canvas.width ?? video.videoWidth, h = video.__dummy?.canvas.height ?? video.videoHeight;
+  const cam = stage.phoneCam(w / h); if (!cam) return {};
   for (const s of ['A', 'B']) {
     const p = game.players[s], chest = p.src === 'start' ? null : uv(p.chest), b = uv(p.base), t = uv(p.tip);
     const real = p.stickSrc !== 'IMU なし（前向き）'; // only a measured stick direction helps the search
     out[s] = { chest, stick: real && b && t ? { x: b[0], y: b[1], a: Math.atan2((t[1] - b[1]) * h, (t[0] - b[0]) * w) } : null };
   }
   return out;
+}
+
+/** The pose found for each player -> world joints on game.players[slot].skel (field3d's avatar copies it); null = the avatar poses itself. */
+const skelCache = {};
+function applyMimic(on) {
+  const w = video.__dummy?.canvas.width ?? video.videoWidth, h = video.__dummy?.canvas.height ?? video.videoHeight;
+  for (const s of ['A', 'B']) {
+    const p = game.players[s], person = on ? vision.persons[s] : null;
+    if (!person || performance.now() / 1000 - person.t > .7 || !w) { p.skel = null; continue; }
+    if (skelCache[s]?.person !== person) { // a new result (~15 Hz): convert once, the avatar smooths it between results
+      const cam = stage.phoneCam(w / h);
+      skelCache[s] = { person, r: cam && personTo3D(person, { e: cam.matrixWorld.elements, fovY: cam.fov }, w / h) };
+    }
+    p.skel = skelCache[s].r;
+  }
 }
 
 // ---- main loop ----
@@ -356,8 +378,13 @@ function frame(ts) {
   vsrc.dummy?.render(t); // the picture and game placement consume this exact same pose snapshot
   game.step(dt, raw, est, { sensorOnly: screen === 'final' });
   if (screen === 'final') finalControls.step(t);
-  vision.want(!!cfg.visOn && screen === 'final' && !cfg.fpv && VIS_KEYS.some(k => cfg[k]));
-  if (screen === 'final') vision.setHints(visionHints());
+  // MediaPipe runs for the avatars (pose only) and/or the final screen's layers (also the masks and the stick search)
+  const live = !!(video.videoWidth || video.__dummy);
+  const mimicOn = !!cfg.mimic && live && (screen === 'game' || screen === 'final' && !!cfg.pip);
+  const layersOn = !!cfg.visOn && screen === 'final' && !cfg.fpv && VIS_KEYS.some(k => cfg[k]);
+  vision.want(mimicOn || layersOn, layersOn);
+  if (mimicOn || layersOn) vision.setHints(visionHints());
+  applyMimic(mimicOn);
   if (screen === 'game' || screen === 'final') { stage.render(dt, game, est); updateHud(); }
   else stage.fx.step(dt); // effects keep their time even when nobody looks
   if (screen === 'final') finalControls.updateStatus();

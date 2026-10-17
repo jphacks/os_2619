@@ -218,6 +218,15 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     else { const c = GUIDE_CAM, d = THREE.MathUtils.degToRad; camera.position.set(c.x, c.y, c.z); camera.rotation.set(d(c.pitch), d(c.yaw), d(c.roll)); camera.fov = c.fov; }
     camera.aspect = S.aspect; camera.updateProjectionMatrix(); camHelper.update();
   }
+  /** Phone C's own camera (its scanned pose, or the dummy room's), whatever the screen's camera is doing; null before a scan. aspect = the picture's. */
+  const phoneCamera = new THREE.PerspectiveCamera(45, 16 / 9, 0.05, 100);
+  function phoneCam(aspect) {
+    const pose = video.__dummy?.truePose ?? S.tagCam;
+    if (!pose) return null;
+    toThreeCamera(pose, phoneCamera);
+    if (aspect) { phoneCamera.aspect = aspect; phoneCamera.updateProjectionMatrix(); }
+    return phoneCamera;
+  }
   function resize() {
     if (!S.box) return;
     const bw = S.box.clientWidth, bh = S.box.clientHeight; if (!bw || !bh) return;
@@ -248,7 +257,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     if (needArena) {
       drone.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
       field.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot,
-        { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu }])));
+        { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, skel: p.skel }])));
     }
     fx.step(dt);
     if (minimap) { const on = S.mode === 'game' && cfg.minimap && !setup; minimap.canvas.style.display = on ? '' : 'none'; if (on) minimap.draw(P, game.shots); }
@@ -318,7 +327,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
   }
 
   return {
-    el, scene, camera, fx, drone, field, state: S, render, scan, autoAlign, clearScan, tagChecks, seenTags: seen, applyCam,
+    el, scene, camera, fx, drone, field, state: S, render, phoneCam, scan, autoAlign, clearScan, tagChecks, seenTags: seen, applyCam,
     attach(box, mode) { S.box = box; S.mode = mode; if (el.parentNode !== box) box.append(el); resize(); applyCam(); },
     attachMinimap(c) { minimap = createMinimap(c); minimap.canvas = c; },
     resize,

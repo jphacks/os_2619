@@ -73,7 +73,7 @@ const LM = ${JSON.stringify(LM)};
 ${findStick.toString()}
 ${pxPerMetre.toString()}
 ${handOf.toString()}
-let lm = null, lastTs = 0, delegate = null, cv = null, cx = null;
+let lm = null, lastTs = 0, delegate = null, cv = null, cx = null, maskOn = true;
 const ready = (async () => {
   const fs = await Vision.FilesetResolver.forVisionTasks('${mp}/wasm');
   const mk = d => Vision.PoseLandmarker.createFromOptions(fs, { baseOptions: { modelAssetPath: '${model}', delegate: d }, runningMode: 'VIDEO', numPoses: 2,
@@ -81,21 +81,25 @@ const ready = (async () => {
   for (const d of ['GPU', 'CPU']) try { lm = await mk(d); delegate = d; return d; } catch (e) { if (d === 'CPU') throw e; }
 })();
 ready.then(d => postMessage({ type: 'ready', delegate: d }), e => postMessage({ type: 'error', msg: String(e) }));
-onmessage = async ({ data: { bmp, t, len, priors, sticks } }) => {
+onmessage = async ({ data: { bmp, t, len, priors, sticks, masks, find } }) => { // masks / find: the person masks and the stick search are only paid for when a layer shows them
   try { await ready; } catch { bmp.close(); return; }
   const W = bmp.width, H = bmp.height, t0 = performance.now();
+  if (masks !== maskOn) { maskOn = masks; try { lm.setOptions({ outputSegmentationMasks: masks }); } catch {} }
   const ts = Math.max(lastTs + 1, Math.round(t * 1000)); lastTs = ts; // VIDEO mode wants strictly increasing ms
   let r;
   try { r = lm.detectForVideo(bmp, ts); } catch (e) { bmp.close(); postMessage({ type: 'fail', msg: String(e) }); return; }
   const msPose = performance.now() - t0;
-  if (!cv || cv.width !== W || cv.height !== H) { cv = new OffscreenCanvas(W, H); cx = cv.getContext('2d', { willReadFrequently: true }); }
-  cx.drawImage(bmp, 0, 0); bmp.close();
-  const px = r.landmarks.length ? cx.getImageData(0, 0, W, H).data : null;
+  let px = null;
+  if (find && r.landmarks.length) {
+    if (!cv || cv.width !== W || cv.height !== H) { cv = new OffscreenCanvas(W, H); cx = cv.getContext('2d', { willReadFrequently: true }); }
+    cx.drawImage(bmp, 0, 0); px = cx.getImageData(0, 0, W, H).data;
+  }
+  bmp.close();
   const near = (list, h, ppm) => { let b = null; for (const q of list ?? []) { const d = Math.hypot(q.x * W - h.x, q.y * H - h.y); if (d < .3 * ppm && (!b || d < b.d)) b = { d, a: q.a }; } return b?.a ?? null; };
   const persons = r.landmarks.map((p, i) => {
     const P = p.map(q => [q.x * W, q.y * H, q.visibility ?? 1]);
     let stick = null;
-    if (Math.min(P[LM.lSh][2], P[LM.rSh][2], P[LM.lHip][2], P[LM.rHip][2]) > .3) {
+    if (px && Math.min(P[LM.lSh][2], P[LM.rSh][2], P[LM.lHip][2], P[LM.rHip][2]) > .3) {
       const ppm = pxPerMetre(P);
       for (const side of ['l', 'r']) {
         const h = handOf(P, side); if (h.vis < .3) continue;
@@ -103,26 +107,28 @@ onmessage = async ({ data: { bmp, t, len, priors, sticks } }) => {
         if (s && (!stick || s.conf > stick.conf)) stick = { ...s, side, x0: h.x / W, y0: h.y / H, x1: (h.x + Math.cos(s.a) * s.len) / W, y1: (h.y + Math.sin(s.a) * s.len) / H };
       }
     }
-    let mask = null; const m = r.segmentationMasks?.[i];
+    const wl = Float32Array.from((r.worldLandmarks?.[i] ?? []).flatMap(q => [q.x, q.y, q.z, q.visibility ?? 1])); // metres, hip-centred, image axes (x right, y down, z away)
+    let mask = null; const m = masks ? r.segmentationMasks?.[i] : null;
     if (m) { // half resolution, 0..255
       const f = m.getAsFloat32Array(), mw = m.width, w = mw >> 1, h = m.height >> 1, d = new Uint8Array(w * h);
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) d[y * w + x] = f[(2 * y) * mw + 2 * x] * 255;
       mask = { w, h, d };
     }
-    return { lm: Float32Array.from(p.flatMap(q => [q.x, q.y, q.visibility ?? 1])), stick, mask };
+    return { lm: Float32Array.from(p.flatMap(q => [q.x, q.y, q.visibility ?? 1])), wl, stick, mask };
   });
   for (const m of r.segmentationMasks ?? []) m.close();
-  postMessage({ type: 'res', t, ms: performance.now() - t0, msPose, persons }, persons.flatMap(p => [p.lm.buffer, ...(p.mask ? [p.mask.d.buffer] : [])]));
+  postMessage({ type: 'res', t, ms: performance.now() - t0, msPose, persons }, persons.flatMap(p => [p.lm.buffer, p.wl.buffer, ...(p.mask ? [p.mask.d.buffer] : [])]));
 };`;
 
 /**
  * createVision({ getSource }) -> { want(on), setHints({ A, B }), state, persons: { A, B } }
  * getSource(): the video (or the dummy room's canvas) to read. hints: per slot { chest: [u, v] (0..1), stick: { x, y, a } |
  * null } from the sensors. persons[slot]: { t, pts: [[u, v, vis] x 33] (0..1), stick: { x0, y0, x1, y1, conf, side } | null,
- * mask: { w, h, d } | null } or null. state: { ready, delegate, error, hz, ms, seq }.
+ * mask: { w, h, d } | null, world: Float32Array(33 x [x, y, z, vis]) | null (metres, hip-centred, image axes) } or null. state: { ready, delegate, error, hz, ms, seq }.
  */
-export function createVision({ getSource, hz = 15, stickLen = () => 1 }) {
-  const S = { ready: false, delegate: null, error: null, hz: 0, ms: 0, msPose: 0, seq: 0, on: false };
+export function createVision({ getSource, hz = 15, stickLen = () => 1, getFps = () => 60 }) {
+  // detail: the person masks and the stick search (the final screen's layers); off = pose only (cheaper, enough for the avatars)
+  const S = { ready: false, delegate: null, error: null, hz: 0, ms: 0, msPose: 0, seq: 0, on: false, detail: false };
   const persons = { A: null, B: null };
   let wk = null, busy = false, timer = null, hints = {}, ticks = [], lastKey = null;
   const base = `${location.origin}/cdn/npm/@mediapipe/tasks-vision@${MP_VER}`; // server.mjs caches the CDN (offline once fetched)
@@ -138,6 +144,13 @@ export function createVision({ getSource, hz = 15, stickLen = () => 1 }) {
     };
     wk.onerror = e => { S.error = e.message; busy = false; };
   }
+  // The pose runs in the worker; the main thread only grabs a frame. One frame in flight at most, and the next grab waits 1/hz,
+  // twice or three times as long while the page itself is running slow (getFps), so the recognition never competes with drawing.
+  function schedule() {
+    if (!S.on) { timer = null; return; }
+    const fps = getFps(), k = fps < 30 ? 3 : fps < 45 ? 2 : 1;
+    timer = setTimeout(async () => { try { await tick(); } finally { schedule(); } }, k * 1000 / hz);
+  }
   async function tick() {
     if (!S.on || busy || !S.ready && wk) return;
     boot(); if (!S.ready) return;
@@ -149,14 +162,14 @@ export function createVision({ getSource, hz = 15, stickLen = () => 1 }) {
       const s = Math.min(1, IN_W / w), bmp = await createImageBitmap(src, { resizeWidth: Math.round(w * s), resizeHeight: Math.round(h * s), resizeQuality: 'medium' });
       const pr = Object.values(hints).map(x => x?.stick).filter(Boolean);
       const st = Object.values(persons).filter(p => p?.stick).map(p => ({ x: p.stick.x0, y: p.stick.y0, a: Math.atan2((p.stick.y1 - p.stick.y0) * h, (p.stick.x1 - p.stick.x0) * w) }));
-      wk.postMessage({ bmp, t: performance.now() / 1000, len: stickLen(), priors: pr, sticks: st }, [bmp]);
+      wk.postMessage({ bmp, t: performance.now() / 1000, len: stickLen(), priors: pr, sticks: st, masks: S.detail, find: S.detail }, [bmp]);
     } catch (e) { busy = false; S.error = String(e); }
   }
   function onResult({ t, ms, msPose, persons: list }) {
     busy = false; S.error = null; S.seq++;
     S.ms += .1 * (ms - S.ms); S.msPose += .1 * (msPose - S.msPose);
     ticks.push(t); while (ticks[0] < t - 2) ticks.shift(); S.hz = ticks.length > 1 ? (ticks.length - 1) / (t - ticks[0]) : 0;
-    const ps = list.map(p => ({ t, pts: Array.from({ length: 33 }, (_, i) => [p.lm[3 * i], p.lm[3 * i + 1], p.lm[3 * i + 2]]), stick: p.stick, mask: p.mask }))
+    const ps = list.map(p => ({ t, pts: Array.from({ length: 33 }, (_, i) => [p.lm[3 * i], p.lm[3 * i + 1], p.lm[3 * i + 2]]), world: p.wl.length === 132 ? p.wl : null, stick: p.stick, mask: p.mask }))
       .filter(p => (p.pts[LM.lSh][2] + p.pts[LM.rSh][2] + p.pts[LM.lHip][2] + p.pts[LM.rHip][2]) / 4 > .3);
     for (const p of ps) p.key = [(p.pts[LM.lSh][0] + p.pts[LM.rSh][0]) / 2, (p.pts[LM.lSh][1] + p.pts[LM.rSh][1]) / 2];
     const pick = assignSlots(ps, persons, hints, t);
@@ -166,7 +179,7 @@ export function createVision({ getSource, hz = 15, stickLen = () => 1 }) {
     }
   }
   return {
-    want(on) { S.on = on; if (on && !timer) { boot(); timer = setInterval(tick, 1000 / hz); } if (!on && timer) { clearInterval(timer); timer = null; } },
+    want(on, detail = true) { S.detail = detail; S.on = on; if (on && !timer) { boot(); schedule(); } if (!on && timer) { clearTimeout(timer); timer = null; } },
     setHints(h) { hints = h; },
     persons, state: S,
   };

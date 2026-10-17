@@ -298,12 +298,78 @@ function makeAvatar(slot) {
   const offColor = new THREE.Color(0x6a6f7a), onColor = new THREE.Color(color);
   let wasOnline = null;
 
+  // the stick (world space), the team colour and the HP bar: the same for both ways of posing the body
+  function finish(p, base, tipP) {
+    if (base && tipP) {
+      const d = V().subVectors(tipP, base).normalize();
+      between(stick, base.clone().addScaledVector(d, -.08), tipP); stick.scale.x = stick.scale.z = stick.userData.r;
+      tip.position.copy(tipP);
+      stickMat.emissiveIntensity = p.charging ? .8 + 1.2 * (p.charge ?? 0) * (.7 + .3 * Math.sin(st.time * 30)) : .5;
+      tip.scale.setScalar(.04 * (1 + (p.charging ? (p.charge ?? 0) : 0)));
+    }
+    stick.visible = tip.visible = !!(base && tipP);
+    const online = p.online !== false;
+    if (online !== wasOnline) {
+      wasOnline = online;
+      suit.color.copy(online ? onColor : offColor); suit.emissive.copy(online ? onColor : offColor); suit.emissiveIntensity = online ? .12 : 0;
+      glow.color.copy(online ? onColor : offColor).multiplyScalar(1.4);
+    }
+    drawHp(p.hp ?? 100, online, p.charging ? (p.charge ?? 0) : 0);
+  }
+
+  // The pose from phone C's picture (p.skel = { joints, vis }, world joints from avatarpose.js): every bone is put where the
+  // person's is, relative to the shoulders / hips of this avatar (so its own proportions stay), smoothed between the ~15 Hz poses.
+  const sm = Array.from({ length: 33 }, () => V()), tmp = V(), X = V(1, 0, 0), bodyM = new THREE.Matrix4(), bodyInv = new THREE.Matrix4();
+  let smSeen = false;
+  function poseUpdate(dt, p) {
+    const sk = p.skel, k = smSeen ? 1 - Math.exp(-dt * 20) : 1;
+    for (let i = 0; i < 33; i++) if (!smSeen || sk.vis[i] > .3) sm[i].lerp(tmp.fromArray(sk.joints[i]), k);
+    smSeen = true; st.time += dt;
+    const shM = V().addVectors(sm[11], sm[12]).multiplyScalar(.5), hpM = V().addVectors(sm[23], sm[24]).multiplyScalar(.5);
+    const upv = shM.clone().sub(hpM).normalize();
+    const rv = V().subVectors(sm[12], sm[11]); rv.addScaledVector(upv, -rv.dot(upv)).normalize(); // the person's right
+    const fv = V().crossVectors(upv, rv).normalize();
+    bodyM.makeBasis(fv, upv, rv).setPosition(shM.clone().addScaledVector(upv, -SHOULDER[1]).addScaledVector(fv, -SHOULDER[0]));
+    bodyInv.copy(bodyM).invert();
+    root.matrix.copy(bodyM); root.matrixWorldNeedsUpdate = true;
+    torso.scale.y = 1;
+    const loc = i => sm[i].clone().applyMatrix4(bodyInv);
+    const anchor = (a, ai, i) => a.clone().add(loc(i)).sub(loc(ai)); // avatar anchor a (for landmark ai) + the person's offset to landmark i
+    const sR = L(SHOULDER), sL = L([SHOULDER[0], SHOULDER[1], -SHOULDER[2]]);
+    const eR = anchor(sR, 12, 14), hR = anchor(sR, 12, 16), eL = anchor(sL, 11, 13), hL = anchor(sL, 11, 15);
+    setLimb(armU, sR, eR); setLimb(armF, eR, hR); elbow.position.copy(eR); hand.position.copy(hR);
+    setLimb(offU, sL, eL); setLimb(offF, eL, hL); offE.position.copy(eL); offH.position.copy(hL);
+    for (const lg of legs) {
+      const r = lg.s > 0, hip = V(HIP[0], HIP[1], HIP[2] * lg.s), h0 = r ? 24 : 23;
+      const knee = anchor(hip, h0, r ? 26 : 25), foot = anchor(hip, h0, r ? 28 : 27);
+      setLimb(lg.thigh, hip, knee); setLimb(lg.shin, knee, foot); lg.knee.position.copy(knee);
+      const toe = anchor(hip, h0, r ? 32 : 31), heel = anchor(hip, h0, r ? 30 : 29), dir = toe.clone().sub(heel);
+      lg.boot.position.copy(toe).add(heel).multiplyScalar(.5).add(V(0, -.02, 0));
+      if (dir.lengthSq() > 4e-4) lg.boot.quaternion.setFromUnitVectors(X, dir.normalize()); else lg.boot.quaternion.identity();
+    }
+    // head: the nose against the ears
+    const hf = loc(0).sub(loc(7).add(loc(8)).multiplyScalar(.5));
+    headG.rotation.set(0, Math.max(-1.3, Math.min(1.3, Math.atan2(-hf.z, hf.x))), Math.max(-.9, Math.min(.9, Math.atan2(hf.y, Math.hypot(hf.x, hf.z)))), 'YZX');
+    // the stick follows the hand that is nearest to where the sensors put its base (same length and direction as the sensors say)
+    let base = null, tipP = null;
+    if (p.base && p.tip) {
+      const wR = sm[16], wL = sm[15], w = wR.distanceTo(p.base) <= wL.distanceTo(p.base) ? wR : wL;
+      base = w.clone(); tipP = base.clone().add(p.tip.clone().sub(p.base));
+    }
+    finish(p, base, tipP);
+    facing.set(fv.x, 0, fv.z).normalize();
+    hpSprite.position.set(sm[0].x, Math.max(sm[0].y + .38, 1.2), sm[0].z);
+    return { x: hpM.x, z: hpM.z, hp: (p.hp ?? 100) / 100, vis: p.online !== false ? 1 : .5 };
+  }
+
   return {
     root, world, slot,
     update(dt, p) {
       const vis = !!p?.body;
       root.visible = vis && !p.hideBody; world.visible = vis; // hideBody: the real skeleton from the camera is drawn instead
-      if (!vis) return null;
+      if (!vis) { smSeen = false; return null; }
+      if (p.skel) return poseUpdate(dt, p);
+      smSeen = false;
       st.time += dt;
       // upright body frame from the forward direction (ignore pitch / roll), feet on the floor
       const f = [p.body.R[0], p.body.R[3], p.body.R[6]], yaw = Math.atan2(-f[2], f[0]);
@@ -342,27 +408,12 @@ function makeAvatar(slot) {
         const foot = V(HIP[0] + .2 * walk * a, -ch + .04 - bob + .05 * walk * Math.max(0, -Math.cos(st.phase + (lg.s > 0 ? 0 : Math.PI))), .12 * lg.s);
         const leg = (ch + HIP[1] - .04) * .515, knee = elbowFor(hip, foot, V(1, 0, 0), leg, leg); // nearly straight when standing
         setLimb(lg.thigh, hip, knee); setLimb(lg.shin, knee, foot); lg.knee.position.copy(knee);
-        lg.boot.position.copy(foot).add(V(.04, -.01, 0));
+        lg.boot.position.copy(foot).add(V(.04, -.01, 0)); lg.boot.quaternion.identity();
       }
-      // stick in world space
-      if (p.base && p.tip) {
-        const d = V().subVectors(p.tip, p.base).normalize();
-        between(stick, p.base.clone().addScaledVector(d, -.08), p.tip); stick.scale.x = stick.scale.z = stick.userData.r;
-        tip.position.copy(p.tip);
-        stickMat.emissiveIntensity = p.charging ? .8 + 1.2 * (p.charge ?? 0) * (.7 + .3 * Math.sin(st.time * 30)) : .5;
-        tip.scale.setScalar(.04 * (1 + (p.charging ? (p.charge ?? 0) : 0)));
-      }
-      stick.visible = tip.visible = !!(p.base && p.tip);
-      const online = p.online !== false;
-      if (online !== wasOnline) {
-        wasOnline = online;
-        suit.color.copy(online ? onColor : offColor); suit.emissive.copy(online ? onColor : offColor); suit.emissiveIntensity = online ? .12 : 0;
-        glow.color.copy(online ? onColor : offColor).multiplyScalar(1.4);
-      }
-      drawHp(p.hp ?? 100, online, p.charging ? (p.charge ?? 0) : 0);
+      finish(p, p.base, p.tip);
       facing.set(f[0], 0, f[2]).normalize();
       hpSprite.position.set(bp.t[0], ch + .5 + .02 * Math.sin(st.time * 1.7) - st.ko * .3, bp.t[2]);
-      return { x: bp.t[0], z: bp.t[2], hp: (p.hp ?? 100) / 100, vis: online ? 1 : .5 };
+      return { x: bp.t[0], z: bp.t[2], hp: (p.hp ?? 100) / 100, vis: p.online !== false ? 1 : .5 };
     },
   };
 }
