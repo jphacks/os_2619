@@ -17,6 +17,8 @@ const KEEP = 20;          // s of AR history and tag sightings kept for the fit
 const TRAIL = 15;         // s of trail
 const AXIS_M = 0.5;       // m along the tag axis for the yaw-pinning point
 const MIN_ALIGN = 3;      // sightings before `aligned`
+const MIN_CHEST = 8;      // chest-tag sightings before they may place a phone
+const MIN_SPREAD = 0.5;   // m, how far apart those sightings must be (they pin the turn)
 
 // ---- vector helpers (allocating; only used off the per-message hot path or on small inputs) ----
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -75,9 +77,9 @@ function robustFit(c) {
 /**
  * createPhoneAlign({ keep = 20, minAlign = 3, localizer, axis }) -> { ingest(k), get(slot), estimate(now), onFieldChange() }
  * - ingest(k): every relayed message (k.slot A/B; types ar, tags, imu, color, calib, phones).
- * - get(slot): { src: 'ar'|'localize'|'tag'|null, aligned, theta, t, rms, n, used, lastFix, world_T_ar, chest, fwd, yaw, cam (world_T_arcam),
+ * - get(slot): { how: 'field'|'chest'|null (what placed this phone), src: 'ar'|'localize'|'tag'|null, aligned, theta, t, rms, n, used, lastFix, world_T_ar, chest, fwd, yaw, cam (world_T_arcam),
  *   trail, check (cm, this phone's own position vs where the other phone saw its chest tag), checkT, seenBy (that sighting, world),
- *   sightings (last tags message: [{ id, p (world), d }]), k, online, calibAt, hz, lastT }.
+ *   sightings (last tags message: [{ id, p (world), R (tag axes in world, 3x3 row-major), d }]), k, online, calibAt, hz, lastT }.
  * - estimate(now): { slots: { A, B }, stick: { A: { dir, base, src } }, warn }; stick[s] is s's own IMU stick.
  * - onFieldChange(): the field tags moved (setField): refit from the stored sightings. Also subscribed to world.onFieldChange.
  */
@@ -86,7 +88,7 @@ export function createPhoneAlign(opts = {}) {
   const loc = o.localizer ?? createLocalizer();
   const S = {};
   for (const s of ['A', 'B']) S[s] = {
-    ar: [], trail: [], sight: [], T: null, dirty: false, fixes: 0, lastFix: null, oldApp: false, online: false,
+    ar: [], trail: [], sight: [], T: null, Tf: null, how: null, dirty: false, fDirty: false, fixes: 0, lastFix: null, oldApp: false, online: false,
     k: null, imu: null, color: null, seen: [], lastTags: null, calibAt: null, calibPose: null, yaw0: 0,
     rate: { ar: 0, tags: 0, imu: 0, color: 0 }, cnt: { ar: 0, tags: 0, imu: 0, color: 0 }, cntAt: 0, lastT: 0,
   };
@@ -118,19 +120,46 @@ export function createPhoneAlign(opts = {}) {
     }
     return tagW;
   }
-  const fieldChanged = () => { tagW = null; for (const s of ['A', 'B']) S[s].dirty = true; };
+  const fieldChanged = () => { tagW = null; for (const s of ['A', 'B']) S[s].fDirty = S[s].dirty = true; };
   W.onFieldChange(fieldChanged);
 
-  function refit(s) {
-    const st = S[s]; st.dirty = false;
-    if (!st.sight.length) { st.T = null; return; }
+  /** Fit from the phone's own sightings of field tags (known world poses): the accurate way. */
+  function fitField(s) {
+    const st = S[s]; if (!st.sight.length) return null;
     const tw = tagWorld(), pairs = [];
     for (const g of st.sight) {
       const tg = tw[g.id]; if (!tg) continue;
       pairs.push({ a: tg.c, b: g.b, w: g.w }, { a: tg.axis, b: add(g.b, mul(tg.ax === 'x' ? g.bx : g.by, AXIS_M)), w: g.w * 0.5 });
     }
-    st.T = robustFit(pairs);
-    if (st.T) st.T.n = st.sight.length; // n = tag sightings (fit4 counted pairs)
+    const T = robustFit(pairs);
+    if (T) T.n = st.sight.length; // n = tag sightings (fit4 counted pairs)
+    return T;
+  }
+  const fieldT = s => { const st = S[s]; if (st.fDirty) { st.fDirty = false; st.Tf = fitField(s); } return st.Tf; };
+
+  /** Fit from the OTHER phone's sightings of this phone's chest tag: the other phone is placed by the field tags, so each
+   *  sighting says where this phone was (a), and its own AR pose at that instant says where it was in its own world (b).
+   *  Needs the sightings to be spread out (one point cannot give the turn); null until they are. */
+  function fitChest(s) {
+    const ob = OTHER[s], To = fieldT(ob); if (!To || To.n < o.minAlign) return null;
+    const pairs = [];
+    for (const v of S[ob].seen) {
+      const at = poseAt(s, v.t); if (!at) continue;
+      pairs.push({ a: apply(To, v.b), b: at.p, w: 0.5 / Math.max(0.5, v.d) ** 2 });
+    }
+    if (pairs.length < MIN_CHEST) return null;
+    const m = [0, 1, 2].map(i => pairs.reduce((x, e) => x + e.a[i] / pairs.length, 0));
+    if (Math.max(...pairs.map(e => Math.hypot(e.a[0] - m[0], e.a[2] - m[2]))) < MIN_SPREAD) return null;
+    const T = robustFit(pairs);
+    if (T) T.n = pairs.length;
+    return T;
+  }
+
+  /** Field tags decide; the chest-tag fit only stands in while the field fit is missing or too thin. */
+  function refit(s) {
+    const st = S[s]; st.dirty = false;
+    const Tf = fieldT(s); st.T = Tf; st.how = Tf ? 'field' : null;
+    if (!Tf || Tf.n < o.minAlign) { const C = fitChest(s); if (C) { st.T = C; st.how = 'chest'; } }
   }
   const T = s => { if (S[s].dirty) refit(s); return S[s].T; }; // lazy: one fit per batch of sightings, however often get() runs
 
@@ -165,13 +194,13 @@ export function createPhoneAlign(opts = {}) {
           const sc = W.tagScale(g.id), p = [g.p[0] * sc, g.p[1] * sc, g.p[2] * sc], d = Math.hypot(p[0], p[1], p[2]);
           if (!(d > 0.1 && d < 10)) continue;
           const b = camToWorld(pose, p);
-          last.push({ id: g.id, b, d });
+          last.push({ id: g.id, b, d, bx: camDir(pose, rodr(g.r, [1, 0, 0])), by: camDir(pose, rodr(g.r, [0, 1, 0])) });
           if (W.TAGS[g.id]?.pos) { // a field tag: two pairs for the fit (centre; axes kept so the field can change later)
             const w = 1 / Math.max(0.5, d) ** 2;
             st.sight.push({ t: k.t, id: g.id, b, bx: camDir(pose, rodr(g.r, [1, 0, 0])), by: camDir(pose, rodr(g.r, [0, 1, 0])), w, d });
-            st.fixes++; st.lastFix = k.t; st.dirty = true;
+            st.fixes++; st.lastFix = k.t; st.fDirty = st.dirty = true; S[OTHER[s]].dirty = true;
           } else if (g.id === W.PLAYER_TAG[OTHER[s]]) { // the other player's chest tag
-            st.seen.push({ t: k.t, b, d });
+            st.seen.push({ t: k.t, b, d }); S[OTHER[s]].dirty = true;
             while (st.seen[0].t < k.t - o.keep) st.seen.shift();
           }
         }
@@ -199,7 +228,7 @@ export function createPhoneAlign(opts = {}) {
     const st = S[slot];
     const out = { src: null, aligned: false, theta: null, t: null, rms: null, n: 0, used: 0, fixes: st.fixes, lastFix: st.lastFix, world_T_ar: null,
       chest: null, fwd: null, yaw: null, cam: null, trail: [], check: null, checkT: null, seenBy: null, sightings: [], k: st.k, online: st.online,
-      calibAt: st.calibAt, hz: st.rate, lastT: st.lastT, oldApp: st.oldApp };
+      calibAt: st.calibAt, how: st.how, hz: st.rate, lastT: st.lastT, oldApp: st.oldApp };
     if (st.oldApp) { // old app: calibration-relative p/q only -> localize.js
       const L = loc.get(slot);
       out.src = 'localize'; out.aligned = L.anchored; out.fixes = L.fixes; out.lastFix = L.lastFix; out.rms = L.err;
@@ -209,6 +238,7 @@ export function createPhoneAlign(opts = {}) {
       return out;
     }
     const Ts = T(slot), a = latest(slot);
+    out.how = st.how; // 'field' | 'chest' (placed by the other phone's sightings of the chest tag) | null
     const sb = seenBy(slot, 0.5, now);
     out.seenBy = sb;
     if (Ts) {
@@ -216,7 +246,10 @@ export function createPhoneAlign(opts = {}) {
       out.aligned = Ts.n >= o.minAlign;
       out.world_T_ar = { R: rotYMat(Ts.th), t: Ts.t };
       out.trail = st.trail.map(e => apply(Ts, e.p));
-      if (st.lastTags && now - st.lastTags.t < 0.5) out.sightings = st.lastTags.list.map(g => ({ id: g.id, p: apply(Ts, g.b), d: g.d }));
+      if (st.lastTags && now - st.lastTags.t < 0.5) out.sightings = st.lastTags.list.map(g => { // where the phone sees the tag, in the field world, with its turn
+        const x = rotY(Ts.th, g.bx), y = rotY(Ts.th, g.by);
+        return { id: g.id, p: apply(Ts, g.b), d: g.d, R: W.fromCols(x, y, cross(x, y)) };
+      });
     }
     if (Ts && a) {
       out.src = 'ar';

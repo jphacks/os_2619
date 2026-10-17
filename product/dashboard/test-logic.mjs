@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createActions, eulerRot } from './public/actions.js';
 import { createPhoneAlign } from './public/phonealign.js';
 import { createSim, due, DT } from './fake-world.mjs';
+import { PLAYER_TAG } from './public/world.js';
 
 // actions: a fast downward swing of a stick whose sensor X is along it fires one Swing
 {
@@ -69,4 +70,31 @@ import { createSim, due, DT } from './fake-world.mjs';
   assert.ok(n > 100, `compared ${n} times`);
   assert.ok(sum / n < 5, `mean stick direction error ${(sum / n).toFixed(1)}°`);
   console.log(`stick direction ok: mean ${(sum / n).toFixed(1)}°, worst ${worst.toFixed(1)}° over ${n} estimates`);
+}
+
+// phonealign, chest tags only for B: B never sees a field tag (it sits behind a pillar), but A does and A sees B's chest tag
+{
+  const sim = createSim({ seed: 3, noise: 1 }), PA = createPhoneAlign(), t0 = 3000;
+  for (const s of ['A', 'B']) PA.ingest({ type: 'calib', slot: s, t: t0 });
+  let worst = 0, n = 0, how = null;
+  while (sim.n * DT < 25) {
+    const k = sim.n, t = sim.step(), when = due(k), stamp = t0 + t;
+    for (const s of ['A', 'B']) {
+      PA.ingest({ slot: s, t: stamp, ...sim.imu(s) });
+      if (when.ar) PA.ingest({ slot: s, t: stamp, ...sim.ar(s) });
+      if (when.tags) {
+        const m = sim.tags(s);
+        if (s === 'B') m.tags = m.tags.filter(g => g.id === PLAYER_TAG.A); // nothing of the field
+        PA.ingest({ slot: s, t: stamp, ...m });
+      }
+    }
+    if (t > 12 && when.tags) {
+      const g = PA.estimate(stamp).slots.B; if (!g.chest) continue;
+      how = g.how; worst = Math.max(worst, Math.hypot(...g.chest.map((v, i) => v - sim.players.B.body.t[i]))); n++;
+    }
+  }
+  assert.equal(how, 'chest');
+  assert.ok(n > 50, `placed ${n} times`);
+  assert.ok(worst < 0.15, `worst chest-only error ${worst.toFixed(3)} m`);
+  console.log(`phonealign chest tags ok: worst error ${(worst * 100).toFixed(1)} cm over ${n} estimates`);
 }

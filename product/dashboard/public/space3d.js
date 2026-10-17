@@ -146,6 +146,16 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
     src[s] = { grp, trail, trailPos, tg, phone, frustum, arrow, tag, name, seen, drop, sword, blade, glow, tip, tipGlow, hand, tipShadow, swordLabel, ghost };
   }
   const rays = segs(RAY_N, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .7, depthTest: false }), true); scene.add(rays.obj);
+  // fixed tags as detected: each id where a phone last saw it (not where the layout says it should be), with its real turn
+  const detected = new Map(), detGrp = new THREE.Group(); scene.add(detGrp);
+  function showDetected(id, R, p, now) {
+    let d = detected.get(id);
+    if (!d) {
+      const sq = tagSquare(id, W.TAGS[id]?.size ?? .2, COL.tag), l = label(`ID ${id}`, '#3ddc84', .13); sq.matrixAutoUpdate = false; detGrp.add(sq, l);
+      detected.set(id, d = { sq, l });
+    }
+    toMat({ R, t: p }, d.sq.matrix); d.l.position.set(p[0], p[1] + .16, p[2]); d.at = now;
+  }
   const seenTags = new THREE.Group(); scene.add(seenTags); // small squares where each phone sees a tag right now
   const seenPool = Array.from({ length: RAY_N }, () => { const m = new THREE.Mesh(new THREE.PlaneGeometry(.12, .12), new THREE.MeshBasicMaterial({ color: COL.tag, transparent: true, opacity: .35, side: THREE.DoubleSide, depthTest: false })); m.visible = false; seenTags.add(m); return m; });
 
@@ -215,6 +225,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
         d.tag.visible = on.tags && g.yaw != null;
         if (d.tag.visible) toMat(W.compose(W.chestTagPose(W.bodyPose(g.chest, g.yaw, g.chest[1] - .12)), W.pose(W.I3, [0, 0, .01])), d.tag.matrix);
         d.seen.visible = !!g.seenBy; if (g.seenBy) d.seen.position.set(...g.seenBy.p);
+        for (const sg of g.sightings ?? []) if (sg.R && sg.id !== W.PLAYER_TAG.A && sg.id !== W.PLAYER_TAG.B) showDetected(sg.id, sg.R, sg.p, t);
         if (on.rays && g.sightings) for (const sg of g.sightings) {
           if (nRays >= RAY_N) break;
           const isField = W.TAGS[sg.id]?.pos, m = seenPool[nRays];
@@ -238,10 +249,10 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
       const d = src[s], ok = on.mapjs && roomToWorld && ghostEst;
       const p = ok && ghostEst.people[s]; d.ghost.visible = !!p; if (p) d.ghost.position.set(...roomToWorld(p.p));
     }
-    grid.visible = axes.visible = on.grid; tagsGrp.visible = on.tags;
+    grid.visible = axes.visible = on.grid; tagsGrp.visible = on.tags && !!getStage()?.state.scanned; detGrp.visible = on.tags; // the layout's tag spots only once measured
     placeC();
     const st = getStage()?.state;
-    note.textContent = !st?.scanned ? 'フィールド未スキャン：タグは仮の位置（最終映像の画面で「タグでスキャン」）' : on.mapjs && !roomToWorld ? 'map.js：床のタグ 2 枚以上を両スマホが見るまで照合できない' : '';
+    note.textContent = !st?.scanned ? 'フィールド未スキャン：タグは見えた場所に表示（スキャンするとフィールドの形も出る）' : on.mapjs && !roomToWorld ? 'map.js：床のタグ 2 枚以上を両スマホが見るまで照合できない' : '';
   }
 
   // ---- right panel: raw numbers, DOM touched only when the text changes ----
