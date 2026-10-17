@@ -27,11 +27,12 @@ export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン'
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
 export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, size: { s: 1, m: 1, l: 1 } }; // size: ball size × (looks and hit radius)
-// how each tier looks and flies (provisional effects: size tells the tiers apart)
+// how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
+// a little larger than the ball looks so near misses still count (10/18: .12 / .28 / .5 were too strict)
 const TIER = {
-  s: { power: .15, big: .7, speed: 11, radius: .12, hit: .25 },
-  m: { power: .6, big: 1.5, speed: 8, radius: .28, hit: .65 },
-  l: { power: 1, big: 2.8, speed: 6.5, radius: .5, hit: 1 },
+  s: { power: .15, big: .7, speed: 11, radius: .2, hit: .25 },
+  m: { power: .6, big: 1.5, speed: 8, radius: .38, hit: .65 },
+  l: { power: 1, big: 2.8, speed: 6.5, radius: .62, hit: 1 },
 };
 export const POS_JA = { auto: '自動', phones: '胸スマホ', start: '立ち位置' };
 
@@ -213,7 +214,13 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function onSensed(ev) {
     const p = players[ev.slot]; if (!p || !canAct()) return;
     if (ev.name === 'Charge') startCharge(p);
-    else if (ev.name === 'Swing') attack(p);
+    else if (ev.name === 'Swing') { if (inFront(p)) attack(p); else log(p.slot, 'shot', '背中側で止めたので撃たない'); }
+  }
+  /** A swing only fires when the stick stops in front of the body: tip ahead of the chest along the body's facing
+   *  (horizontal). A stick that comes to rest behind the back (wind-up, putting it down) is not a shot. */
+  function inFront(p) {
+    const f = W.app3(p.body.R, [1, 0, 0]);
+    return (p.tip.x - p.chest.x) * f[0] + (p.tip.z - p.chest.z) * f[2] > 0;
   }
   function stepCharge(dt) {
     const R = rules();
