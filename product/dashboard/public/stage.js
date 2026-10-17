@@ -248,7 +248,6 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
 
     renderer.setScissorTest(false);
     if (S.mode === 'game') {
-      canvas.style.transform = '';
       drawGuide2d(false);
       scene.background = field.background; field.group.visible = true; camHelper.visible = cfg.debug; guide.visible = false;
       if (S.fixed !== (drone.mode === 'fixed')) resize();
@@ -286,18 +285,12 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     // Final output is camera pixels + the dedicated transparent FX scene. Arena,
     // avatars, sticks, skeletons, scan guides and debug geometry never enter it.
     field.group.visible = false; world3d.visible = false; camHelper.visible = false; guide.visible = guiding;
-    // The 3D comes out mirrored left-right against phone C's picture: mirror the whole canvas and the picture texture once more, so
-    // the picture stays as it is and only the 3D flips (the background is its own full-screen plane, the camera does not touch it).
-    const flip = !!cfg.flip3rd && !fpv && !dummy;
-    canvas.style.transform = flip ? 'scaleX(-1)' : '';
-    for (const t of [videoTex, overTex]) if (t) { t.repeat.x = flip ? -1 : 1; t.offset.x = flip ? 1 : 0; }
     fx.render();
     if (cfg.pip) { // drone view in the bottom-right corner (no bloom)
       const w = S.w * .28, h = S.h * .28;
       scene.background = field.background; field.group.visible = true; camHelper.visible = cfg.debug;
       overCam.aspect = w / h; overCam.updateProjectionMatrix();
-      const px = flip ? 10 : S.w - w - 10; // the flipped canvas shows the corner on the other side
-      renderer.setScissorTest(true); renderer.setScissor(px, 10, w, h); renderer.setViewport(px, 10, w, h);
+      renderer.setScissorTest(true); renderer.setScissor(S.w - w - 10, 10, w, h); renderer.setViewport(S.w - w - 10, 10, w, h);
       renderer.render(scene, overCam);
       renderer.setScissorTest(false); renderer.setViewport(0, 0, S.w, S.h);
       field.group.visible = false; world3d.visible = false; camHelper.visible = false;
