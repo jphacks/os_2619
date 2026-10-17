@@ -169,7 +169,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     let v = chg[slot];
     if (!on) { if (v) { release(v, .05); chg[slot] = null; } return; }
     if (!buf.charge || ctx.state !== 'running' || muted) return;
-    if (!v) { v = chg[slot] = loopVoice('charge', bus.sfx); v.lvl = -1; v.pan = 9; v.tier = null; }
+    if (!v) { v = chg[slot] = loopVoice('charge', bus.sfx); v.lvl = -1; v.pan = 9; v.tier = null; v.src.playbackRate.value = CHARGE_PITCH[tier] ?? CHARGE_PITCH.s; } // start at the tier's pitch: no glide down from 1.0
     const t = ctx.currentTime, l = clamp(level, 0, 1);
     if (Math.abs(l - v.lvl) < .01 && Math.abs(pan - v.pan) < .02 && tier === v.tier) return; // per-frame calls: skip unchanged
     v.lvl = l; v.pan = pan; v.tier = tier;
