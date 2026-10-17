@@ -4,6 +4,7 @@
 // Camera pose convention (same as extrinsics.js): world_T_cam with cam = OpenCV frame (x right, y down, z forward).
 import * as THREE from 'three'; // resolved by the page's importmap (local ./cdn copy on index.html)
 import * as W from './world.js';
+import { createDummyMotion } from './dummy-motion.js';
 
 // ---- tag36h11 ----
 // Codes for ids 0-11 (AprilRobotics Tag36h11.java; same as js-aruco2 / OpenCV DICT_APRILTAG_36h11).
@@ -192,18 +193,6 @@ function tagTex(id) {
 }
 
 // Fallback motion when no truth arrives: the two players sidestep around the room's start marks, face each other and swing.
-function synthTruth(slot, time, room) {
-  const s = slot === 'A' ? -1 : 1, ph = slot === 'A' ? 0 : 1.7, o = room.start[slot === 'A' ? 'B' : 'A'], st = room.start[slot], zA = room.zAmp;
-  const chest = [st[0] - s * .25 * Math.sin(.6 * time + ph), W.CHEST_H + .03 * Math.sin(2.6 * time + ph), st[2] + zA * Math.sin(.45 * time + ph)];
-  const other = [o[0], 0, o[2] + zA * Math.sin(.45 * time + (slot === 'A' ? 1.7 : 0))];
-  const yaw = Math.atan2(-(other[2] - chest[2]), other[0] - chest[0]);
-  const bp = W.bodyPose(chest, yaw, chest[1]), h = W.STICK.hand;
-  const base = W.apply(bp, [h.fwd, h.up, h.right]);
-  const sw = (time * .8 + ph) % 3, swinging = sw < .5;
-  const el = swinging ? 1.2 - 4.4 * sw : .9 * Math.sin(1.5 * time + ph) + .3, az = .3 * Math.sin(time + ph);
-  const dir = W.app3(bp.R, [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)]);
-  return { type: 'truth', slot, chest, yaw, base, tip: add(base, dir, W.STICK.len), dir, swinging };
-}
 
 /**
  * createDummyCam({ width, height, fovY, pose, host, players, floorTags })
@@ -214,7 +203,7 @@ function synthTruth(slot, time, room) {
  * host: optional 'localhost:8000' to read truth itself (app.js already relays truth through setTruth, so leave it off
  * there). render(timeSec) draws one frame now.
  */
-export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = null, host = null, players: showPlayers = true, floorTags = null } = {}) {
+export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = null, host = null, players: showPlayers = true, floorTags = null, externalClock = false } = {}) {
   const room = truthLayout(floorTags), T = room.tags;
   pose ??= floorTags ? framingPose(room, { fovY, aspect: width / height }) : DEFAULT_POSE;
   room.zAmp = Math.min(.5, (Math.max(...room.poly.map(p => p[1])) - Math.min(...room.poly.map(p => p[1]))) * .15);
@@ -285,17 +274,19 @@ export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = n
 
   const players = { A: makePlayer(0xd2532a, W.PLAYER_TAG.A, T), B: makePlayer(0x2f7fd0, W.PLAYER_TAG.B, T) };
   for (const p of Object.values(players)) { p.group.traverse(o => { if (o.isMesh) o.castShadow = true; }); p.group.visible = showPlayers; scene.add(p.group); }
-  const truth = { A: null, B: null }, last = { A: -1e9, B: -1e9 };
-  const setTruth = (slot, k) => { if (!truth.hasOwnProperty(slot)) return; truth[slot] = k; last[slot] = performance.now(); };
+  const motion = createDummyMotion(room);
+  const setTruth = (slot, k) => motion.setTruth(slot, k);
+  let frame = null;
 
   function render(time = performance.now() / 1000) {
-    for (const s of ['A', 'B']) players[s].set(performance.now() - last[s] < 1000 ? truth[s] : synthTruth(s, time, room));
+    frame = motion.sample(time);
+    for (const s of ['A', 'B']) players[s].set(frame.players[s]);
     renderer.render(scene, camera);
   }
 
   let raf = 0, ws = null, alive = true;
   const loop = () => { render(); raf = requestAnimationFrame(loop); };
-  loop();
+  if (externalClock) render(); else loop();
   if (host) (function connect() {
     if (!alive) return;
     ws = new WebSocket(`ws://${host}/ws`);
@@ -307,6 +298,7 @@ export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = n
   const stream = canvas.captureStream(30);
   return {
     stream, canvas, render, setTruth, truth: room,
+    get frame() { return frame; },
     showPlayers(on) { for (const p of Object.values(players)) p.group.visible = on; }, // off = empty arena, as when calibrating
     truePose, setPose,
     stop() { alive = false; cancelAnimationFrame(raf); ws?.close(); stream.getTracks().forEach(t => t.stop()); renderer.dispose(); },

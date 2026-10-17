@@ -10,6 +10,9 @@
 // Premultiplied blending everywhere: glows/sparks/bolts add (alpha ~0), flames and smoke also cover what is behind them
 // (alpha > 0), so dense fire stays orange instead of summing to white. The layer alpha then hides the video behind the effect.
 import * as THREE from 'three';
+import { createFireEffects } from './fire-effects.js';
+import { createThunderEffects } from './thunder-effects.js';
+import { createChargeEffects } from './charge-effects.js';
 
 const TAU = Math.PI * 2;
 const K = { FLAME: 0, SMOKE: 1, SPARK: 2, GLOW: 3, EMBER: 4 };                              // particle kinds
@@ -289,6 +292,9 @@ export function createFx(renderer, scene, camera, opts = {}) {
   const shake = a => opts.onShake?.(a);
 
   const fxScene = new THREE.Scene();
+  const fire = createFireEffects(fxScene, { onShake: shake });
+  const thunder = createThunderEffects(fxScene, { onShake: shake });
+  const charging = createChargeEffects(fxScene);
   const common = { uNoise: { value: noise }, uTime: { value: 0 } };
   const addMat = (vs, fs, uniforms = {}) => new THREE.ShaderMaterial({
     vertexShader: vs, fragmentShader: fs, uniforms: { ...common, ...uniforms }, transparent: true, depthTest: false, depthWrite: false,
@@ -787,21 +793,28 @@ export function createFx(renderer, scene, camera, opts = {}) {
     opts,
     aura(element, base, tip, intensity = 1, key = element) { const st = request(auras, key, element); st.base.copy(base); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, intensity)); },
     charge(element, tip, level, key = element) { const st = request(charges, key, element); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, level)); },
+    charging(element, chest, tip, level, key = element) { charging.request(element, chest, tip, level, key); },
     /** big: overall size of the projectile (1 = the usual shot; the game's 小・中・大 tiers pass different sizes). */
     shot(element, pos, dir, power = .5, big = 1) {
       const id = nextId++;
       shots.set(id, { id, el: element, pos: pos.clone(), prev: pos.clone(), dir: dir.clone().normalize(), power, big, travel: 0, acc: {}, regen: 0, seed: R(), bolts: Array.from({ length: 6 }, () => new Bolt(96)) });
+      if (element === 'fire') fire.shot(id, pos, dir, power);
+      else if (element === 'thunder') thunder.shot(id, pos, dir, power);
       return id;
     },
-    moveShot(id, pos) { shots.get(id)?.pos.copy(pos); },
+    moveShot(id, pos) { const s = shots.get(id); if (!s) return; s.pos.copy(pos); (s.el === 'fire' ? fire : thunder).moveShot(id, pos); },
     endShot(id) {
       const s = shots.get(id); if (!s) return;
       shots.delete(id);
+      if (s.el === 'fire') { fire.endShot(id); return; }
+      if (s.el === 'thunder') { thunder.endShot(id); return; }
       const p = s.pos;
       if (s.el === 'fire') for (let i = 0; i < 25 * Q; i++) { runit(); emit(p.x, p.y, p.z, u3[0] * .6, u3[1] * .6 + .3, u3[2] * .6, .3 + .2 * R(), .08, .14, 3, 1, COL.one, K.FLAME, 1, .2, 0, 0); }
       else sparkBurst(p, .2, 30, .5);
     },
     hit(element, pos, power = .5) {
+      if (element === 'fire') { fire.hit(pos, power); return; }
+      if (element === 'thunder') { thunder.hit(pos, power); return; }
       if (element === 'fire') fireBurst(pos, power); else sparkBurst(pos, power, 220 + 260 * power);
       add({ update: element === 'fire' ? hitFire : hitThunder, el: element, pos: pos.clone(), power, bolts: element === 'fire' ? [] : Array.from({ length: 10 }, () => new Bolt(160)) });
       shake(.25 + .75 * power);
@@ -823,16 +836,23 @@ export function createFx(renderer, scene, camera, opts = {}) {
     /** A hit stopped by the shield. */
     block(element, pos) { sparkBurst(pos, .3, 80, .8); add({ update: blockFx, el: element, pos: pos.clone() }); shake(.15); },
     special(element, from, to) {
+      if (element === 'fire') { fire.special(from, to); return; }
+      if (element === 'thunder') { thunder.special(from, to); return; }
       add({ update: element === 'fire' ? specialFire : specialThunder, el: element, from: from.clone(), to: to.clone(), bolts: Array.from({ length: 8 }, () => new Bolt(200)) });
       if (element === 'thunder') shake(.4);
     },
+    /** Visual checks only: no game damage or sensor input is generated. */
+    previewFire(tier, from, to, getTarget = null) { fire.preview(tier, from, to, getTarget); },
+    controlFirePreview(state) { fire.previewControl(state); },
+    previewThunder(tier, from, to, getTarget = null) { thunder.preview(tier, from, to, getTarget); },
+    controlThunderPreview(state) { thunder.previewControl(state); },
     step(dt) {
       dt = Math.min(Math.max(dt, 0), .1); time += dt;
       nS = 0; nG = 0;
       for (const [k, a] of auras) { if (time - a.seen > .15) { auras.delete(k); continue; } (a.el === 'fire' ? fireAura : thunderAura)(a, dt); }
       for (const [k, g] of guards) { if (time - g.seen > .15) { guards.delete(k); continue; } guardFx(g, dt); }
       for (const [k, c] of charges) { if (time - c.seen > .15) { charges.delete(k); continue; } if (c.v > 0) (c.el === 'fire' ? fireCharge : thunderCharge)(c, dt); }
-      for (const s of shots.values()) { s.regen ??= 0; updateShot(s, dt); }
+      for (const s of shots.values()) { if (s.el === 'fire' || s.el === 'thunder') continue; s.regen ??= 0; updateShot(s, dt); }
       for (let i = live.length - 1; i >= 0; i--) {
         const e = live[i]; e.dt = dt;
         if (!e.update(e, dt)) live.splice(i, 1);
@@ -844,6 +864,9 @@ export function createFx(renderer, scene, camera, opts = {}) {
         if (n) { b.buf.clearUpdateRanges(); b.buf.addUpdateRange(0, n * st); b.buf.needsUpdate = true; }
       }
       common.uTime.value = time;
+      fire.step(dt);
+      thunder.step(dt);
+      charging.step(dt);
     },
     render() {
       renderer.getDrawingBufferSize(dbs);
@@ -853,7 +876,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
       renderer.setRenderTarget(null); renderer.autoClear = true;
       timed('scene', () => renderer.render(scene, camera));
       // nothing alive: skip the effect layer, bloom and composite (setup, between moves)
-      if (!nS && !nG && time >= pAlive) { renderer.autoClear = ac; renderer.setRenderTarget(rt0); return; }
+      if (!nS && !nG && time >= pAlive && !fire.active && !thunder.active && !charging.active) { renderer.autoClear = ac; renderer.setRenderTarget(rt0); return; }
       timed('fx', fxPasses);
       renderer.setClearColor(cc, ca); renderer.autoClear = ac; renderer.setRenderTarget(rt0);
     },
@@ -862,8 +885,11 @@ export function createFx(renderer, scene, camera, opts = {}) {
     /** { fxPixels, fxPixelsMin, fxBudgetMs, adaptive }: fxPixels also resets the adaptive size to it. */
     setQuality(q) { Object.assign(opts, q); if (q.fxPixels) { px = q.fxPixels; if (W) resizeTargets(W, H); } },
     stats() { return { sprites: nS, segments: nG, particleCap: CAP, shots: shots.size, live: live.length, auras: auras.size, charges: charges.size,
-      fxPixels: Math.round(fxRT.width * fxRT.height), gpuSceneMs: +gpu.scene.toFixed(2), gpuFxMs: +gpu.fx.toFixed(2), timer: !!tq }; },
+      fire: fire.stats(), thunder: thunder.stats(), charging: charging.stats(), fxPixels: Math.round(fxRT.width * fxRT.height), gpuSceneMs: +gpu.scene.toFixed(2), gpuFxMs: +gpu.fx.toFixed(2), timer: !!tq }; },
     dispose() {
+      fire.dispose();
+      thunder.dispose();
+      charging.dispose();
       for (const t of [fxRT, ...down, ...up]) t.dispose();
       for (const m of [P, SP, SG]) { m.g.dispose(); m.mesh.material.dispose(); }
       for (const m of [downMat, upMat, compMat]) m.dispose();

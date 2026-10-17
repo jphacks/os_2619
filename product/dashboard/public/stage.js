@@ -1,7 +1,7 @@
 // One WebGL stage for the game screen and the final render (only one is visible at a time, so the canvas moves between them).
 //  game:  the stylised arena (field3d.js) through the broadcast "drone" camera (drone.js), effects with bloom (effects.js)
-//  final: phone C's picture as the background, the Three.js camera placed where the tag scan put phone C (extrinsics.js /
-//         fieldmap.js), the same effects drawn at the sensors' 3D positions → the 3D state projected onto the live picture.
+//  final: phone C's untouched picture as the background, the Three.js camera placed where the tag scan put phone C
+//         (extrinsics.js / fieldmap.js), and only effects at sensor-world positions projected over that picture.
 //         Optionally a chest phone's own picture instead (A / B view), or the drone view as a picture-in-picture.
 // The tag scan (K) measures the floor sheets and phone C's pose at once; the result is kept in localStorage.
 // Ported from kawashima/app.js (renderer, guide, scan, skeletons).
@@ -33,6 +33,7 @@ export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => t
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   const scene = new THREE.Scene();
   const videoTex = new THREE.VideoTexture(video); videoTex.colorSpace = THREE.SRGBColorSpace;
+  let dummyTex = null, dummyCanvas = null;
   const camera = new THREE.PerspectiveCamera(GUIDE_CAM.fov, 16 / 9, 0.05, 100); camera.rotation.order = 'YXZ';
   const overCam = new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 100); overCam.position.set(0, 5.5, 6.5);
   const drone = createDrone(overCam, canvas, { mode: cfg.drone });
@@ -210,7 +211,9 @@ export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => t
 
   function applyCam() {
     if (S.mode === 'final' && cfg.fpv) return; // placed every frame
-    if (S.tagCam) toThreeCamera(S.tagCam, camera);
+    // The synthetic video exposes its exact camera; do not project it through a real camera's saved scan.
+    const pose = video.__dummy?.truePose ?? S.tagCam;
+    if (pose) toThreeCamera(pose, camera);
     else { const c = GUIDE_CAM, d = THREE.MathUtils.degToRad; camera.position.set(c.x, c.y, c.z); camera.rotation.set(d(c.pitch), d(c.yaw), d(c.roll)); camera.fov = c.fov; }
     camera.aspect = S.aspect; camera.updateProjectionMatrix(); camHelper.update();
   }
@@ -233,20 +236,23 @@ export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => t
   setInterval(() => checkTags(isSetup()), 600);
   let minimap = null; // the HUD's corner map (attachMinimap)
 
-  /** Render one frame. players: the game's, for the arena avatars and the drone; est: phonealign estimate. */
+  /** Render one frame. In final mode the base scene is strictly camera pixels; only fx is projected over it. */
   function render(dt, game, est) {
     const P = game.players, setup = game.match.phase === 'setup';
     const yawOf = b => Math.atan2(-b.R[6], b.R[0]); // body x axis = forward
-    drone.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
-    field.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot,
-      { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, hideBody: (skels[p.slot].has || phoneSk[p.slot].has) && cfg.skeleton }])));
-    updateSkels(est);
+    const needArena = S.mode === 'game' || cfg.pip;
+    if (needArena) {
+      updateSkels(est);
+      drone.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
+      field.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot,
+        { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, hideBody: (skels[p.slot].has || phoneSk[p.slot].has) && cfg.skeleton }])));
+    }
     fx.step(dt);
-    if (minimap) { const on = cfg.minimap && !setup; minimap.canvas.style.display = on ? '' : 'none'; if (on) minimap.draw(P, game.shots); }
+    if (minimap) { const on = S.mode === 'game' && cfg.minimap && !setup; minimap.canvas.style.display = on ? '' : 'none'; if (on) minimap.draw(P, game.shots); }
     const sx = (Math.random() - .5) * 20 * S.shake, sy = (Math.random() - .5) * 20 * S.shake;
     el.style.transform = S.shake ? `translate(${sx}px, ${sy}px)` : '';
     S.shake = S.shake < .01 ? 0 : S.shake * Math.exp(-8 * dt);
-    world3d.visible = cfg.debug;
+    world3d.visible = S.mode === 'game' && cfg.debug;
 
     renderer.setScissorTest(false);
     if (S.mode === 'game') {
@@ -261,13 +267,22 @@ export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => t
     }
     const fpv = cfg.fpv && placePhoneCamera(cfg.fpv);
     if (fpv) phonePicture(cfg.fpv); else if (cfg.fpv) applyCam();
-    const guiding = setup && !fpv;
-    drawGuide2d(guiding);
-    scene.background = fpv ? phoneTex : video.videoWidth ? videoTex : field.background;
-    field.group.visible = !video.videoWidth && !fpv; // no picture yet: show the arena from phone C's place instead of black
-    camHelper.visible = false; guide.visible = guiding; showSkels(cfg.skeleton && !fpv);
+    const dummy = video.__dummy;
+    if (dummy) {
+      if (dummyCanvas !== dummy.canvas) {
+        dummyTex?.dispose(); dummyCanvas = dummy.canvas;
+        dummyTex = new THREE.CanvasTexture(dummyCanvas); dummyTex.colorSpace = THREE.SRGBColorSpace;
+      }
+      dummyTex.needsUpdate = true;
+      if (!fpv) { toThreeCamera(dummy.truePose, camera); camera.aspect = S.aspect; camera.updateProjectionMatrix(); }
+    } else if (dummyTex) { dummyTex.dispose(); dummyTex = dummyCanvas = null; }
+    drawGuide2d(false);
+    // Use the canvas sampled for game placement, avoiding captureStream/video's extra frame of delay.
+    scene.background = fpv ? phoneTex : dummyTex ?? (video.videoWidth ? videoTex : null);
+    // Final output is camera pixels + the dedicated transparent FX scene. Arena,
+    // avatars, sticks, skeletons, scan guides and debug geometry never enter it.
+    field.group.visible = false; world3d.visible = false; camHelper.visible = false; guide.visible = false; showSkels(false);
     fx.render();
-    guide.visible = false;
     if (cfg.pip) { // drone view in the bottom-right corner (no bloom)
       const w = S.w * .28, h = S.h * .28;
       scene.background = field.background; field.group.visible = true; camHelper.visible = cfg.debug;
@@ -275,6 +290,7 @@ export function createStage({ video, cfg, hub, PA, getTracker, isSetup = () => t
       renderer.setScissorTest(true); renderer.setScissor(S.w - w - 10, 10, w, h); renderer.setViewport(S.w - w - 10, 10, w, h);
       showSkels(true); renderer.render(scene, overCam);
       renderer.setScissorTest(false); renderer.setViewport(0, 0, S.w, S.h);
+      field.group.visible = false; world3d.visible = false; camHelper.visible = false; showSkels(false);
     }
   }
 

@@ -34,7 +34,7 @@ export function createVideoSource(video, { onChange = () => {} } = {}) {
   }
   async function dummy() {
     const { createDummyCam } = await import('./dummycam.js');
-    S.dummy = createDummyCam({ width: 1920, height: 1080 }); // same size as a phone picture, so small far sheets behave alike
+    S.dummy = createDummyCam({ width: 1920, height: 1080, externalClock: true }); // app.js draws it before placing the game players
     video.srcObject = S.dummy.stream; video.__dummy = S.dummy;
     say('ダミーの部屋（テスト用の描画）');
     onChange();

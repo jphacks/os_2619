@@ -80,6 +80,30 @@ if (info.https) {
   console.log('https on the same port ok');
 } else console.log('https skipped (no openssl)');
 console.log('server ok');
+for (const file of ['fire-lobe-v2.png','flame-tongue.png','smoke-puff.png','glow.png','spark.png']) {
+  const r = await fetch('http://localhost:18099/assets/fire/' + file);
+  assert.equal(r.status,200,file);
+  assert.match(r.headers.get('content-type'),/image\/png/);
+  const bytes = new Uint8Array(await r.arrayBuffer());
+  assert.deepEqual([...bytes.slice(0,8)],[137,80,78,71,13,10,26,10],file);
+}
+for (const file of ['electric-arc-v2.png','electric-burst-v2.png','glow.png','spark.png']) {
+  const r = await fetch('http://localhost:18099/assets/thunder/' + file);
+  assert.equal(r.status,200,file);
+  assert.match(r.headers.get('content-type'),/image\/png/);
+  const bytes = new Uint8Array(await r.arrayBuffer());
+  assert.deepEqual([...bytes.slice(0,8)],[137,80,78,71,13,10,26,10],file);
+}
+for (const file of ['aura-wisp.png','plasma-flow.png','electric-filament.png','glow.png','spark.png']) {
+  const r = await fetch('http://localhost:18099/assets/charge/' + file);
+  assert.equal(r.status,200,file);
+  assert.match(r.headers.get('content-type'),/image\/png/);
+  const bytes = new Uint8Array(await r.arrayBuffer());
+  assert.deepEqual([...bytes.slice(0,8)],[137,80,78,71,13,10,26,10],file);
+}
+await import('./test-fire.mjs');
+await import('./test-thunder.mjs');
+await import('./test-dummy.mjs');
 
 for (const x of [dash, a, c, v, a2, d, disp, cam]) x.ws.terminate();
 server.close();
