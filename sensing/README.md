@@ -19,7 +19,7 @@ Two Android phones, each with its own WitMotion WT9011DCL IMU over Bluetooth, st
 
 ## Space map
 
-The top card fuses both phones into one room. Setup it expects: A and B wear the phones on the chest, each chest mount carries an AprilTag, the floor corners carry AprilTags, each person swings a stick of known length with a coloured tip, and each phone has the **opponent's** tip colour picked. Tag sizes are fixed in the app: 50 mm for the worn tags (ids 8-11), 200 mm for every other tag.
+The top card fuses both phones into one room. Setup it expects: A and B wear the phones on the chest, each chest mount carries an AprilTag, the floor corners carry AprilTags, each person swings a stick of known length with a coloured tip, and each phone has the **opponent's** tip colour picked. Tag sizes are fixed in the app: the paper is 50 mm (worn tags, ids 8-11) or 200 mm (every other tag) square with a margin of a tenth on each side, so the black square it measures is 40 mm / 160 mm.
 
 - Tags whose face points up are floor tags; any other tag a phone sees is the opponent's chest mount. No tag IDs to configure.
 - B's ARCore world is fitted onto A's (yaw + shift, both gravity-aligned) from chest sightings paired with the other phone's own AR position at the same instant, plus any floor tag both phones have seen. Walk around a little at the start so the fit has spread.

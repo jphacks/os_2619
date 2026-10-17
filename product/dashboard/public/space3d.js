@@ -155,7 +155,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
     if (!(dist < LOCK_MAX_D)) return; // too far to place a sheet reliably: wait for a closer look
     let d = detected.get(id);
     if (!d) {
-      const sq = tagSquare(id, W.TAGS[id]?.size ?? .2, COL.tag), l = label(`ID ${id}`, '#3ddc84', .13); sq.matrixAutoUpdate = false; detGrp.add(sq, l);
+      const sq = tagSquare(id, W.TAGS[id]?.size ?? .16, COL.tag), l = label(`ID ${id}`, '#3ddc84', .13); sq.matrixAutoUpdate = false; detGrp.add(sq, l);
       detected.set(id, d = { sq, l, n: 0, best: Infinity, locked: false });
     }
     if (d.locked) return;

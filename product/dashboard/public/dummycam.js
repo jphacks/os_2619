@@ -65,7 +65,7 @@ function truthPose(t) {
  */
 export function truthLayout(floorTags = null) {
   const tags = JSON.parse(JSON.stringify(BASE_TAGS));
-  for (const [id, t] of Object.entries(floorTags ?? {})) tags[id] = { size: tags[id]?.size ?? t.size ?? .2, ...tags[id], pos: [t.pos[0], 0, t.pos[2]], yaw: t.yaw ?? 0, floor: true, flip: false };
+  for (const [id, t] of Object.entries(floorTags ?? {})) tags[id] = { size: tags[id]?.size ?? t.size ?? .16, ...tags[id], pos: [t.pos[0], 0, t.pos[2]], yaw: t.yaw ?? 0, floor: true, flip: false };
   const sheets = Object.values(tags).filter(t => t.floor && t.pos);
   let poly;
   if (sheets.length >= 3) {

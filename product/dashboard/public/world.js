@@ -37,40 +37,42 @@ const H = ARENA.half;
 // map4 = four floor sheets, ids 0-3, laid edge to edge as one big square in the middle of the room, clockwise seen from above:
 // 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left, every sheet upright (its top edge towards -z). The origin is the middle of
 // the big square. The positions are fixed, not measured: PITCH is the distance between the centres of neighbouring sheets
-// (the paper size when the sheets touch; ?pitch=0.25 or env PITCH overrides it).
-const PITCH = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('pitch')) || (typeof process !== 'undefined' && +process.env?.PITCH) || 0.25;
+// (the paper width when the sheets touch: 200 mm; ?pitch=0.2 or env PITCH overrides it).
+// Sizes: the printed paper is 200 mm (fixed tags) / 50 mm (worn tags 8-11) square, with a white margin of 1/10 of that on each side,
+// so the black square (TAGS[id].size, what the distance maths measures) is 160 mm / 40 mm. tagSquare() draws the paper at size x 10/8.
+const PITCH = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('pitch')) || (typeof process !== 'undefined' && +process.env?.PITCH) || 0.2;
 export const TAG_PITCH = PITCH;
 const HP = PITCH / 2;
 const LAYOUTS = {
   full: {
-    0: { size: 0.2, pos: [-H, CHEST_H, -H] },
-    1: { size: 0.2, pos: [H, CHEST_H, -H] },
-    2: { size: 0.2, pos: [H, CHEST_H, H] },
-    3: { size: 0.2, pos: [-H, CHEST_H, H] },
-    4: { size: 0.2, pos: [H, CHEST_H, 0] },
-    5: { size: 0.2, pos: [-H, CHEST_H, 0] },
-    10: { size: 0.05, player: 'A' },
-    11: { size: 0.05, player: 'B' },
+    0: { size: 0.16, pos: [-H, CHEST_H, -H] },
+    1: { size: 0.16, pos: [H, CHEST_H, -H] },
+    2: { size: 0.16, pos: [H, CHEST_H, H] },
+    3: { size: 0.16, pos: [-H, CHEST_H, H] },
+    4: { size: 0.16, pos: [H, CHEST_H, 0] },
+    5: { size: 0.16, pos: [-H, CHEST_H, 0] },
+    10: { size: 0.04, player: 'A' },
+    11: { size: 0.04, player: 'B' },
   },
   today: {
-    0: { size: 0.2, pos: [H, CHEST_H, 0], flip: true },
-    1: { size: 0.2, pos: [-H, CHEST_H, 0], flip: true },
-    10: { size: 0.05, player: 'A' }, // not printed yet: kept so the dummy room and the simulator still use them
-    11: { size: 0.05, player: 'B' },
+    0: { size: 0.16, pos: [H, CHEST_H, 0], flip: true },
+    1: { size: 0.16, pos: [-H, CHEST_H, 0], flip: true },
+    10: { size: 0.04, player: 'A' }, // not printed yet: kept so the dummy room and the simulator still use them
+    11: { size: 0.04, player: 'B' },
   },
   map4: {
-    0: { size: 0.2, pos: [-HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
-    1: { size: 0.2, pos: [HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
-    2: { size: 0.2, pos: [HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
-    3: { size: 0.2, pos: [-HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
-    10: { size: 0.05, player: 'A' },
-    11: { size: 0.05, player: 'B' },
+    0: { size: 0.16, pos: [-HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
+    1: { size: 0.16, pos: [HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
+    2: { size: 0.16, pos: [HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
+    3: { size: 0.16, pos: [-HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
+    10: { size: 0.04, player: 'A' },
+    11: { size: 0.04, player: 'B' },
   },
   floor: {
-    0: { size: 0.2, pos: [1.5, 0, 1], floor: true, flip: true },
-    1: { size: 0.2, pos: [-1.5, 0, 1], floor: true, flip: true },
-    10: { size: 0.05, player: 'A' },
-    11: { size: 0.05, player: 'B' },
+    0: { size: 0.16, pos: [1.5, 0, 1], floor: true, flip: true },
+    1: { size: 0.16, pos: [-1.5, 0, 1], floor: true, flip: true },
+    10: { size: 0.04, player: 'A' },
+    11: { size: 0.04, player: 'B' },
   },
 };
 const pick = (typeof location !== 'undefined' && new URLSearchParams(location.search).get('layout'))
@@ -84,7 +86,7 @@ export const PLAYER_TAG = { A: 10, B: 11 }; // the ids drawn / simulated on A an
 // A phone never sees its own, so a chest tag in view is always the opponent's.
 export const CHEST_IDS = [8, 9, 10, 11];
 export const isChestTag = id => id >= 8 && id <= 11;
-for (const id of CHEST_IDS) if (!TAGS[id]) TAGS[id] = { size: 0.05, chest: true }; // size for tagScale; never a pos, never a field tag
+for (const id of CHEST_IDS) if (!TAGS[id]) TAGS[id] = { size: 0.04, chest: true }; // size for tagScale; never a pos, never a field tag
 // floor layout: the scan measures how far apart the two sheets really are (app.js) and keeps it, so the
 // sheets only need to lie level and face the same way, not sit exactly 3 m apart
 export const FLOOR_IDS = CORNER_IDS.filter(id => TAGS[id].floor);
@@ -145,9 +147,9 @@ export function inField(x, z) {
   }
   return inside;
 }
-/** Factor from a tag message's p to metres. The app measures each tag at its printed size (`sz`: 50 mm for the worn tags 8-11,
- *  200 mm for every fixed one), so p is already metric; an old app sends no `sz` and used one size for all (PHONE_TAG_SIZE). */
-export const TAG_DIST_SCALE = 1 / 1.40; // measured: the Android camera reported 1.40 m for a tag 1.00 m away, whatever the id (distances are proportional)
+/** Factor from a tag message's p to metres. The app measures each tag at its black-square size (`sz`: 40 mm for the worn tags 8-11,
+ *  160 mm for every fixed one), so p is already metric; an old app sends no `sz` and used one size for all (PHONE_TAG_SIZE). */
+export const TAG_DIST_SCALE = 1 / 1.12; // measured: the Android camera read 1.40 m at 1.00 m while assuming the paper size as the black square (200 mm); with the true black square (x 0.8) it reads 1.12 m. Proportional, whatever the id
 export const tagScale = (id, sz) => TAG_DIST_SCALE * (sz ? 1 : (TAGS[id]?.size ?? PHONE_TAG_SIZE) / PHONE_TAG_SIZE);
 
 // ---- small pose maths ----
