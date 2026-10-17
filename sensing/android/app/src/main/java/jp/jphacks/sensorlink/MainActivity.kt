@@ -20,7 +20,6 @@ import android.os.SystemClock
 import android.text.InputType
 import android.util.Log
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.Surface
 import android.view.View
 import android.view.WindowManager
@@ -95,29 +94,14 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
 
     private val convertW = Worker("convert")
     private val tagW = Worker("tags")
-    private val colorW = Worker("color")
-    private val handW = Worker("hands")
-    private val poseW = Worker("pose")
     private val videoW = Worker("video")
     private var tagDet: TagDetector? = null
-    private var colorDet: ColorDetector? = null
-    private var hands: Hands? = null
-    private var pose: Pose? = null
     private var lastVideoMs = 0L
     // lazy: Mat() needs the OpenCV native lib, which is only loaded in onCreate (after field initialisers run)
     private val yuv by lazy { Mat() }; private val rgbaL by lazy { Mat() }; private val rgbaU by lazy { Mat() }
 
     @Volatile var frame: Frame? = null
     @Volatile var tags: JSONArray? = null
-    @Volatile var handRes: JSONObject? = null
-    @Volatile var poseRes: JSONObject? = null
-    @Volatile var colorRes: JSONObject? = null
-    /** Target colour in OpenCV HSV, or null if none picked yet. */
-    @Volatile var target: DoubleArray? = null
-    /** Opponent's colour (same format), and which of the two the next tap on the picture sets. */
-    @Volatile var targetOpp: DoubleArray? = null
-    @Volatile var colorResOpp: JSONObject? = null
-    @Volatile var pickOpp = false
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -131,7 +115,6 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
                 .put("euler", arr(s.euler)).put("acc", arr(s.acc)).put("gyro", arr(s.gyro))
                 .put("q", JSONArray().apply { s.q.forEach { put(r4(it)) } }))
         }
-        if (prefs.contains("th")) target = doubleArrayOf(prefs.getFloat("th", 0f).toDouble(), prefs.getFloat("ts", 0f).toDouble(), prefs.getFloat("tv", 0f).toDouble())
 
         gl = GLSurfaceView(this).apply {
             preserveEGLContextOnPause = true
@@ -139,7 +122,6 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             setRenderer(this@MainActivity)
             renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
         }
-        if (prefs.contains("oh")) targetOpp = doubleArrayOf(prefs.getFloat("oh", 0f).toDouble(), prefs.getFloat("os", 0f).toDouble(), prefs.getFloat("ov", 0f).toDouble())
         overlay = Overlay(this)
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -147,7 +129,6 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             setBackgroundColor(0x99000000.toInt())
             fun btn(label: String, onClick: (Button) -> Unit) = addView(Button(context).apply { text = label; setOnClickListener { onClick(this) } },
                 LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            btn("Pick: ME") { b -> pickOpp = !pickOpp; b.text = if (pickOpp) "Pick: OPP" else "Pick: ME" }
             btn("IMU") { imuDialog() }
             btn("Calibrate") { calibrate() }
             btn("LAN") { lanDialog() }
@@ -206,15 +187,14 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     override fun onDestroy() {
         super.onDestroy()
         link.close(); imu.disconnect()
-        listOf(convertW, tagW, colorW, handW, poseW, videoW).forEach { it.shutdown() }
+        listOf(convertW, tagW, videoW).forEach { it.shutdown() }
         session?.close()
     }
 
     // ---- GL thread: ARCore update + camera image ----
 
-    private val MAX_TIP_DIST = 0.5
     private var lastImgNs = 0L
-    private val IMAGE_FPS = 10 // detection rate; AR pose is still sent every frame
+    private val IMAGE_FPS = 30 // tag detection rate (camera max); AR pose is sent every frame
 
     override fun onSurfaceCreated(g: GL10?, c: EGLConfig?) {
         val t = IntArray(1)
@@ -293,16 +273,8 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             link.send(JSONObject().put("type", "tags").put("t", fr.t).put("tags", r)
                 .put("k", JSONArray().put(r4(fr.fx / fr.bmp.width)).put(r4(fr.fy / fr.bmp.height)).put(r4(fr.cx / fr.bmp.width)).put(r4(fr.cy / fr.bmp.height))))
         }
-        val mine = target; val theirs = targetOpp
-        if (mine != null || theirs != null) colorW.offer {
-            val d = colorDet ?: ColorDetector().also { colorDet = it }
-            mine?.let { val r = d.detect(fr, "me", it[0], it[1], it[2]); colorRes = r; link.send(r) }
-            theirs?.let { val r = d.detect(fr, "opp", it[0], it[1], it[2]); colorResOpp = r; link.send(r) }
-        }
-        handW.offer { val r = (hands ?: Hands(this).also { hands = it }).detect(fr); tagOwners(r); handRes = r; link.send(r) }
-        poseW.offer { val r = (pose ?: Pose(this).also { pose = it }).detect(fr); poseRes = r; link.send(r) }
         val now = SystemClock.elapsedRealtime()
-        if (now - lastVideoMs >= 66 && link.videoReady()) {
+        if (now - lastVideoMs >= 33 && link.videoReady()) {
             lastVideoMs = now
             videoW.offer {
                 val out = ByteArrayOutputStream(64 * 1024)
@@ -310,28 +282,6 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
                 link.sendVideo(out.toByteArray())
             }
         }
-    }
-
-    /**
-     * Adds "owner" ("me" / "opp" / "?") to each hand: the sword-tip colour blobs are already told apart, so each tip
-     * claims the nearest hand (one-to-one, within MAX_TIP_DIST in image-fraction units). Unclaimed hands stay "?".
-     */
-    private fun tagOwners(r: JSONObject) {
-        val hs = r.getJSONArray("hands")
-        val cen = (0 until hs.length()).map { i ->
-            val lm = hs.getJSONObject(i).getJSONArray("lm")
-            var sx = 0.0; var sy = 0.0
-            for (j in 0 until lm.length()) { sx += lm.getJSONArray(j).getDouble(0); sy += lm.getJSONArray(j).getDouble(1) }
-            doubleArrayOf(sx / lm.length(), sy / lm.length())
-        }
-        val tips = listOf("me" to colorRes, "opp" to colorResOpp).filter { it.second?.optBoolean("found") == true }
-            .map { (side, c) -> Triple(side, c!!.getDouble("x"), c.getDouble("y")) }
-        val owner = arrayOfNulls<String>(cen.size)
-        val pairs = tips.flatMap { (side, tx, ty) -> cen.indices.map { i -> Triple(side, i, Math.hypot(cen[i][0] - tx, cen[i][1] - ty)) } }
-            .filter { it.third < MAX_TIP_DIST }.sortedBy { it.third }
-        val usedSides = HashSet<String>()
-        for ((side, i, _) in pairs) if (owner[i] == null && usedSides.add(side)) owner[i] = side
-        for (i in cen.indices) hs.getJSONObject(i).put("owner", owner[i] ?: "?")
     }
 
     // ---- UI actions ----
@@ -386,41 +336,20 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             .show()
     }
 
-    /** Tap on the picture: the average colour around the tap becomes the detection target. */
-    fun pickColor(bmp: Bitmap, x: Int, y: Int) {
-        var r = 0; var g = 0; var b = 0; var n = 0
-        for (yy in (y - 3).coerceAtLeast(0)..(y + 3).coerceAtMost(bmp.height - 1))
-            for (xx in (x - 3).coerceAtLeast(0)..(x + 3).coerceAtMost(bmp.width - 1)) {
-                val c = bmp.getPixel(xx, yy); r += Color.red(c); g += Color.green(c); b += Color.blue(c); n++
-            }
-        val hsv = FloatArray(3)
-        Color.RGBToHSV(r / n, g / n, b / n, hsv)
-        val t = doubleArrayOf(hsv[0] / 2.0, hsv[1] * 255.0, hsv[2] * 255.0)
-        val k = if (pickOpp) "o" else "t" // prefs keys: t* = me, o* = opponent
-        if (pickOpp) { targetOpp = t; colorResOpp = null } else { target = t; colorRes = null }
-        prefs.edit().putFloat(k + "h", t[0].toFloat()).putFloat(k + "s", t[1].toFloat()).putFloat(k + "v", t[2].toFloat()).apply()
-        val who = if (pickOpp) "opponent" else "my"
-        Toast.makeText(this, if (hsv[1] < 0.25f) "Picked a greyish colour ($who): detection works best on saturated colours" else "Colour picked ($who)", Toast.LENGTH_SHORT).show()
-    }
-
     fun statusLines() = listOf(
         "LAN: ${link.status}  slot ${link.slot}  rtt %.0f ms".format(link.rttMs),
         "IMU: ${imu.status}" + (imu.last?.let { "  %.0f Hz  r %.0f p %.0f y %.0f".format(imu.hz, it.euler[0], it.euler[1], it.euler[2]) } ?: ""),
         arError ?: arText,
-        "Hz  cam %.0f  tag %.0f  hand %.0f  pose %.0f  color %.0f".format(convertW.hz, tagW.hz, handW.hz, poseW.hz, colorW.hz),
-        "tags: " + (tags?.let { a -> (0 until a.length()).joinToString { a.getJSONObject(it).getInt("id").toString() } } ?: "") +
-            "   hands ${handRes?.getJSONArray("hands")?.length() ?: 0}   pose ${if (poseRes?.optBoolean("found") == true) "yes" else "no"}" +
-            "   color me ${if (target == null) "tap to pick" else if (colorRes?.optBoolean("found") == true) "found" else "-"}" +
-            " opp ${if (targetOpp == null) "tap to pick" else if (colorResOpp?.optBoolean("found") == true) "found" else "-"}",
+        "Hz  cam %.0f  tag %.0f".format(convertW.hz, tagW.hz),
+        "tags: " + (tags?.let { a -> (0 until a.length()).joinToString { a.getJSONObject(it).getInt("id").toString() } } ?: ""),
     )
 
     private fun arr(a: FloatArray) = JSONArray().apply { a.forEach { put(r4(it)) } }
 }
 
-/** Camera picture with everything detected drawn on top. Tapping it picks the detection colour. */
+/** Camera picture with the detected tags drawn on top. */
 class Overlay(private val a: MainActivity) : View(a) {
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 5f }
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 34f; setShadowLayer(4f, 0f, 0f, Color.BLACK) }
     private val dst = RectF()
 
@@ -447,56 +376,9 @@ class Overlay(private val a: MainActivity) : View(a) {
                     c.drawText("id ${t.getInt("id")}$d", x(p0.getDouble(0)), y(p0.getDouble(1)) - 10, text)
                 }
             }
-            a.poseRes?.optJSONArray("lm")?.let { skeleton(c, it, POSE, Color.MAGENTA, ::x, ::y) }
-            a.handRes?.getJSONArray("hands")?.let { hs -> for (i in 0 until hs.length()) {
-                val hd = hs.getJSONObject(i)
-                skeleton(c, hd.getJSONArray("lm"), HAND, when (hd.optString("owner")) { "me" -> Color.CYAN; "opp" -> Color.rgb(255, 128, 0); else -> Color.LTGRAY }, ::x, ::y)
-            } }
-            listOf(a.colorRes to Color.YELLOW, a.colorResOpp to Color.RED).forEach { (res, col) ->
-                res?.takeIf { it.optBoolean("found") }?.let { r ->
-                    val b = r.getJSONArray("box")
-                    line.color = col
-                    c.drawRect(x(b.getDouble(0)), y(b.getDouble(1)), x(b.getDouble(0) + b.getDouble(2)), y(b.getDouble(1) + b.getDouble(3)), line)
-                    val cx = x(r.getDouble("x")); val cy = y(r.getDouble("y"))
-                    c.drawLine(cx - 30, cy, cx + 30, cy, line); c.drawLine(cx, cy - 30, cx, cy + 30, line)
-                    c.drawText(if (r.optString("side") == "opp") "OPP" else "ME", cx + 12, cy - 12, text)
-                }
-            }
         } else c.drawText("starting camera…", 40f, height / 2f, text)
 
-        listOf(a.target to 260f, a.targetOpp to 360f).forEach { (t, cy) ->
-            if (t == null) return@forEach
-            fill.color = Color.HSVToColor(floatArrayOf((t[0] * 2).toFloat(), (t[1] / 255).toFloat(), (t[2] / 255).toFloat()))
-            c.drawCircle(width - 60f, cy, 36f, fill)
-            line.color = Color.WHITE; c.drawCircle(width - 60f, cy, 36f, line)
-            c.drawText(if (cy == 260f) "ME" else "OPP", width - 110f, cy + 12, text)
-        }
         a.statusLines().forEachIndexed { i, s -> c.drawText(s, 20f, 60f + i * 42f, text) }
         postInvalidateDelayed(100) // keep status text fresh even without frames
-    }
-
-    private fun skeleton(c: Canvas, lm: JSONArray, links: IntArray, col: Int, x: (Double) -> Float, y: (Double) -> Float) {
-        line.color = col; fill.color = col
-        for (i in links.indices step 2) {
-            if (links[i + 1] >= lm.length()) continue
-            val p = lm.getJSONArray(links[i]); val q = lm.getJSONArray(links[i + 1])
-            c.drawLine(x(p.getDouble(0)), y(p.getDouble(1)), x(q.getDouble(0)), y(q.getDouble(1)), line)
-        }
-        for (i in 0 until lm.length()) { val p = lm.getJSONArray(i); c.drawCircle(x(p.getDouble(0)), y(p.getDouble(1)), 6f, fill) }
-    }
-
-    override fun onTouchEvent(e: MotionEvent): Boolean {
-        if (e.action == MotionEvent.ACTION_UP) {
-            val f = a.frame ?: return true
-            if (!dst.contains(e.x, e.y)) return true
-            a.pickColor(f.bmp, ((e.x - dst.left) / dst.width() * f.bmp.width).toInt(), ((e.y - dst.top) / dst.height() * f.bmp.height).toInt())
-        }
-        return true
-    }
-
-    companion object {
-        val HAND = intArrayOf(0,1, 1,2, 2,3, 3,4, 0,5, 5,6, 6,7, 7,8, 5,9, 9,10, 10,11, 11,12, 9,13, 13,14, 14,15, 15,16, 13,17, 0,17, 17,18, 18,19, 19,20)
-        val POSE = intArrayOf(11,12, 11,13, 13,15, 12,14, 14,16, 11,23, 12,24, 23,24, 23,25, 25,27, 24,26, 26,28, 27,29, 29,31, 27,31, 28,30, 30,32, 28,32,
-            0,1, 1,2, 2,3, 3,7, 0,4, 4,5, 5,6, 6,8, 9,10, 15,17, 15,19, 15,21, 17,19, 16,18, 16,20, 16,22, 18,20)
     }
 }
