@@ -23,6 +23,8 @@ const DEFAULTS = {
   debug: false,     // grid / tags / capsules in the main view
   view: 'pip',      // 'pip' | 'full3d' | 'off'
   useTruth: false,  // fake-world only: place players from the simulator's ground truth
+  fpv: null,        // 'A' | 'B': show that chest phone's own camera picture, camera placed by localize.js
+  anchors: true,    // in the phone view, a flame on every fixed tag: it sits on the paper when the registration is right
 };
 const load = () => { try { return JSON.parse(localStorage.getItem('fx-cfg2')) ?? {}; } catch { return {}; } };
 const saved = load();
@@ -43,10 +45,11 @@ const overCam = new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 100);
 overCam.position.set(0, 5.5, 6.5);
 const orbit = new OrbitControls(overCam, canvas);
 orbit.target.set(0, 1, 0); orbit.update();
-let aspect = 16 / 9, W_px = 1, H_px = 1;
+let aspect = 16 / 9, videoAspect = 16 / 9, W_px = 1, H_px = 1;
 
 function applyCam() {
-  if (cfg.camMode === 'tags' && cfg.tagCam) toThreeCamera(cfg.tagCam, camera);
+  if (cfg.fpv) { /* placed every frame from the phone's pose */ }
+  else if (cfg.camMode === 'tags' && cfg.tagCam) toThreeCamera(cfg.tagCam, camera);
   else {
     const c = cfg.cam, d = THREE.MathUtils.degToRad;
     camera.position.set(c.x, c.y, c.z);
@@ -57,6 +60,7 @@ function applyCam() {
   camHelper.update();
 }
 function resize() {
+  aspect = cfg.fpv && phoneCanvas.width ? phoneCanvas.width / phoneCanvas.height : videoAspect;
   const w = Math.min(innerWidth, innerHeight * aspect), h = w / aspect;
   stage.style.width = w + 'px'; stage.style.height = h + 'px';
   renderer.setSize(w, h, false);
@@ -188,11 +192,12 @@ function connect() {
   ws.onopen = () => { ws.send(JSON.stringify({ type: 'hello', role: 'dashboard', id: 'kawashima-fx' })); linkState = 'connected'; };
   ws.onclose = () => { linkState = 'disconnected, retrying'; for (const p of Object.values(players)) p.online = false; setTimeout(connect, 1000); };
   ws.onmessage = m => {
-    if (typeof m.data !== 'string') return; // chest-camera JPEGs: not used here
+    if (typeof m.data !== 'string') return onPhoneJpeg(m.data); // chest-camera JPEGs, first byte = slot
     const k = JSON.parse(m.data);
     if (k.type === 'phones') { for (const p of Object.values(players)) p.online = k.list.some(q => q.slot === p.slot); return; }
     const p = players[k.slot]; if (!p) return;
     loc.onMessage(k);
+    if (k.type === 'tags') fitIntrinsics(k);
     if (k.type === 'imu') {
       p.imu = k;
       const dps = Math.hypot(...k.gyro);
@@ -218,7 +223,7 @@ async function startDummy() {
   video.srcObject = dummy.stream;
   setTimeout(calibrate, 1500); // the dummy room never moves: calibrate once it has rendered
 }
-video.onloadedmetadata = () => { video.play(); aspect = video.videoWidth / video.videoHeight; resize(); };
+video.onloadedmetadata = () => { video.play(); videoAspect = video.videoWidth / video.videoHeight; resize(); };
 
 async function calibrate() {
   status.extra = 'タグでカメラ合わせ中…';
@@ -226,6 +231,61 @@ async function calibrate() {
   if (!r) { status.extra = '角のタグが見つからない'; return; }
   cfg.tagCam = r; cfg.camMode = 'tags'; save(); applyCam();
   status.extra = `カメラ合わせ完了: タグ ${r.ids.join(',')}  再投影誤差 ${r.reprojErrPx.toFixed(1)}px  fov ${r.fovY.toFixed(1)}°`;
+}
+
+// ---- phone view (F): a chest phone's own picture as the background, the camera at that phone's located pose ----
+const phoneCanvas = document.createElement('canvas'), phoneCtx = phoneCanvas.getContext('2d');
+const phoneTex = new THREE.CanvasTexture(phoneCanvas);
+phoneTex.colorSpace = THREE.SRGBColorSpace;
+let decoding = false;
+async function onPhoneJpeg(buf) {
+  if (decoding || String.fromCharCode(new Uint8Array(buf, 0, 1)[0]) !== cfg.fpv) return; // busy: drop the frame
+  decoding = true;
+  try {
+    const bmp = await createImageBitmap(new Blob([new Uint8Array(buf, 1)], { type: 'image/jpeg' }));
+    const sized = phoneCanvas.width !== bmp.width || phoneCanvas.height !== bmp.height;
+    if (sized) { phoneCanvas.width = bmp.width; phoneCanvas.height = bmp.height; phoneTex.dispose(); }
+    phoneCtx.drawImage(bmp, 0, 0); bmp.close();
+    phoneTex.needsUpdate = true;
+    if (sized) resize();
+  } catch {} finally { decoding = false; }
+}
+
+// The phones don't send their intrinsics, but every tag gives 4 image corners and their 3D points in the same camera
+// frame: fit u = a·X/Z + b, v = c·Y/Z + d (normalised image coords) and take the vertical fov from c.
+const intr = { A: null, B: null };
+function fitIntrinsics(k) {
+  const h = W.PHONE_TAG_SIZE / 2, ys = [], vs = [];
+  for (const g of k.tags) {
+    if (!g.p || !g.r || g.c?.length !== 4) continue;
+    const R = W.fromRodrigues(g.r);
+    [[-h, h], [h, h], [h, -h], [-h, -h]].forEach(([x, y], i) => {
+      const X = W.apply(W.pose(R, g.p), [x, y, 0]);
+      if (X[2] > .05) { ys.push(X[1] / X[2]); vs.push(g.c[i][1]); }
+    });
+  }
+  if (ys.length < 4) return;
+  const n = ys.length, my = ys.reduce((a, b) => a + b) / n, mv = vs.reduce((a, b) => a + b) / n;
+  let sxy = 0, sxx = 0;
+  for (let i = 0; i < n; i++) { sxy += (ys[i] - my) * (vs[i] - mv); sxx += (ys[i] - my) ** 2; }
+  if (sxx < 1e-4) return; // corners too close together to fit
+  const fov = 2 * Math.atan(.5 / (sxy / sxx)) * 180 / Math.PI;
+  if (fov > 20 && fov < 120) intr[k.slot] = intr[k.slot] ? .9 * intr[k.slot] + .1 * fov : fov;
+}
+
+function placePhoneCamera(slot) {
+  const L = loc.get(slot); if (!L.world_T_arcam) return;
+  const P = W.compose(L.world_T_arcam, W.arcam_T_cv), R = P.R;
+  // OpenCV camera (x right, y down, z forward) -> Three.js camera (x right, y up, looks down -z)
+  new THREE.Matrix4().set(R[0], -R[1], -R[2], P.t[0], R[3], -R[4], -R[5], P.t[1], R[6], -R[7], -R[8], P.t[2], 0, 0, 0, 1)
+    .decompose(camera.position, camera.quaternion, camera.scale);
+  camera.fov = intr[slot] ?? 60; camera.aspect = aspect; camera.updateProjectionMatrix();
+}
+function tagAnchors() {
+  for (const id of W.CORNER_IDS) {
+    const t = W.worldTagPose(id).t, s = W.TAGS[id].size / 2;
+    fx.aura('fire', V(t[0], t[1] - s, t[2]), V(t[0], t[1] + s, t[2]), .4, 'tag' + id);
+  }
 }
 
 // ---- settings panel (C) ----
@@ -265,7 +325,7 @@ function buildPanel() {
     slider('振り判定 deg/s', () => cfg.swingDps, v => cfg.swingDps = v, 100, 1500, 10),
     select('狙い', 'aim', ['stick', 'eye']),
     Object.assign(document.createElement('div'), { className: 'keys', innerHTML:
-      'C パネル / G デバッグ表示 / V 3Dビュー切替 / K タグでカメラ合わせ / T 正解位置(ダミー)<br>Space A発射 / Enter B発射 / Q・P 長押しで溜め(A・B) / R リセット' }));
+      'C パネル / G デバッグ表示 / V 3Dビュー切替 / K タグでカメラ合わせ / T 正解位置(ダミー)<br>F スマホ視点(A→B→切) / H タグ位置の目印<br>Space A発射 / Enter B発射 / Q・P 長押しで溜め(A・B) / R リセット' }));
 }
 
 const held = { q: players.A, p: players.B };
@@ -277,6 +337,8 @@ addEventListener('keydown', e => {
   else if (e.key === 'v') { cfg.view = { pip: 'full3d', full3d: 'off', off: 'pip' }[cfg.view]; save(); }
   else if (e.key === 'k') calibrate();
   else if (e.key === 't') { cfg.useTruth = !cfg.useTruth; save(); }
+  else if (e.key === 'f') { cfg.fpv = { null: 'A', A: 'B', B: null }[cfg.fpv]; save(); resize(); }
+  else if (e.key === 'h') { cfg.anchors = !cfg.anchors; save(); }
   else if (e.key === ' ') { e.preventDefault(); shoot(players.A); }
   else if (e.key === 'Enter') shoot(players.B);
   else if (e.key === 'r') reset();
@@ -300,10 +362,11 @@ function frame() {
     p.hud.querySelector('.bar i').style.width = p.hp + '%';
     p.hud.querySelector('.off').textContent = p.online ? '' : 'offline';
   }
+  if (cfg.fpv) { placePhoneCamera(cfg.fpv); if (cfg.anchors) tagAnchors(); }
   stepCharge(dt); stepShots(dt); fx.step(dt);
   banner.style.display = winner ? 'grid' : 'none';
   banner.textContent = winner ? `${winner.slot} WIN!` : '';
-  statusEl.textContent = `server ${host}: ${linkState}  ${locText('A')}  ${locText('B')}  カメラ:${cfg.camMode}${cfg.useTruth ? '  [正解位置]' : ''}  ${status.extra}`;
+  statusEl.textContent = `server ${host}: ${linkState}  ${locText('A')}  ${locText('B')}  カメラ:${cfg.fpv ? `スマホ${cfg.fpv}視点 fov ${intr[cfg.fpv]?.toFixed(1) ?? '推定待ち'}°` : cfg.camMode}${cfg.useTruth ? '  [正解位置]' : ''}  ${status.extra}`;
   pipLabel.style.display = cfg.view === 'pip' ? '' : 'none';
   const sx = (Math.random() - .5) * 24 * shake, sy = (Math.random() - .5) * 24 * shake;
   stage.style.transform = `translate(calc(-50% + ${sx}px), calc(-50% + ${sy}px))`;
@@ -315,7 +378,7 @@ function frame() {
     overCam.aspect = aspect; overCam.updateProjectionMatrix();
     renderer.setViewport(0, 0, W_px, H_px); renderer.render(scene, overCam);
   } else {
-    scene.background = videoTex; world3d.visible = cfg.debug; camHelper.visible = false;
+    scene.background = cfg.fpv ? phoneTex : videoTex; world3d.visible = cfg.debug; camHelper.visible = false;
     fx.render();
     if (cfg.view === 'pip') { // 3D view in the bottom-right corner
       const w = W_px * .3, h = H_px * .3;
