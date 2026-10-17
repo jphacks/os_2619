@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>フィールド テスト</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #eee; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #gl { display: block; width: 100%; height: 100%; }
+  #mini { position: absolute; left: 16px; bottom: 16px; width: 260px; height: 260px; pointer-events: none; }
+  #hud { position: absolute; left: 10px; top: 8px; text-shadow: 0 0 4px #000; white-space: pre; font-variant-numeric: tabular-nums; }
+</style>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="mini"></canvas>
+<div id="hud"></div>
+<script type="module">
+// Field display + effects with two synthetic players (walk, swing, fire, charge a special).
+// ?t=<s> simulate to t and freeze  ?cam=high|top|side|drone  ?layout=full  ?debug=1 axes  ?bench=N field cost  ?mini=0
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as W from './world.js';
+import { createFx } from './effects.js';
+import { createField, createMinimap } from './field3d.js';
+
+const P = new URLSearchParams(location.search), FREEZE = P.has('t') ? +P.get('t') : null;
+const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+const v3 = a => V(a[0], a[1], a[2]);
+
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, .05, 100);
+const CAMS = { high: [[0, 5.2, 6.4], [0, .6, 0]], top: [[0, 9.5, .01], [0, 0, 0]], side: [[.6, 1.15, 4.6], [0, 1, 0]], drone: [[-4.2, 3.2, 3.6], [0, .8, 0]] };
+const [cp, ct] = CAMS[P.get('cam')] ?? CAMS.high;
+camera.position.set(...cp);
+const orbit = new OrbitControls(camera, canvas); orbit.target.set(...ct); orbit.update();
+
+let shake = 0;
+const fx = createFx(renderer, scene, camera, { onShake: a => { shake = Math.max(shake, a); } });
+const field = createField(scene);
+scene.background = field.background;
+field.setLayoutDebug(P.get('debug') === '1');
+const mini = createMinimap(document.getElementById('mini'));
+const miniEl = document.getElementById('mini'); miniEl.style.display = P.get('mini') === '0' ? 'none' : '';
+function resize() {
+  fx.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  const d = Math.min(devicePixelRatio, 2); miniEl.width = miniEl.clientWidth * d; miniEl.height = miniEl.clientHeight * d;
+}
+addEventListener('resize', resize); resize();
+
+// ---- synthetic players ----
+let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const mk = (slot, element) => ({ slot, element, hp: 100, online: true, charging: false, charge: 0, body: null, base: V(), tip: V(), dir: V(), chest: V(), next: slot === 'A' ? .8 : 1.5 });
+const players = { A: mk('A', 'fire'), B: mk('B', 'thunder') };
+const other = p => p === players.A ? players.B : players.A;
+function move(p, T) {
+  const s = p.slot === 'A' ? -1 : 1, ph = p.slot === 'A' ? 0 : 2.1;
+  const x = s * (1.15 + .45 * Math.sin(.42 * T + ph)), z = 1.1 * Math.sin(.31 * T + ph * 1.3);
+  const o = other(p), ox = -s * (1.15 + .45 * Math.sin(.42 * T + (p.slot === 'A' ? 2.1 : 0))), oz = 1.1 * Math.sin(.31 * T + (p.slot === 'A' ? 2.73 : 0));
+  const yaw = Math.atan2(-(oz - z), ox - x);
+  p.body = W.bodyPose([x, 0, z], yaw, W.CHEST_H + .015 * Math.sin(3 * T + ph));
+  p.chest.copy(v3(p.body.t));
+  const h = W.STICK.hand;
+  p.base.copy(v3(W.apply(p.body, [h.fwd, h.up, h.right])));
+  const sw = (T * .7 + ph) % 2.6, swinging = sw < .4 && !p.charging;
+  const el = p.charging ? 1.1 : swinging ? 1.2 - 4 * sw : .55 + .25 * Math.sin(1.4 * T + ph), az = .35 * Math.sin(.9 * T + ph);
+  p.dir.copy(v3(W.app3(p.body.R, [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)]))).normalize();
+  p.tip.copy(p.base).addScaledVector(p.dir, W.STICK.len);
+}
+const shots = [];
+function shoot(p, power) {
+  const foe = other(p), aim = foe.chest.clone().add(V(0, -.2, 0)).sub(p.tip).normalize();
+  aim.x += (rnd() - .5) * .08; aim.y += (rnd() - .5) * .08; aim.normalize();
+  shots.push({ id: fx.shot(p.element, p.tip.clone(), aim, power), owner: p, element: p.element, pos: p.tip.clone(), vel: aim.multiplyScalar(8), power, age: 0 });
+}
+function damage(foe, n) { foe.hp = Math.max(0, foe.hp - n); if (foe.hp === 0) foe.revive = 2.5; }
+function step(T, dt) {
+  for (const p of Object.values(players)) {
+    move(p, T);
+    if (p.revive !== undefined) { p.revive -= dt; if (p.revive <= 0) { p.hp = 100; delete p.revive; } continue; }
+    if (p.charging) {
+      p.charge = Math.min(1, p.charge + dt / 1.5);
+      fx.charge(p.element, p.tip, p.charge);
+      if (p.charge >= 1) { p.charging = false; p.charge = 0; fx.special(p.element, p.tip.clone(), other(p).chest.clone()); damage(other(p), 35); p.next = T + 1.5; }
+    } else if (T >= p.next) {
+      if (rnd() < .2) { p.charging = true; p.charge = 0; }
+      else { shoot(p, .3 + .6 * rnd()); p.next = T + .9 + rnd() * .9; }
+    }
+    fx.aura(p.element, p.base, p.tip, p.charging ? .6 + .4 * p.charge : .5);
+  }
+  for (let i = shots.length - 1; i >= 0; i--) {
+    const s = shots[i], foe = other(s.owner);
+    s.pos.addScaledVector(s.vel, dt); s.age += dt; fx.moveShot(s.id, s.pos);
+    const a = foe.chest.clone().setY(foe.chest.y - 1.05), b = foe.chest.clone().setY(foe.chest.y + .15);
+    const hit = foe.revive === undefined && new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .45;
+    if (hit) { fx.hit(s.owner.element, s.pos.clone(), s.power); damage(foe, Math.round(10 + 20 * s.power)); }
+    if (hit || s.age > 1.5) { fx.endShot(s.id); shots.splice(i, 1); }
+  }
+  field.update(dt, players);
+  fx.step(dt);
+}
+
+// ---- loop ----
+const hud = document.getElementById('hud'), DT = 1 / 60;
+let T = 0, last = performance.now(), frames = 0, fpsT = last, fps = 0, benchText = '';
+function advance(dt) { T += dt; step(T, dt); }
+if (FREEZE !== null) while (T < FREEZE - 1e-6) advance(DT);
+// ?bench=N: ms/frame for full frame (field + fx), fx only (field hidden), field only (no fx passes), synced by readPixels
+if (P.has('bench')) {
+  const n = +P.get('bench') || 120, gl = renderer.getContext(), px = new Uint8Array(4);
+  const run = (fn) => { for (let i = 0; i < 10; i++) fn(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); const t0 = performance.now(); for (let i = 0; i < n; i++) { fn(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); } return (performance.now() - t0) / n; };
+  for (let i = 0; i < 3; i++) run(() => fx.render()); // let the GPU clock settle
+  const full = run(() => { field.group.visible = true; scene.background = field.background; fx.render(); });
+  const fxOnly = run(() => { field.group.visible = false; scene.background = null; fx.render(); });
+  const fieldOnly = run(() => { field.group.visible = true; scene.background = field.background; renderer.render(scene, camera); });
+  const empty = run(() => { field.group.visible = false; scene.background = null; renderer.render(scene, camera); });
+  const full2 = run(() => { field.group.visible = true; scene.background = field.background; fx.render(); });
+  const upd = (() => { const t0 = performance.now(); for (let i = 0; i < n; i++) field.update(DT, players); return (performance.now() - t0) / n; })();
+  field.group.visible = true; scene.background = field.background;
+  benchText = `bench ${renderer.domElement.width}x${renderer.domElement.height}: full ${full.toFixed(2)}/${full2.toFixed(2)}  fx-only ${fxOnly.toFixed(2)}  field-only ${fieldOnly.toFixed(2)}  empty ${empty.toFixed(2)} ms  field.update ${upd.toFixed(3)} ms`;
+  console.log('BENCH ' + benchText);
+}
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (FREEZE === null) advance(dt);
+  shake *= Math.exp(-dt * 8);
+  orbit.update();
+  const off = FREEZE === null && shake > .01 ? V(Math.random() - .5, Math.random() - .5, Math.random() - .5).multiplyScalar(shake * .08) : V();
+  camera.position.add(off); fx.render(); camera.position.sub(off);
+  mini.draw(players, shots);
+  frames++;
+  if (now - fpsT > 500) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; }
+  hud.textContent = `${fps.toFixed(0)} fps  t=${T.toFixed(2)}  layout ${W.LAYOUT}\nA ${players.A.hp}  B ${players.B.hp}\n${benchText}`;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
