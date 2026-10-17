@@ -10,6 +10,7 @@ import * as W from './world.js';
 
 const SPEED = 1.6;          // m/s
 const SWING = .28;          // s, the swing down after releasing
+const KEEP = .5;            // s between the Charge events a held key sends (game.js drops a charge after RULES.chargeHold = 1.5 s without one)
 const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 export const CONTROL_JA = { keyboard: 'キーボード操作', random: 'ランダム動作', still: '静止' };
 const SLOTS = ['A', 'B'];
@@ -118,6 +119,10 @@ export function createPlayable({ vsrc, game, cfg, save, isActive }) {
         const s = st[slot]; if (s.mode === 'random') continue;
         const me = frame?.players?.[slot], foe = frame?.players?.[other(slot)]?.chest;
         if (!s.chest) { if (!me) continue; s.chest = [me.chest[0], W.CHEST_H, me.chest[2]]; s.yaw = me.yaw; } // start from where it stood
+        // a held key stands for a stick that keeps shaking: send the sensor's Charge event every KEEP s, so game.js's
+        // "stick stopped for chargeHold s" rule sees a live charge. Only while the match still has it charging, so a
+        // charge dropped for moving is not restarted.
+        if (s.charging && game.players[slot]?.charging && time - (s.keptAt ?? 0) >= KEEP) { s.keptAt = time; game.onSensed({ slot, name: 'Charge' }); }
         if (s.mode === 'keyboard' && isActive()) {
           let x = 0, z = 0; for (const k of held) { x += ARROWS[k][0]; z += ARROWS[k][1]; }
           const n = Math.hypot(x, z);
