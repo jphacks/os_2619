@@ -12,6 +12,12 @@
   #stage video, #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   #stage video { display: none; }
   #stage #minimap { inset: auto; left: 12px; bottom: 34px; width: min(28%, 28vh); height: auto; aspect-ratio: 1; pointer-events: none; }
+  #stage #guide2d { pointer-events: none; }
+  #guide { position: absolute; right: 14px; top: 44px; width: min(400px, 46%); background: rgba(8, 10, 14, .82); border: 1px solid rgba(61, 220, 132, .5); border-radius: 10px; padding: 10px 14px; font-size: 13px; line-height: 1.5; }
+  #guide h4 { margin: 0 0 6px; font-size: 14px; color: #9ff0c0; }
+  #guide ol { margin: 0 0 6px; padding-left: 18px; }
+  #guide p { margin: 4px 0 0; }
+  #guide .ok { color: #3ddc84; } #guide .warn { color: #ffcc4d; } #guide .ng { color: #ff6b6b; } #guide .dim { color: var(--dim); }
   #pipLabel { position: absolute; right: 16px; bottom: calc(30% + 20px); color: var(--dim); font-size: 11px; text-shadow: 0 0 4px #000; }
   .hud { position: absolute; top: 12px; width: 38%; }
   .hud.A { left: 16px; } .hud.B { right: 16px; text-align: right; }
@@ -45,6 +51,7 @@
   <div class="hud B"><div class="name"><span class="off">offline</span> 雷 B</div><div class="bar"><i></i></div></div>
   <div id="timer" style="display:none"></div>
   <div id="phase"></div>
+  <div id="guide" style="display:none"></div>
   <div id="banner"></div>
   <div id="pipLabel">3D ビュー（V で全画面、D でドローン視点を切替）</div>
   <div id="status"></div>

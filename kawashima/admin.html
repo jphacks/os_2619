@@ -90,9 +90,10 @@
       <h2>3人称カメラ</h2>
       <label class="f"><span>カメラ</span><select id="device"></select><span></span></label>
       <label class="f"><span>合わせ方</span><select id="camMode"><option value="tags">tags（タグから）</option><option value="manual">manual（手動）</option></select><span></span></label>
-      <div class="row"><button id="calibrate">タグでカメラ合わせ<kbd>K</kbd></button></div>
+      <div class="row"><button id="calibrate">タグでカメラ合わせ<kbd>K</kbd></button><button id="guideCam">ガイドを推奨位置から表示</button></div>
+      <div class="msg" id="tagCheck"></div>
       <div class="msg" id="camInfo"></div>
-      <p class="note">人がいない状態で押してください。タグが2枚とも映っていると精度が上がります。</p>
+      <p class="note">準備中は、映像画面に設置ガイド（タグを置く枠・立ち位置・フィールドの線）が出ます。合わせる前は推奨位置（中心から手前2.9m・高さ1.7m）のiPhoneから見た位置に枠を描くので、実物のタグが枠に重なるようにiPhoneを動かしてください。全部OKになったら、人がいない状態で「タグでカメラ合わせ」を押します。</p>
     </section>
     <section>
       <h2>表示</h2>
@@ -145,6 +146,7 @@ $$('[data-charge]').forEach(b => {
 $('#device').onchange = e => send({ cmd: 'camera', value: e.target.value });
 $('#camMode').onchange = e => send({ cmd: 'camMode', value: e.target.value });
 $('#calibrate').onclick = () => send({ cmd: 'calibrate' });
+$('#guideCam').onclick = () => send({ cmd: 'guideCam' });
 $$('[data-view]').forEach(b => b.onclick = () => send({ cmd: 'view', value: b.dataset.view }));
 $('#drones').innerHTML = Object.entries(DRONE).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('');
 $$('[data-drone]').forEach(b => b.onclick = () => send({ cmd: 'drone', value: b.dataset.drone }));
@@ -206,6 +208,8 @@ function render() {
     tc ? `前回の合わせ: タグ ${tc.ids.join(', ')}　誤差 ${tc.err.toFixed(1)}px　縦画角 ${tc.fov.toFixed(1)}°　位置 (${tc.t.map(v => v.toFixed(2)).join(', ')}) m` : 'まだ合わせていない',
     s.camMsg,
   ].filter(Boolean).map(x => `<div>${x}</div>`).join('');
+  const SIDE = { left: '左', right: '右' };
+  $('#tagCheck').innerHTML = s.phase !== 'setup' ? '' : '<div>タグの見え方（準備中だけ確認）</div>' + s.setupTags.map(c => `<div>${dot(!c.seen ? '' : c.side !== c.want || c.px < 14 ? 'warn' : 'ok')}ID ${c.id}（${SIDE[c.want]}端に置く）：${!c.seen ? '見えていない' : c.side !== c.want ? `画面の${SIDE[c.side]}に見えている。左右が逆かも` : c.px < 14 ? `小さい（${c.px.toFixed(0)}px）` : `OK（${c.px.toFixed(0)}px）`}</div>`).join('') + `<div>検出 ${s.tagCheckMs}ms</div>`;
   $$('[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === s.view));
   $$('[data-drone]').forEach(b => b.classList.toggle('on', b.dataset.drone === s.drone));
   $$('[data-fpv]').forEach(b => b.classList.toggle('on', (b.dataset.fpv || null) === s.fpv));

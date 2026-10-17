@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import * as W from './world.js';
 import { createLocalizer } from './localize.js';
 import { createFx } from './effects.js';
-import { calibrateCamera, toThreeCamera } from './extrinsics.js';
+import { calibrateCamera, toThreeCamera, detectTags } from './extrinsics.js';
 import { createDrone } from './drone.js';
 import { createField, createMinimap } from './field3d.js';
 
@@ -15,8 +15,10 @@ const params = new URLSearchParams(location.search);
 const now = () => performance.now() / 1000;
 
 // ---- settings (kept in localStorage) ----
+// where the iPhone should go (NOTES.md): 3.5 m in front of the centre (both tags in a ~70° wide picture), 1.7 m up, tilted down to see the floor marks
+const GUIDE_CAM = { x: 0, y: 1.7, z: 3.5, yaw: 0, pitch: -12, roll: 0, fov: 45 };
 const DEFAULTS = {
-  cam: { x: 0, y: 1.4, z: 4, yaw: 0, pitch: -8, roll: 0, fov: 50 }, // manual camera, fov = vertical degrees
+  cam: { ...GUIDE_CAM }, // manual camera, fov = vertical degrees
   tagCam: null,     // result of calibrateCamera, used when camMode === 'tags'
   camMode: 'manual',
   aim: 'stick',     // 'stick': along the stick, 'eye': eye -> stick tip
@@ -323,6 +325,109 @@ function tagAnchors() {
   }
 }
 
+// ---- setup guide: where the tags, the start marks and the arena go, drawn over the video while the phase is 'setup' ----
+// Before calibration the camera is GUIDE_CAM (the recommended iPhone spot): turn the iPhone until the real tags sit in
+// the frames. After K the camera is the calibrated one, so frames and real tags overlap when everything is right.
+const guide = new THREE.Group(); scene.add(guide);
+const onTop = m => { m.depthTest = false; m.transparent = true; return m; };
+function label(text, color, h = .16) {
+  const c = document.createElement('canvas'), g = c.getContext('2d'), font = 'bold 44px system-ui, sans-serif';
+  g.font = font; const lines = text.split('\n'), w = Math.max(...lines.map(l => g.measureText(l).width)) + 36;
+  c.width = w; c.height = 58 * lines.length + 14;
+  g.fillStyle = 'rgba(0,0,0,.72)'; g.beginPath(); g.roundRect(0, 0, c.width, c.height, 14); g.fill();
+  g.font = font; g.fillStyle = color; g.textBaseline = 'top';
+  lines.forEach((l, i) => g.fillText(l, 18, 12 + 58 * i));
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(onTop(new THREE.SpriteMaterial({ map: tex })));
+  s.scale.set(h * lines.length * c.width / c.height, h * lines.length, 1); s.renderOrder = 20;
+  return s;
+}
+function strip(a, b, color, w = .05) { // flat band on the floor from a to b
+  const d = b.clone().sub(a), m = new THREE.Mesh(new THREE.PlaneGeometry(d.length(), w), onTop(new THREE.MeshBasicMaterial({ color, opacity: .85 })));
+  m.rotation.set(-Math.PI / 2, 0, -Math.atan2(d.z, d.x)); m.position.copy(a).add(b).multiplyScalar(.5).setY(.005); m.renderOrder = 10;
+  return m;
+}
+{
+  const H = W.ARENA.half, c = [V(-H, 0, -H), V(H, 0, -H), V(H, 0, H), V(-H, 0, H)];
+  c.forEach((p, i) => guide.add(strip(p, c[(i + 1) % 4], 0xffffff)));
+  guide.add(strip(V(-.3, 0, 0), V(.3, 0, 0), 0xffffff, .03), strip(V(0, 0, -.3), V(0, 0, .3), 0xffffff, .03));
+  for (const [slot, color, css] of [['A', 0xff7a1a, '#ffb070'], ['B', 0x6cc8ff, '#a8dcff']]) {
+    const st = W.START[slot], ring = new THREE.Mesh(new THREE.RingGeometry(.26, .32, 48), onTop(new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, opacity: .9 })));
+    ring.rotation.x = -Math.PI / 2; ring.position.set(st.pos[0], .006, st.pos[2]); ring.renderOrder = 10;
+    const tip = v3(W.apply(W.bodyPose(st.pos, st.yaw, .006), [.55, 0, 0])); // which way they face
+    const lb = label(`${slot} の立ち位置`, css, .13); lb.position.set(st.pos[0], .25, st.pos[2]);
+    guide.add(ring, strip(v3(st.pos), tip, color, .04), lb);
+  }
+  for (const id of W.CORNER_IDS) {
+    const p = W.worldTagPose(id), s = W.TAGS[id].size, h = s / 2, M = toMat(p);
+    const sq = [[-h, h], [h, h], [h, -h], [-h, -h], [-h, h]].map(([x, y]) => V(x, y, 0).applyMatrix4(M));
+    const frame = new THREE.Line(new THREE.BufferGeometry().setFromPoints(sq), onTop(new THREE.LineBasicMaterial({ color: 0x3ddc84 })));
+    const fill = new THREE.Mesh(new THREE.PlaneGeometry(s, s), onTop(new THREE.MeshBasicMaterial({ color: 0x3ddc84, opacity: .25, side: THREE.DoubleSide })));
+    fill.matrixAutoUpdate = false; fill.matrix.copy(M);
+    const pole = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V(p.t[0], 0, p.t[2]), V(p.t[0], p.t[1] - h, p.t[2])]), onTop(new THREE.LineDashedMaterial({ color: 0x3ddc84, dashSize: .08, gapSize: .06 })));
+    pole.computeLineDistances();
+    const side = p.t[0] < 0 ? '左' : '右', face = p.t[0] < 0 ? '右' : '左';
+    const lb = label(`ID ${id} をここに\n${side}端・中心の高さ ${p.t[1]}m・${face}向き`, '#9ff0c0', .085);
+    lb.position.set(p.t[0] * .72, p.t[1] - h - .2, p.t[2]);
+    const foot = strip(V(p.t[0] - .15, 0, p.t[2]), V(p.t[0] + .15, 0, p.t[2]), 0x3ddc84, .3);
+    frame.renderOrder = fill.renderOrder = pole.renderOrder = 11;
+    guide.add(frame, fill, pole, foot, lb);
+  }
+}
+// live check of the tags while setting up: which ids the iPhone sees, and on which side of the picture
+const seenTags = { list: [], at: 0, busy: false, ms: 0 };
+async function checkTags() {
+  if (seenTags.busy || match.phase !== 'setup' || dummy || !video.videoWidth) return;
+  seenTags.busy = true; const t0 = performance.now();
+  try {
+    const d = await detectTags(video, null, { passes: [[1, 2], [1, 6]] });
+    seenTags.list = d.map(o => ({ id: o.id, corners: o.corners, w: d.width, h: d.height })); seenTags.at = now();
+  } catch {} finally { seenTags.busy = false; seenTags.ms = performance.now() - t0; }
+}
+setInterval(checkTags, 1200);
+const guideCanvas = Object.assign(document.createElement('canvas'), { id: 'guide2d' }), guideCtx = guideCanvas.getContext('2d');
+stage.append(guideCanvas);
+const guideEl = document.getElementById('guide');
+function tagChecks() {
+  return W.CORNER_IDS.map(id => {
+    const want = W.TAGS[id].pos[0] < 0 ? 'left' : 'right', d = seenTags.list.find(o => o.id === id);
+    const u = d && d.corners.reduce((a, c) => a + c[0], 0) / 4 / d.w;
+    return { id, want, seen: !!d, side: d ? (u < .5 ? 'left' : 'right') : null, px: d ? Math.hypot(d.corners[0][0] - d.corners[1][0], d.corners[0][1] - d.corners[1][1]) : 0 };
+  });
+}
+function drawGuide2d(show) {
+  const w = Math.round(W_px * devicePixelRatio), h = Math.round(H_px * devicePixelRatio);
+  if (guideCanvas.width !== w || guideCanvas.height !== h) { guideCanvas.width = w; guideCanvas.height = h; }
+  guideCtx.clearRect(0, 0, w, h);
+  guideCanvas.style.display = show ? '' : 'none';
+  guideEl.style.display = show ? '' : 'none';
+  if (!show || now() - seenTags.at > 3) return;
+  for (const d of seenTags.list) { // what the detector found right now, on the live picture
+    const k = w / d.w, ok = W.TAGS[d.id]?.pos;
+    guideCtx.strokeStyle = ok ? '#3ddc84' : '#ffcc4d'; guideCtx.lineWidth = 4 * devicePixelRatio;
+    guideCtx.beginPath(); d.corners.forEach(([x, y], i) => guideCtx[i ? 'lineTo' : 'moveTo'](x * k, y * k)); guideCtx.closePath(); guideCtx.stroke();
+    const [x, y] = d.corners.reduce(([a, b], c) => [a + c[0] / 4, b + c[1] / 4], [0, 0]);
+    guideCtx.font = `bold ${16 * devicePixelRatio}px system-ui`; guideCtx.fillStyle = guideCtx.strokeStyle; guideCtx.textAlign = 'center';
+    guideCtx.fillText(`ID ${d.id} 検出`, x * k, Math.min(...d.corners.map(c => c[1])) * k - 8 * devicePixelRatio);
+  }
+}
+const SIDE = { left: '左', right: '右' };
+let guideTextAt = 0;
+function updateGuideText() {
+  if (now() - guideTextAt < .4) return; guideTextAt = now();
+  const tc = cfg.camMode === 'tags' && cfg.tagCam, checks = tagChecks();
+  const row = c => {
+    const where = `${SIDE[c.want]}端（中心から${SIDE[c.want]}へ${W.ARENA.half}m）`;
+    const st = !c.seen ? '<b class="ng">見えていない</b>' : c.side !== c.want ? `<b class="warn">画面の${SIDE[c.side]}に見えている：左右が逆かも</b>` : c.px < 14 ? '<b class="warn">小さすぎる：iPhoneを近づける</b>' : '<b class="ok">OK</b>';
+    return `<li>ID ${c.id}：${where}・中心の高さ ${W.TAGS[c.id].pos[1]}m　${st}</li>`;
+  };
+  const camLine = tc ? `合わせ済み：iPhone は中心から手前 ${tc.pose.t[2].toFixed(2)}m、横 ${tc.pose.t[0].toFixed(2)}m、高さ ${tc.pose.t[1].toFixed(2)}m にあると計算（目安は 2.9m・0m・1.7m）`
+    : '緑の枠に実物のタグが重なるように、iPhone の位置と向きを動かす';
+  guideEl.innerHTML = `<h4>設置ガイド（準備中）</h4><ol>${checks.map(row).join('')}
+    <li>iPhone：中心から手前へ ${GUIDE_CAM.z}m、高さ ${GUIDE_CAM.y}m・横向きで固定</li></ol>
+    <p>${camLine}</p><p class="dim">全部 OK になったら、人がいない状態で「タグでカメラ合わせ」(K)</p>`;
+}
+
 // ---- settings panel (C) ----
 const panel = document.getElementById('panel');
 function slider(label, get, set, min, max, step) {
@@ -376,6 +481,7 @@ function command(c) {
     case 'calibrate': return calibrate();
     case 'camera': return startVideo(c.value);
     case 'camMode': cfg.camMode = c.value; break;
+    case 'guideCam': cfg.cam = { ...GUIDE_CAM }; cfg.camMode = 'manual'; break; // show the guide from the recommended iPhone spot
     case 'view': cfg.view = VIEWS.includes(c.value) ? c.value : VIEWS[(VIEWS.indexOf(cfg.view) + 1) % 3]; break;
     case 'drone': if (c.value) drone.setMode(c.value); else drone.next(); cfg.drone = drone.mode; break;
     case 'toggle': if (TOGGLES.includes(c.key)) cfg[c.key] = !cfg[c.key]; break;
@@ -416,7 +522,7 @@ function publish() { // state for admin.html, a few times a second
     link: linkState, host, camMode: cfg.camMode, tagCam: tc && { ids: tc.ids, err: tc.reprojErrPx, fov: tc.fovY, t: tc.pose.t }, camMsg: status.extra,
     video: { w: video.videoWidth, h: video.videoHeight, label: video.srcObject?.getVideoTracks()[0]?.label ?? '', id: video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId }, devices,
     view: cfg.view, drone: drone.mode, shot: drone.shot, fpv: cfg.fpv, fovPhone: intr,
-    toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
+    setupTags: tagChecks(), tagCheckMs: Math.round(seenTags.ms), toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
 }
 setInterval(publish, 250);
 // a small picture of this screen for the admin page (drawn right after a render, so the WebGL buffer is still there)
@@ -461,8 +567,9 @@ function frame() {
   drone.update(dt, Object.fromEntries(Object.values(players).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
   field.update(dt, Object.fromEntries(Object.values(players).map(p => [p.slot,
     { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu }])));
-  minimapCanvas.style.display = cfg.minimap ? '' : 'none';
-  if (cfg.minimap) minimap.draw(players, shots);
+  const mapOn = cfg.minimap && match.phase !== 'setup'; // the setup guide needs that corner
+  minimapCanvas.style.display = mapOn ? '' : 'none';
+  if (mapOn) minimap.draw(players, shots);
   const bt = bannerText(t);
   banner.style.display = bt ? 'grid' : 'none';
   banner.textContent = bt;
@@ -472,6 +579,8 @@ function frame() {
   phaseEl.textContent = PHASE_LABEL[match.phase] ?? '';
   phaseEl.style.display = phaseEl.textContent ? '' : 'none';
   statusEl.style.display = cfg.debug ? '' : 'none'; // the operator reads all of this on admin.html
+  const guiding = match.phase === 'setup' && !cfg.fpv && cfg.view !== 'full3d';
+  drawGuide2d(guiding); if (guiding) updateGuideText();
   statusEl.textContent = `${cfg.view !== 'off' ? `ドローン:${drone.mode}(${drone.shot})  ` : ''}server ${host}: ${linkState}  ${locText('A')}  ${locText('B')}  カメラ:${cfg.fpv ? `スマホ${cfg.fpv}視点 fov ${intr[cfg.fpv]?.toFixed(1) ?? '推定待ち'}°` : cfg.camMode}${cfg.useTruth ? '  [正解位置]' : ''}  ${status.extra}`;
   pipLabel.style.display = cfg.view === 'pip' && cfg.debug ? '' : 'none';
   const sx = (Math.random() - .5) * 24 * shake, sy = (Math.random() - .5) * 24 * shake;
@@ -480,15 +589,16 @@ function frame() {
 
   renderer.setScissorTest(false);
   if (cfg.view === 'full3d') { // drone view with effects + bloom: fx renders through `camera`, so borrow it for a frame
-    scene.background = field.background; field.group.visible = true; world3d.visible = cfg.debug; camHelper.visible = false;
+    scene.background = field.background; field.group.visible = true; world3d.visible = cfg.debug; camHelper.visible = false; guide.visible = false;
     overCam.aspect = aspect; overCam.updateProjectionMatrix();
     const keep = { p: camera.position.clone(), q: camera.quaternion.clone(), fov: camera.fov };
     camera.position.copy(overCam.position); camera.quaternion.copy(overCam.quaternion); camera.fov = overCam.fov; camera.updateProjectionMatrix();
     renderer.setViewport(0, 0, W_px, H_px); fx.render();
     camera.position.copy(keep.p); camera.quaternion.copy(keep.q); camera.fov = keep.fov; camera.updateProjectionMatrix();
   } else {
-    scene.background = cfg.fpv ? phoneTex : videoTex; field.group.visible = false; world3d.visible = cfg.debug; camHelper.visible = false;
+    scene.background = cfg.fpv ? phoneTex : videoTex; field.group.visible = false; world3d.visible = cfg.debug; camHelper.visible = false; guide.visible = guiding;
     fx.render();
+    guide.visible = false;
     if (cfg.view === 'pip') { // drone view in the bottom-right corner (no bloom)
       const w = W_px * .3, h = H_px * .3;
       scene.background = field.background; field.group.visible = true; world3d.visible = cfg.debug; camHelper.visible = cfg.debug;
