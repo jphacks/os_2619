@@ -35,7 +35,7 @@ if (isMain && process.argv.includes('--prefetch')) {
 }
 
 export async function handle(req, res) {
-  let path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^(\.\.[/\\])+/, '');
+  let path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/\\/g, '/').replace(/^(\.\.\/)+/, ''); // normalize() uses backslashes on Windows
   if (path === '/') path = '/index.html';
   if (path.startsWith('/cdn/')) {
     const p = path.slice(5);
