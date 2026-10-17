@@ -140,7 +140,7 @@ function updatePlayer(p) {
   const s = loc.get(other(p).slot).seen?.opponent;
   p.seen.visible = !!s && now() - s.t < 1; // s.t is PC time; the check only hides stale marks
   if (s) p.seen.position.copy(v3(s.pos));
-  if (p.online || p.imu || match.phase === 'demo') {
+  if (match.phase !== 'setup' && (p.online || p.imu || match.phase === 'demo')) { // no effects while setting up
     fx.aura(p.element, p.base, p.tip, p.charging ? .6 + .4 * p.charge : .5);
     if (p.charging) fx.charge(p.element, p.tip, p.charge);
   }
@@ -193,9 +193,11 @@ function reset() { for (const p of Object.values(players)) { p.hp = 100; p.charg
 
 // ---- match flow: setup -> demo / countdown -> fight -> result. Driven by keys 1-4 here or by admin.html ----
 // setup: shots work for checking but nothing counts. demo: both fire on their own (also ?demo). fight: HP and timer count.
-const match = { phase: params.has('demo') ? 'demo' : 'setup', paused: false, sec: 90, left: 90, until: 0, fightAt: -9 };
-const canAct = () => !match.paused && (match.phase === 'setup' || match.phase === 'demo' || match.phase === 'fight');
+const match = { phase: 'setup', ready: false, paused: false, sec: 90, left: 90, until: 0, fightAt: -9 };
+// ready: the third-person camera was scanned (calibrated from every fixed tag) in this session; demo and fight wait for it
+const canAct = () => !match.paused && (match.phase === 'demo' || match.phase === 'fight');
 function setPhase(ph) {
+  if ((ph === 'fight' || ph === 'demo') && !match.ready) { status.extra = 'スキャンが済んでいないので始められない。タグを置いて「タグでカメラ合わせ」(K)'; return; }
   reset();
   match.paused = false;
   if (ph === 'fight') { match.phase = 'countdown'; match.until = now() + 3; } else match.phase = ph;
@@ -265,9 +267,12 @@ video.onloadedmetadata = () => { video.play(); videoAspect = video.videoWidth / 
 async function calibrate() {
   status.extra = 'タグでカメラ合わせ中…';
   const r = await calibrateCamera(dummy?.canvas ?? video, { fovYGuess: cfg.cam.fov });
-  if (!r) { status.extra = '角のタグが見つからない'; return; }
+  if (!r) { status.extra = 'スキャン失敗：固定タグが見つからない'; return; }
   cfg.tagCam = r; cfg.camMode = 'tags'; save(); applyCam();
-  status.extra = `カメラ合わせ完了: タグ ${r.ids.join(',')}  再投影誤差 ${r.reprojErrPx.toFixed(1)}px  fov ${r.fovY.toFixed(1)}°`;
+  const missing = W.CORNER_IDS.filter(id => !r.ids.includes(id)), good = !missing.length && r.reprojErrPx < 4;
+  if (good) match.ready = true;
+  status.extra = good ? `スキャン完了：タグ ${r.ids.join(',')}  誤差 ${r.reprojErrPx.toFixed(1)}px  縦画角 ${r.fovY.toFixed(1)}°。試合を始められる`
+    : `スキャン不十分：${missing.length ? `ID ${missing.join(',')} が見えていない` : `誤差 ${r.reprojErrPx.toFixed(1)}px が大きい`}。置き方を直してもう一度`;
 }
 
 // ---- phone view (F): a chest phone's own picture as the background, the camera at that phone's located pose ----
@@ -421,11 +426,11 @@ function updateGuideText() {
     const st = !c.seen ? '<b class="ng">見えていない</b>' : c.side !== c.want ? `<b class="warn">画面の${SIDE[c.side]}に見えている：左右が逆かも</b>` : c.px < 14 ? '<b class="warn">小さすぎる：iPhoneを近づける</b>' : '<b class="ok">OK</b>';
     return `<li>ID ${c.id}：${where}・中心の高さ ${W.TAGS[c.id].pos[1]}m　${st}</li>`;
   };
-  const camLine = tc ? `合わせ済み：iPhone は中心から手前 ${tc.pose.t[2].toFixed(2)}m、横 ${tc.pose.t[0].toFixed(2)}m、高さ ${tc.pose.t[1].toFixed(2)}m にあると計算（目安は 2.9m・0m・1.7m）`
+  const camLine = tc ? `合わせ済み：iPhone は中心から手前 ${tc.pose.t[2].toFixed(2)}m、横 ${tc.pose.t[0].toFixed(2)}m、高さ ${tc.pose.t[1].toFixed(2)}m にあると計算（目安は ${GUIDE_CAM.z}m・0m・${GUIDE_CAM.y}m）`
     : '緑の枠に実物のタグが重なるように、iPhone の位置と向きを動かす';
   guideEl.innerHTML = `<h4>設置ガイド（準備中）</h4><ol>${checks.map(row).join('')}
     <li>iPhone：中心から手前へ ${GUIDE_CAM.z}m、高さ ${GUIDE_CAM.y}m・横向きで固定</li></ol>
-    <p>${camLine}</p><p class="dim">全部 OK になったら、人がいない状態で「タグでカメラ合わせ」(K)</p>`;
+    <p>${camLine}</p>${match.ready ? '<p><b class="ok">スキャン完了：試合を始められます</b></p>' : '<p class="dim">全部 OK になったら、人がいない状態で「タグでカメラ合わせ」(K) でスキャンする。スキャンが済むと試合を始められる</p>'}`;
 }
 
 // ---- settings panel (C) ----
@@ -481,6 +486,7 @@ function command(c) {
     case 'calibrate': return calibrate();
     case 'camera': return startVideo(c.value);
     case 'camMode': cfg.camMode = c.value; break;
+    case 'forceReady': match.ready = true; status.extra = 'スキャンを省いて開始可能にした（前回の合わせ結果を使う）'; return;
     case 'guideCam': cfg.cam = { ...GUIDE_CAM }; cfg.camMode = 'manual'; break; // show the guide from the recommended iPhone spot
     case 'view': cfg.view = VIEWS.includes(c.value) ? c.value : VIEWS[(VIEWS.indexOf(cfg.view) + 1) % 3]; break;
     case 'drone': if (c.value) drone.setMode(c.value); else drone.next(); cfg.drone = drone.mode; break;
@@ -516,7 +522,7 @@ navigator.mediaDevices.addEventListener?.('devicechange', fillDevices);
 function publish() { // state for admin.html, a few times a second
   const L = s => { const l = loc.get(s); return { anchored: l.anchored, fixes: l.fixes, err: l.err }; };
   const tc = cfg.tagCam;
-  bus.postMessage({ type: 'state', phase: match.phase, paused: match.paused, left: match.left, sec: match.sec, until: Math.max(0, match.until - now()),
+  bus.postMessage({ type: 'state', phase: match.phase, ready: match.ready, paused: match.paused, left: match.left, sec: match.sec, until: Math.max(0, match.until - now()),
     winner: winner?.slot ?? null,
     players: Object.fromEntries(Object.values(players).map(p => [p.slot, { hp: p.hp, online: p.online, imu: !!p.imu, fake: !!p.truth, charge: p.charge, charging: p.charging, loc: L(p.slot) }])),
     link: linkState, host, camMode: cfg.camMode, tagCam: tc && { ids: tc.ids, err: tc.reprojErrPx, fov: tc.fovY, t: tc.pose.t }, camMsg: status.extra,
@@ -576,7 +582,7 @@ function frame() {
   const showTimer = match.phase === 'fight' || match.phase === 'result';
   timerEl.style.display = showTimer ? '' : 'none';
   if (showTimer) timerEl.textContent = `${Math.floor(Math.ceil(match.left) / 60)}:${String(Math.ceil(match.left) % 60).padStart(2, '0')}`;
-  phaseEl.textContent = PHASE_LABEL[match.phase] ?? '';
+  phaseEl.textContent = match.phase === 'setup' && match.ready ? '準備完了' : PHASE_LABEL[match.phase] ?? '';
   phaseEl.style.display = phaseEl.textContent ? '' : 'none';
   statusEl.style.display = cfg.debug ? '' : 'none'; // the operator reads all of this on admin.html
   const guiding = match.phase === 'setup' && !cfg.fpv && cfg.view !== 'full3d';

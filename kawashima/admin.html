@@ -20,6 +20,9 @@
   button { font: inherit; color: var(--fg); background: #222836; border: 1px solid #343c4e; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
   button:hover { background: #2a3142; }
   button:active { transform: translateY(1px); }
+  button:disabled { opacity: .35; cursor: not-allowed; }
+  #scan { margin-top: 10px; padding: 8px 10px; border-radius: 8px; font-weight: 700; }
+  #scan.no { background: #3a2a12; color: var(--warn); } #scan.yes { background: #123a22; color: var(--ok); }
   button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   button kbd { font: 11px ui-monospace, monospace; color: var(--dim); margin-left: 6px; }
   button.on kbd { color: #e6e1ff; }
@@ -67,9 +70,11 @@
         <button id="pause">一時停止<kbd>4</kbd></button>
         <button id="reset">やり直し<kbd>R</kbd></button>
       </div>
+      <div id="scan"></div>
       <div id="now"><span id="nowPhase">-</span><span id="nowTimer"></span></div>
       <label class="f"><span>試合時間（秒）</span><input id="sec" type="number" min="10" max="600" step="10" value="90"><span></span></label>
-      <p class="note">準備中とデモではHPが減りません。試合開始で3秒カウントしてから始まり、HPが0になるか時間切れで終わります。時間切れはHPが多い方の勝ちです。</p>
+      <div class="row" style="margin-top:8px"><button id="forceReady" class="note">スキャンせずに開始可能にする（前回の合わせ結果を使う）</button></div>
+      <p class="note">準備中はエフェクトを出しません。タグを置いて「タグでカメラ合わせ」でスキャンが済むと、デモと試合を始められます。準備中とデモではHPが減りません。試合開始で3秒カウントしてから始まり、HPが0になるか時間切れで終わります。時間切れはHPが多い方の勝ちです。</p>
     </section>
     <section>
       <h2>映像画面のプレビュー</h2>
@@ -133,6 +138,7 @@ let st = null, lastState = 0, dragging = false;
 
 $('#openDisplay').onclick = () => window.open('index.html' + location.search, 'bou-display');
 $$('[data-phase]').forEach(b => b.onclick = () => send({ cmd: 'phase', phase: b.dataset.phase }));
+$('#forceReady').onclick = () => send({ cmd: 'forceReady' });
 $('#pause').onclick = () => send({ cmd: 'pause' });
 $('#reset').onclick = () => send({ cmd: 'reset' });
 $('#sec').onchange = e => send({ cmd: 'matchSec', value: +e.target.value });
@@ -181,10 +187,13 @@ const dot = c => `<span class="dot ${c}"></span>`;
 function render() {
   const s = st;
   const live = s.phase === 'fight' ? 'fight' : s.phase === 'countdown' ? 'fight' : s.phase;
-  $$('[data-phase]').forEach(b => b.classList.toggle('on', b.dataset.phase === live));
+  $$('[data-phase]').forEach(b => { b.classList.toggle('on', b.dataset.phase === live); b.disabled = b.dataset.phase !== 'setup' && !s.ready; });
+  $('#scan').className = s.ready ? 'yes' : 'no';
+  $('#scan').textContent = s.ready ? 'スキャン完了：デモと試合を始められます' : 'スキャン前：タグを置いて「タグでカメラ合わせ」を押す';
+  $('#forceReady').style.display = s.ready ? 'none' : '';
   $('#pause').classList.toggle('on', s.paused);
   $('#pause').firstChild.textContent = s.paused ? '再開' : '一時停止';
-  $('#nowPhase').textContent = (s.paused ? '一時停止 / ' : '') + (s.phase === 'result' ? (s.winner ? `${s.winner} の勝ち` : '引き分け') : PHASE[s.phase]);
+  $('#nowPhase').textContent = (s.paused ? '一時停止 / ' : '') + (s.phase === 'result' ? (s.winner ? `${s.winner} の勝ち` : '引き分け') : s.phase === 'setup' && s.ready ? '準備完了' : PHASE[s.phase]);
   $('#nowTimer').textContent = s.phase === 'countdown' ? `開始まで ${Math.ceil(s.until)}` : s.phase === 'fight' || s.phase === 'result' ? `残り ${fmt(s.left)} / ${fmt(s.sec)}` : `試合時間 ${fmt(s.sec)}`;
   if (document.activeElement !== $('#sec')) $('#sec').value = s.sec;
   for (const k of ['A', 'B']) {
