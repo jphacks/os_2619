@@ -1,7 +1,7 @@
 // 棒バトル ダッシュボード: one page, four screens, one match.
 //   1 接続     phones A / B (SensorLink app over /ws) and phone C (cam.html over /cam), everything they send
 //   2 3D空間   phones, swords and AprilTags in the field world (phonealign.js), dark and raw
-//   3 ゲーム   the match in the stylised 3D arena: magic attacks, charge meters, guard / dodge, HP (game.js + stage.js)
+//   3 ゲーム   the match in the stylised 3D arena: magic attacks (小・中・大), charge meters, HP, timer (game.js + stage.js)
 //   4 最終映像 the same 3D state projected onto phone C's live picture (camera pose from the tag scan)
 // Data: hub.js → phonealign.js (positions), map.js (the sensing team's estimate, for comparison), actions.js (moves) → game.js.
 import * as W from './world.js';
@@ -11,7 +11,7 @@ import { createMap } from './map.js';
 import { createActions } from './actions.js';
 import { createVideoSource } from './video.js';
 import { createStage, DRONE_JA } from './stage.js';
-import { createGame, PHASE_JA, POS_JA, ELEMENT_JA } from './game.js';
+import { createGame, PHASE_JA, POS_JA, ELEMENT_JA, RULES, TIER_JA } from './game.js';
 import { createSpace } from './space3d.js';
 import { createConnect } from './connect.js';
 
@@ -21,19 +21,23 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 
 // ---- settings (localStorage) ----
 const DEFAULTS = {
-  posSrc: 'auto', hand: 'R', aim: 'stick', stickLen: { A: W.STICK.len, B: W.STICK.len }, skeleton: false, skelSrc: 'both',
+  posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len }, skeleton: false, skelSrc: 'both',
   minimap: true, debug: false, pip: false, fpv: null, drone: 'auto', videoSrc: 'remote', tagMode: 4, tagMount: 'stand', tagHeight: 1.0, knownFov: null,
-  matchSec: 90, test: false, useTruth: false, screen: 'connect',
+  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 2,
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
+if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
+if ((saved.rulesVer ?? 0) < 2) cfg.aim = 'motion'; // ...and the aim from the tip's motion
+cfg.rulesVer = 2;
+cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg } };
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
 const axis = {}; // IMU sensor axis along each stick (sensing: calibrated by holding the stick straight up)
 for (const s of ['A', 'B']) { try { axis[s] = JSON.parse(localStorage.getItem('pd-axis' + s)) ?? [1, 0, 0]; } catch { axis[s] = [1, 0, 0]; } }
 
 // ---- data ----
 const hub = createHub();
-const PA = createPhoneAlign();
+const PA = createPhoneAlign({ axis }); // the stick axis from the connection screen: detectors and aim share it
 const smap = createMap();
 const detectors = createActions();
 const video = Object.assign(document.createElement('video'), { muted: true, playsInline: true });
@@ -108,7 +112,7 @@ const gameCtrl = $('#gameCtrl');
 gameCtrl.innerHTML = `
   <h3>試合の進行</h3>
   <div class="phase">
-    <button data-phase="setup">準備中<kbd>1</kbd></button><button data-phase="demo">デモ<kbd>2</kbd></button>
+    <button data-phase="setup">準備中<kbd>1</kbd></button>
     <button data-phase="fight" class="go">試合開始<kbd>3</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
   </div>
   <div class="row" style="margin-top:6px"><button data-cmd="reset">やり直し<kbd>R</kbd></button><label class="kv">試合時間 <input id="secIn" type="number" min="10" max="600" step="10" style="width:64px"> 秒</label></div>
@@ -117,7 +121,18 @@ gameCtrl.innerHTML = `
   <div class="players2">${['A', 'B'].map(s => `
     <div class="pc" data-s="${s}"><div class="row" style="justify-content:space-between"><b style="color:var(--${s})">${s} ${ELEMENT_JA[s === 'A' ? 'fire' : 'thunder']}</b><span class="num hpv"></span></div>
       <div class="facts"></div>
-      <div class="row" style="margin-top:4px"><button data-act="shoot">発射</button><button data-act="charge">溜め</button><button data-act="special">必殺技</button><button data-act="guard">ガード</button><button data-act="dodge">回避</button></div></div>`).join('')}
+      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
+  </div>
+  <h3>ゲームの数値（試遊で調整）</h3>
+  <div class="rules">
+    <label>中になる溜め時間 <input data-rule="t1" type="number" min="0.1" max="20" step="0.1"> 秒</label>
+    <label>大になる溜め時間 <input data-rule="t2" type="number" min="0.2" max="30" step="0.1"> 秒</label>
+    <label>小のダメージ <input data-rule="dmg.s" type="number" min="0" max="100" step="1"></label>
+    <label>中のダメージ <input data-rule="dmg.m" type="number" min="0" max="100" step="1"></label>
+    <label>大のダメージ <input data-rule="dmg.l" type="number" min="0" max="100" step="1"></label>
+    <label>小の連打の間隔 <input data-rule="rapid" type="number" min="0" max="3" step="0.05"> 秒</label>
+    <label>溜め失敗になる移動 <input data-rule="moveFail" type="number" min="5" max="300" step="5" data-scale="100"> cm</label>
+    <div class="row"><button id="rulesReset">初期値に戻す</button><span class="muted" id="rulesNote"></span></div>
   </div>
   <h3>カメラ（ドローン視点）<kbd>D</kbd></h3>
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
@@ -129,11 +144,27 @@ for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.onclick = () => gam
 gameCtrl.querySelector('[data-cmd=pause]').onclick = () => game.command({ cmd: 'pause' });
 gameCtrl.querySelector('[data-cmd=reset]').onclick = () => game.command({ cmd: 'reset' });
 const secIn = $('#secIn'); secIn.value = cfg.matchSec;
-secIn.onchange = () => { cfg.matchSec = Math.max(10, +secIn.value || 90); save(); game.command({ cmd: 'matchSec', value: cfg.matchSec }); };
+secIn.onchange = () => { cfg.matchSec = Math.max(10, +secIn.value || 60); save(); game.command({ cmd: 'matchSec', value: cfg.matchSec }); };
+// rules: written straight into cfg.rules, which game.js reads every time
+const ruleIns = [...gameCtrl.querySelectorAll('[data-rule]')];
+const ruleGet = k => k.split('.').reduce((o, x) => o?.[x], cfg.rules), ruleSet = (k, v) => { const ks = k.split('.'), last = ks.pop(); ks.reduce((o, x) => o[x], cfg.rules)[last] = v; };
+function showRules() {
+  for (const i of ruleIns) i.value = +(ruleGet(i.dataset.rule) * (+i.dataset.scale || 1)).toFixed(2);
+  const r = cfg.rules;
+  $('#rulesNote').textContent = r.t2 > r.t1 ? `0〜${r.t1}秒 小 / ${r.t1}〜${r.t2}秒 中 / ${r.t2}秒〜 大` : '大になる時間は中より長くする';
+}
+for (const i of ruleIns) i.onchange = () => {
+  const v = +i.value; if (!Number.isFinite(v)) return showRules();
+  ruleSet(i.dataset.rule, Math.max(+i.min, Math.min(+i.max, v)) / (+i.dataset.scale || 1));
+  if (cfg.rules.t2 <= cfg.rules.t1) cfg.rules.t2 = +(cfg.rules.t1 + .5).toFixed(2);
+  save(); showRules();
+};
+$('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg } }; save(); showRules(); };
+showRules();
 for (const pc of gameCtrl.querySelectorAll('.pc')) for (const b of pc.querySelectorAll('[data-act]')) {
   const slot = pc.dataset.s, a = b.dataset.act;
   if (a === 'charge') { b.onpointerdown = () => game.command({ cmd: 'charge', slot, on: true }); b.onpointerup = b.onpointerleave = () => game.command({ cmd: 'charge', slot, on: false }); b.title = '押している間溜める'; }
-  else b.onclick = () => game.command({ cmd: a, slot, dir: slot === 'A' ? 'left' : 'right' });
+  else b.onclick = () => game.command({ cmd: a, slot });
 }
 for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.onclick = () => { stage.drone.setMode(b.dataset.drone); cfg.drone = b.dataset.drone; save(); };
 const toggle = k => { cfg[k] = !cfg[k]; save(); };
@@ -172,16 +203,15 @@ drawer.innerHTML = `
     <div class="row"><button id="forgetFov">覚えた画角を消す</button><button id="clearScan">スキャン結果を消す</button></div>
     <p class="note">人がいない状態で、フィールドの角に置いたタグがスマホ C の映像に全部入るようにしてからスキャンする。床のタグなら 2 枚のとき左が A 側。</p></section>
   <section><h3>ゲーム</h3>
-    <label class="f"><span>狙い</span><select id="aimSel"><option value="stick">棒の向き</option><option value="eye">目から棒先へ</option></select><span></span></label>
+    <label class="f"><span>狙い</span><select id="aimSel"><option value="motion">止める直前の棒の先の動き</option><option value="stick">止めたときの棒の向き</option><option value="eye">目から棒先へ</option></select><span></span></label>
     <div class="row"><button data-tog="test">テスト（HP が減らない）</button><button data-tog="useTruth">正解位置（シミュレーター）</button></div></section>
   <section><h3>音</h3>
     ${['master:全体', 'bgm:BGM', 'sfx:効果音', 'amb:環境音'].map(x => { const [k, n] = x.split(':'); return `<label class="f"><span>${n}</span><input type="range" min="0" max="1" step="0.01" data-vol="${k}"><output data-volout="${k}"></output></label>`; }).join('')}
     <div class="row"><button id="mute">消音</button><span class="note" id="audioInfo"></span></div>
-    <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の必殺技'], ['specialThunder', '雷の必殺技']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}</div></section>
+    <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}</div></section>
   <section><h3>キー操作</h3><table class="keys">
-    <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
-    <tr><td>Space / Enter</td><td>A / B が発射</td></tr><tr><td>Q / P 長押し</td><td>A / B が溜める（最大で離すと必殺技）</td></tr>
-    <tr><td>Z / ,</td><td>A / B が回避</td></tr><tr><td>X / .</td><td>A / B のガード切り替え</td></tr>
+    <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 3 4</td><td>準備中・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
+    <tr><td>Space / Enter</td><td>A / B が小の攻撃（溜めなし）</td></tr><tr><td>Q / P 長押し</td><td>A / B が溜める（離した時の溜め時間で小・中・大）</td></tr>
     <tr><td>K</td><td>タグでスキャン</td></tr><tr><td>D</td><td>ドローン視点の切り替え</td></tr><tr><td>M / G</td><td>ミニマップ / デバッグ表示</td></tr><tr><td>F</td><td>最終映像を全画面</td></tr><tr><td>S</td><td>設定</td></tr></table></section>`;
 $('#openSettings').onclick = () => drawer.classList.toggle('open');
 $('#closeSettings').onclick = () => drawer.classList.remove('open');
@@ -207,9 +237,8 @@ for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
 };
 
 // ---- keys ----
-const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 2: { cmd: 'phase', phase: 'demo' }, 3: { cmd: 'phase', phase: 'fight' }, 4: { cmd: 'pause' }, r: { cmd: 'reset' },
-  ' ': { cmd: 'shoot', slot: 'A' }, Enter: { cmd: 'shoot', slot: 'B' }, z: { cmd: 'dodge', slot: 'A', dir: 'left' }, x: { cmd: 'guard', slot: 'A' },
-  ',': { cmd: 'dodge', slot: 'B', dir: 'right' }, '.': { cmd: 'guard', slot: 'B' } };
+const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 3: { cmd: 'phase', phase: 'fight' }, 4: { cmd: 'pause' }, r: { cmd: 'reset' },
+  ' ': { cmd: 'shoot', slot: 'A' }, Enter: { cmd: 'shoot', slot: 'B' } };
 const held = { q: 'A', p: 'B' };
 addEventListener('keydown', e => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) || e.repeat || e.ctrlKey || e.metaKey) return;
@@ -229,29 +258,30 @@ addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k]) gam
 
 // ---- per-frame UI ----
 function pill(id, state) { const p = $(id); p.classList.toggle('on', state === true); p.classList.toggle('half', state === 'half'); }
-const hudP = Object.fromEntries(['A', 'B'].map(s => { const el = hud.querySelector('.pl.' + s); return [s, { el, hp: el.querySelector('.hp i'), ch: el.querySelector('.ch'), chi: el.querySelector('.ch i'), hpn: el.querySelector('.hpn'), act: el.querySelector('.act'), chips: Object.fromEntries([...el.querySelectorAll('.chips span')].map(c => [c.className.split(' ')[0], c])) }]; }));
+const hudP = Object.fromEntries(['A', 'B'].map(s => { const el = hud.querySelector('.pl.' + s); return [s, { el, hp: el.querySelector('.hp i'), ch: el.querySelector('.ch'), chi: el.querySelector('.ch i'), hpn: el.querySelector('.hpn'), act: el.querySelector('.act'), tick: el.querySelector('.ch b'), chips: Object.fromEntries([...el.querySelectorAll('.chips span')].map(c => [c.className.split(' ')[0], c])) }]; }));
 const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
 function updateHud() {
   const m = game.match;
   for (const p of Object.values(game.players)) {
     const h = hudP[p.slot];
     h.hp.style.width = p.hp + '%'; setText(h.hpn, String(Math.round(p.hp)));
-    h.chi.style.width = (p.charging ? p.charge * 100 : 0) + '%'; h.ch.classList.toggle('full', p.charging && p.charge >= 1);
+    h.chi.style.width = (p.charging ? p.charge * 100 : 0) + '%';
+    for (const t of ['m', 'l']) h.ch.classList.toggle(t, p.charging && p.tier === t);
+    h.tick.style.left = (100 * Math.min(1, cfg.rules.t1 / cfg.rules.t2)) + '%';
     h.chips.off.classList.toggle('on', !p.online && !p.imu);
     h.chips.charge.classList.toggle('on', p.charging);
-    h.chips.guard.classList.toggle('on', p.guard);
-    h.chips.dodge.classList.toggle('on', game.dodging(p));
-    setText(h.act, p.guard ? '' : game.actText(p));
+    setText(h.chips.charge, p.charging ? `溜め ${TIER_JA[p.tier] ?? '小'} ${p.chargeT.toFixed(1)}s` : '溜め中');
+    setText(h.act, game.actText(p));
   }
   const showTimer = m.phase === 'fight' || m.phase === 'result';
   setText(hud.querySelector('.timer'), showTimer ? `${Math.floor(Math.ceil(m.left) / 60)}:${String(Math.ceil(m.left) % 60).padStart(2, '0')}` : '');
-  const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : m.phase === 'demo' ? 'デモ' : '';
+  const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : '';
   setText(pp, pt); pp.style.display = pt ? '' : 'none';
   const bt = game.bannerText(), bn = hud.querySelector('.banner');
   bn.style.display = bt ? 'grid' : 'none'; setText(bn, bt);
   setText(hud.querySelector('.status'), cfg.debug ? `位置: A ${POS_JA[game.players.A.src] ?? game.players.A.src} / B ${POS_JA[game.players.B.src] ?? game.players.B.src}　ドローン: ${DRONE_JA[stage.drone.mode]}（${stage.drone.shot}）　${stage.state.msg}` : '');
 }
-const LOG_ICON = { shot: '発射', special: '必殺', hit: '命中', block: '防御', dodge: '回避', guard: 'ガード', charge: '溜め', phase: '進行', win: '勝敗' };
+const LOG_ICON = { shot: '発射', special: '大', hit: '命中', charge: '溜め', phase: '進行', win: '勝敗' };
 let logKey = '';
 function updateSlowUi() {
   const m = game.match, P = game.players;
@@ -269,7 +299,7 @@ function updateSlowUi() {
   for (const pc of gameCtrl.querySelectorAll('.pc')) {
     const p = P[pc.dataset.s];
     pc.querySelector('.hpv').textContent = `HP ${Math.round(p.hp)}`;
-    pc.querySelector('.facts').innerHTML = `${p.online ? '接続中' : p.imu ? 'IMU のみ' : '未接続'} · 位置 ${POS_JA[p.src] ?? (p.src === 'hold' ? '保持' : p.src)}${p.charging ? ` · 溜め ${Math.round(p.charge * 100)}%` : ''}${p.guard ? ' · ガード' : ''}${game.dodging(p) ? ' · 回避中' : ''}<br>発射 ${p.shots} · 命中 ${p.hits} · 防御 ${p.blocks} · 回避 ${p.dodges} · 必殺 ${p.specials}`;
+    pc.querySelector('.facts').innerHTML = `${p.online ? '接続中' : p.imu ? 'IMU のみ' : '未接続'} · 位置 ${POS_JA[p.src] ?? (p.src === 'hold' ? '保持' : p.src)}${p.charging ? ` · 溜め ${TIER_JA[p.tier] ?? '小'} ${p.chargeT.toFixed(1)} 秒` : ''}<br>発射 ${p.shots} · 命中 ${p.hits} · 与えたダメージ ${p.dealt} · 大 ${p.specials} · 溜め失敗 ${p.fails}`;
   }
   const key = game.events.length + ':' + (game.events[0]?.at ?? 0);
   if (key !== logKey) {

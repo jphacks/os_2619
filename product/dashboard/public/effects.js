@@ -547,14 +547,14 @@ export function createFx(renderer, scene, camera, opts = {}) {
     spr(S.GLOW, p, sz * 3.6, sz * 3.6, 0, 0, COL.fire, .75 * inten, .15);
   }
   function updateShot(s, dt) {
-    const pw = s.power, dist = s.prev.distanceTo(s.pos);
+    const pw = s.power, dist = s.prev.distanceTo(s.pos), big = s.big ?? 1;
     if (dist > 1e-3) s.dir.copy(s.pos).sub(s.prev).normalize();
     s.travel += dist;
     if (s.el === 'fire') {
-      trailFire(s, dt, s.prev, s.pos, pw);
-      headFire(s.pos, .12 + .1 * pw, s.seed);
+      trailFire(s, dt, s.prev, s.pos, pw, big);
+      headFire(s.pos, (.12 + .1 * pw) * big, s.seed);
     } else {
-      const sz = .1 + .09 * pw, d = s.dir;
+      const sz = (.1 + .09 * pw) * big, d = s.dir;
       if ((s.regen -= dt) <= 0) {
         s.regen = .035 + .03 * R();
         for (let i = 0; i < 4; i++) { runit(); tA.set(u3[0], u3[1], u3[2]).multiplyScalar(sz * (1.5 + R())).add(s.pos); gen(s.bolts[i], s.pos, tA, 3, .35, 0, .3); }
@@ -563,8 +563,8 @@ export function createFx(renderer, scene, camera, opts = {}) {
         tA.addScaledVector(d, -.15);
         gen(s.bolts[5], tA, s.pos, 4, .2, 0, 0);
       }
-      for (let i = 0; i < 4; i++) drawBolt(s.bolts[i], .02, 1.7, COL.elec);
-      drawBolt(s.bolts[4], .035, 1.5, COL.elec); drawBolt(s.bolts[5], .02, .9, COL.elec);
+      for (let i = 0; i < 4; i++) drawBolt(s.bolts[i], .02 * big, 1.7, COL.elec);
+      drawBolt(s.bolts[4], .035 * big, 1.5, COL.elec); drawBolt(s.bolts[5], .02 * big, .9, COL.elec);
       for (let n = take(s, 'k', (dist * 140 + dt * 40) * Q); n > 0; n--) {
         const u = R(); tA.copy(s.prev).lerp(s.pos, u); runit(); const sp = 1 + 2.5 * R();
         emit(tA.x, tA.y, tA.z, u3[0] * sp - d.x, u3[1] * sp - d.y, u3[2] * sp - d.z, .12 + .2 * R(), .009, .004, 2, -2, COL.spark, K.SPARK, 2.6, .1, .035, (1 - u) * dt);
@@ -787,9 +787,10 @@ export function createFx(renderer, scene, camera, opts = {}) {
     opts,
     aura(element, base, tip, intensity = 1, key = element) { const st = request(auras, key, element); st.base.copy(base); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, intensity)); },
     charge(element, tip, level, key = element) { const st = request(charges, key, element); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, level)); },
-    shot(element, pos, dir, power = .5) {
+    /** big: overall size of the projectile (1 = the usual shot; the game's 小・中・大 tiers pass different sizes). */
+    shot(element, pos, dir, power = .5, big = 1) {
       const id = nextId++;
-      shots.set(id, { id, el: element, pos: pos.clone(), prev: pos.clone(), dir: dir.clone().normalize(), power, travel: 0, acc: {}, regen: 0, seed: R(), bolts: Array.from({ length: 6 }, () => new Bolt(96)) });
+      shots.set(id, { id, el: element, pos: pos.clone(), prev: pos.clone(), dir: dir.clone().normalize(), power, big, travel: 0, acc: {}, regen: 0, seed: R(), bolts: Array.from({ length: 6 }, () => new Bolt(96)) });
       return id;
     },
     moveShot(id, pos) { shots.get(id)?.pos.copy(pos); },

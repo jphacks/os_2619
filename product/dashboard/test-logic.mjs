@@ -44,3 +44,29 @@ import { createSim, due, DT } from './fake-world.mjs';
   assert.ok(worst < 0.15, `worst chest error ${worst.toFixed(3)} m`);
   console.log(`phonealign ok: worst chest error ${(worst * 100).toFixed(1)} cm over ${n} estimates`);
 }
+
+// stick direction (phonealign, euler + the connection screen's axis, as actions.js) vs the simulated stick, after Calibrate
+{
+  const sim = createSim({ seed: 5, noise: 1 }), axis = { A: [1, 0, 0], B: [1, 0, 0] }, PA = createPhoneAlign({ axis }), t0 = 2000;
+  let worst = 0, n = 0, sum = 0;
+  while (sim.n * DT < 15) {
+    const k = sim.n, t = sim.step(), when = due(k), stamp = t0 + t;
+    for (const s of ['A', 'B']) {
+      PA.ingest({ slot: s, t: stamp, ...sim.imu(s) });
+      if (k === 0) PA.ingest({ type: 'calib', slot: s, t: stamp });
+      if (when.ar) PA.ingest({ slot: s, t: stamp, ...sim.ar(s) });
+      if (when.tags) PA.ingest({ slot: s, t: stamp, ...sim.tags(s) });
+    }
+    if (t > 5 && when.tags) {
+      const e = PA.estimate(stamp);
+      for (const s of ['A', 'B']) {
+        const d = e.stick[s]?.dir, truth = sim.players[s].dir; if (!d) continue;
+        const ang = Math.acos(Math.max(-1, Math.min(1, d[0] * truth[0] + d[1] * truth[1] + d[2] * truth[2]))) * 180 / Math.PI;
+        worst = Math.max(worst, ang); sum += ang; n++;
+      }
+    }
+  }
+  assert.ok(n > 100, `compared ${n} times`);
+  assert.ok(sum / n < 5, `mean stick direction error ${(sum / n).toFixed(1)}°`);
+  console.log(`stick direction ok: mean ${(sum / n).toFixed(1)}°, worst ${worst.toFixed(1)}° over ${n} estimates`);
+}

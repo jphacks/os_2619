@@ -10,6 +10,7 @@
 // A phone that sends no wp/wq (old app) falls back to localize.js (calibration-relative p/q): src 'localize'.
 import * as W from './world.js';
 import { createLocalizer } from './localize.js';
+import { eulerRot } from './actions.js';
 
 const OTHER = { A: 'B', B: 'A' };
 const KEEP = 20;          // s of AR history and tag sightings kept for the fit
@@ -77,7 +78,7 @@ function robustFit(c) {
 }
 
 /**
- * createPhoneAlign({ keep = 20, minAlign = 3, localizer }) -> { ingest(k), get(slot), estimate(now), onFieldChange() }
+ * createPhoneAlign({ keep = 20, minAlign = 3, localizer, axis }) -> { ingest(k), get(slot), estimate(now), onFieldChange() }
  * - ingest(k): every relayed message (k.slot A/B; types ar, tags, imu, pose, color, calib, phones).
  * - get(slot): { src: 'ar'|'localize'|'tag'|null, aligned, theta, t, rms, n, used, lastFix, world_T_ar, chest, fwd, yaw, cam (world_T_arcam),
  *   trail, check (cm, this phone's own position vs where the other phone saw its chest tag), checkT, seenBy (that sighting, world),
@@ -92,7 +93,7 @@ export function createPhoneAlign(opts = {}) {
   const S = {};
   for (const s of ['A', 'B']) S[s] = {
     ar: [], trail: [], sight: [], T: null, dirty: false, fixes: 0, lastFix: null, oldApp: false, online: false,
-    k: null, imu: null, pose: null, color: null, lastTip: null, seen: [], lastTags: null, calibAt: null, calibPose: null,
+    k: null, imu: null, pose: null, color: null, lastTip: null, seen: [], lastTags: null, calibAt: null, calibPose: null, yaw0: 0,
     rate: { ar: 0, tags: 0, imu: 0, pose: 0, color: 0 }, cnt: { ar: 0, tags: 0, imu: 0, pose: 0, color: 0 }, cntAt: 0, lastT: 0,
   };
 
@@ -189,7 +190,7 @@ export function createPhoneAlign(opts = {}) {
       case 'pose': st.pose = k; return;
       case 'color': if (k.side !== 'me') st.color = k; return; // 'opp' (or the old app's single target)
       case 'calib': { // IMU tare + AR origin reset on the phone; the raw ARCore world does not move, so the fit stays
-        st.calibAt = k.t; st.calibPose = latest(s); st.imu = null; return;
+        st.calibAt = k.t; st.calibPose = latest(s); st.yaw0 = st.imu?.euler?.[2] ?? 0; st.imu = null; return; // heading 0 = facing at Calibrate (as actions.js)
       }
     }
   }
@@ -243,12 +244,27 @@ export function createPhoneAlign(opts = {}) {
 
   const IMU_SIDE = cross(W.STICK.axis, W.STICK.up);
   const rotQw = ([w, x, y, z], v) => qrot([x, y, z, w], v); // imu.q is [w,x,y,z]
-  /** Stick direction from imu.q: the IMU was tared with the stick forward and level, so q maps the stick axis into the
-   *  body frame at calibration; that frame is turned to the world by the phone's yaw at calibration (AR, aligned later via θ),
-   *  else by the START mark's yaw (app.js updatePlayer convention). */
+  /** Stick direction in the body frame at calibration (x forward, y up, z right).
+   *  With euler (WitMotion, gravity-referenced, z up): the same sums as the sensing team's detectors (actions.js), using the
+   *  stick axis set on the connection screen (opts.axis[s], held straight up) - so the swing that is detected and the
+   *  direction it fires along come from one definition. Elevation is absolute; heading is relative to the yaw at Calibrate.
+   *  Without euler: imu.q, tared with the stick forward and level, and the default axis. */
+  function stickBody(s, st) {
+    const axis = o.axis?.[s] ?? W.STICK.axis;
+    if (st.imu.euler) {
+      const d = eulerRot(st.imu.euler, axis), el = Math.asin(Math.max(-1, Math.min(1, d[2])));
+      const hd = Math.atan2(d[1], d[0]) - st.yaw0 * Math.PI / 180; // + = turned left (counter-clockwise seen from above)
+      return [Math.cos(el) * Math.cos(hd), Math.sin(el), -Math.cos(el) * Math.sin(hd)];
+    }
+    if (!st.imu.q) return null;
+    const v = rotQw(st.imu.q, W.STICK.axis);
+    return [dot(v, W.STICK.axis), dot(v, W.STICK.up), dot(v, IMU_SIDE)];
+  }
+  /** Stick direction in the field world: the body frame at calibration is turned to the world by the phone's yaw at
+   *  calibration (AR, aligned later via θ), else by the START mark's yaw (app.js updatePlayer convention). */
   function stick(s, g) {
-    const st = S[s]; if (!st.imu?.q) return null;
-    const v = rotQw(st.imu.q, W.STICK.axis), body = [dot(v, W.STICK.axis), dot(v, W.STICK.up), dot(v, IMU_SIDE)];
+    const st = S[s]; if (!st.imu) return null;
+    const body = stickBody(s, st); if (!body) return null;
     let yaw0 = W.START[s].yaw, src = 'start';
     if (st.calibPose && g.theta != null) { const f = rotY(g.theta, qrot(st.calibPose.q, [0, 0, -1])); yaw0 = Math.atan2(-f[2], f[0]); src = 'calib-ar'; }
     const dir = W.app3(W.bodyPose([0, 0, 0], yaw0).R, body);

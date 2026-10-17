@@ -127,6 +127,9 @@
   .log .t { color: var(--muted); }
   .players2 { display: grid; gap: 8px; }
   .players2 .pc { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .rules { display: grid; gap: 4px; font-size: 13px; }
+  .rules label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-2); }
+  .rules input { width: 72px; }
   .players2 .pc .facts { color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; min-height: 2.6em; }
   .toolbar { display: flex; gap: 8px; align-items: center; padding: 8px 14px; border-top: 1px solid var(--line); background: var(--surface); flex-wrap: wrap; }
   .toolbar .msg { color: var(--text-2); font-size: 12px; flex: 1 1 300px; min-width: 0; }
@@ -146,12 +149,15 @@
   .hud .pl.A .hp i { background: linear-gradient(90deg, #ff5a1a, #ffb35a); } .hud .pl.B .hp i { background: linear-gradient(270deg, #2f8dff, #8fe0ff); }
   .hud .meter.ch { height: 6px; margin-top: 4px; }
   .hud .meter.ch i { transition: none; background: #fff6; }
-  .hud .meter.ch.full i { background: #fff; box-shadow: 0 0 10px #fff; }
+  .hud .meter.ch { position: relative; }
+  .hud .meter.ch b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #fffa; } /* where 中 begins (the bar ends at 大) */
+  .hud .meter.ch.m i { background: #ffd54a; }
+  .hud .meter.ch.l i { background: #ff6a3a; box-shadow: 0 0 12px #ff6a3a; }
   .hud .chips { display: flex; gap: 6px; margin-top: 6px; min-height: 22px; }
   .hud .pl.B .chips { justify-content: flex-end; }
   .hud .chips span { font-size: 12px; padding: 1px 9px; border-radius: 999px; background: rgba(0,0,0,.55); border: 1px solid currentColor; display: none; }
   .hud .chips span.on { display: inline-block; }
-  .hud .chips .guard { color: #9fe8ff; } .hud .chips .dodge { color: #c8ffb0; } .hud .chips .charge { color: #ffe08a; } .hud .chips .off { color: #888; }
+  .hud .chips .charge { color: #ffe08a; } .hud .chips .off { color: #888; }
   .hud .act { font-size: 24px; font-weight: 900; letter-spacing: .08em; min-height: 32px; margin-top: 2px; }
   .hud .mid { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); text-align: center; }
   .hud .timer { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; text-shadow: 0 0 8px #000; }
@@ -236,14 +242,14 @@
     <canvas class="minimap"></canvas>
     <div class="pl A">
       <div class="name"><span>A</span><small>炎</small><span class="hpn">100</span></div>
-      <div class="meter hp"><i></i></div><div class="meter ch"><i style="width:0"></i></div>
-      <div class="chips"><span class="off">オフライン</span><span class="charge">溜め中</span><span class="guard">ガード</span><span class="dodge">回避中</span></div>
+      <div class="meter hp"><i></i></div><div class="meter ch"><i style="width:0"></i><b></b></div>
+      <div class="chips"><span class="off">オフライン</span><span class="charge">溜め中</span></div>
       <div class="act"></div>
     </div>
     <div class="pl B">
       <div class="name"><span>B</span><small>雷</small><span class="hpn">100</span></div>
-      <div class="meter hp"><i></i></div><div class="meter ch"><i style="width:0"></i></div>
-      <div class="chips"><span class="off">オフライン</span><span class="charge">溜め中</span><span class="guard">ガード</span><span class="dodge">回避中</span></div>
+      <div class="meter hp"><i></i></div><div class="meter ch"><i style="width:0"></i><b></b></div>
+      <div class="chips"><span class="off">オフライン</span><span class="charge">溜め中</span></div>
       <div class="act"></div>
     </div>
     <div class="mid"><div class="timer"></div><div class="phasepill"></div></div>
