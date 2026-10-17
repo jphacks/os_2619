@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>スマホ C（第三者視点カメラ）</title>
+<!-- The phone that is the third-person camera opens this over https (getUserMedia needs a secure origin). No libraries. -->
+<style>
+  :root { color-scheme: dark; --bg: #000; --fg: #eee; --dim: #9a9a9a; --ok: #3ddc84; --warn: #ffcc4d; --ng: #ff6b6b; --btn: #1d7cf2; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, sans-serif; overflow: hidden; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+  #wrap { position: fixed; inset: 0; display: flex; flex-direction: column; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #preview { flex: 1; position: relative; background: #111; min-height: 0; }
+  #preview video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #stats { position: absolute; left: 8px; top: 8px; right: 8px; font: 12px/1.4 ui-monospace, Menlo, monospace; color: #dfe; text-shadow: 0 0 4px #000, 0 0 2px #000; white-space: pre-wrap; pointer-events: none; }
+  #orient { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.7); border: 1px solid var(--warn); color: var(--warn); border-radius: 10px; padding: 10px 16px; font-weight: 700; display: none; }
+  #bar { display: flex; gap: 8px; align-items: center; padding: 10px; flex-wrap: wrap; background: #0b0b0d; }
+  button, select { font: inherit; color: var(--fg); background: #222; border: 1px solid #444; border-radius: 10px; padding: 10px 14px; }
+  button:disabled { opacity: .45; }
+  #go { flex: 1 1 100%; font-size: 24px; font-weight: 800; padding: 18px; background: var(--btn); border-color: var(--btn); border-radius: 14px; }
+  #go.on { background: #c62828; border-color: #c62828; }
+  #msg { flex: 1 1 100%; font-size: 13px; color: var(--dim); min-height: 1.4em; }
+  #msg.ng { color: var(--ng); } #msg.ok { color: var(--ok); } #msg.warn { color: var(--warn); }
+  #banner { display: none; margin: 10px; padding: 12px 14px; background: #3a1a1a; border: 1px solid var(--ng); border-radius: 10px; font-size: 14px; }
+  #banner code { background: #000; padding: 1px 5px; border-radius: 4px; }
+  #hint { flex: 1 1 100%; font-size: 12px; color: var(--dim); }
+  .row { display: flex; gap: 8px; flex: 1 1 100%; flex-wrap: wrap; }
+  .row select { flex: 1; min-width: 0; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="banner"></div>
+  <div id="preview">
+    <video id="v" autoplay muted playsinline></video>
+    <div id="stats">停止中</div>
+    <div id="orient">スマホを横向きにしてください</div>
+  </div>
+  <div id="bar">
+    <button id="go">開始</button>
+    <div id="msg">サーバーにつなぐと、ここに状態が出ます</div>
+    <div class="row">
+      <select id="cam" title="カメラ"><option value="">背面カメラ（自動）</option></select>
+      <select id="res" title="解像度"><option value="1920x1080">1080p</option><option value="1280x720">720p</option></select>
+    </div>
+    <div class="row">
+      <button id="full">全画面・横固定</button>
+      <button id="jpeg">映像画面に接続できない → JPEGに切り替え</button>
+    </div>
+    <div id="hint">横向きで固定してから「開始」。画面はつけたままにします（自動で消灯しないようにします）。終わったら「停止」。</div>
+  </div>
+</div>
+<script type="module">
+import { createCamSender, defaultCamUrl, drawClockBar } from './camlink.js';
+const $ = s => document.querySelector(s);
+const v = $('#v'), go = $('#go'), msg = $('#msg'), stats = $('#stats'), camSel = $('#cam'), resSel = $('#res'), jpegBtn = $('#jpeg'), banner = $('#banner'), orient = $('#orient');
+const q = new URLSearchParams(location.search);
+const say = (t, cls = '') => { msg.textContent = t; msg.className = cls; };
+
+// not a secure origin → no camera API at all: say exactly what to open (and, on iPhone, that the certificate must be trusted first)
+if (!navigator.mediaDevices?.getUserMedia) {
+  const https = `https://${location.host}${location.pathname}`, trust = `http://${location.host}/trust.html`;
+  banner.style.display = 'block';
+  banner.innerHTML = `<b>カメラが使えません（安全な接続ではありません）。</b><br>この URL を開いてください：<code>${https}</code><br>iPhone は先に <code>${trust}</code> で証明書を信頼してください（設定 → 一般 → VPNとデバイス管理 → 信頼、続けて 情報 → 証明書信頼設定 で有効化）。`;
+  go.disabled = true;
+}
+
+const sender = createCamSender({ url: defaultCamUrl(), video: v, name: q.get('name') ?? (navigator.userAgent.match(/iPhone|iPad|Android/)?.[0] ?? 'phone') });
+let running = false;
+
+// ?fake: a drawn test pattern instead of the camera (desktop testing, latency measurement via the clock bar)
+function fakeStream(w, h) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); let n = 0;
+  const now = () => Date.now() + (sender.getStats().clockOffset || 0);
+  (function draw() {
+    if (!running) return; requestAnimationFrame(draw);
+    g.fillStyle = '#223'; g.fillRect(0, 0, w, h);
+    const t = performance.now() / 1000;
+    for (let i = 0; i < 6; i++) { g.fillStyle = `hsl(${i * 60} 80% 55%)`; g.beginPath(); g.arc(w / 2 + Math.cos(t + i) * w / 3, h / 2 + Math.sin(t * 1.3 + i) * h / 3, 60, 0, 7); g.fill(); }
+    g.fillStyle = '#fff'; g.font = '48px monospace'; g.fillText(new Date().toLocaleTimeString() + '  #' + (n++), 40, h - 60);
+    drawClockBar(g, now());
+  })();
+  return c.captureStream(30);
+}
+
+async function start() {
+  running = true; go.textContent = '…'; go.disabled = true;
+  const [w, h] = resSel.value.split('x').map(Number);
+  try {
+    await sender.start(q.has('fake') ? { stream: fakeStream(w, h) } : { deviceId: camSel.value || undefined, width: w, height: h });
+    go.textContent = '停止'; go.classList.add('on'); say('カメラを送っています', 'ok');
+    fillCams();
+  } catch (e) {
+    running = false; go.textContent = '開始'; go.classList.remove('on');
+    say(e.name === 'NotAllowedError' ? 'カメラの使用が許可されませんでした。ブラウザの設定でこのサイトのカメラを許可してください' : e.name === 'NotReadableError' ? 'カメラを他のアプリが使っています' : 'カメラ: ' + e.message, 'ng');
+  }
+  go.disabled = false;
+}
+function stop() { running = false; sender.stop(); go.textContent = '開始'; go.classList.remove('on'); say('停止しました'); stats.textContent = '停止中'; orient.style.display = 'none'; }
+go.onclick = () => running ? stop() : start();
+
+async function fillCams() { // labels only exist after permission, so refill after the first start
+  try {
+    const list = await sender.listCameras(), cur = sender.stream?.getVideoTracks()[0]?.getSettings().deviceId;
+    camSel.innerHTML = '<option value="">背面カメラ（自動）</option>' + list.map(c => `<option value="${c.id}" ${c.id === cur ? 'selected' : ''}>${c.label}</option>`).join('');
+  } catch {}
+}
+camSel.onchange = () => running && sender.setCamera(camSel.value || undefined).catch(e => say('カメラ: ' + e.message, 'ng'));
+resSel.onchange = () => { const [w, h] = resSel.value.split('x').map(Number); running && sender.setSize(w, h).catch(e => say('解像度: ' + e.message, 'ng')); };
+jpegBtn.onclick = () => { const on = !sender.forcedJpeg; sender.forceJpeg(on); jpegBtn.textContent = on ? 'JPEGで送っています → WebRTCに戻す' : '映像画面に接続できない → JPEGに切り替え'; };
+// Android Chrome locks orientation only in fullscreen; iPhone Safari supports neither, hence the on-screen hint as well
+$('#full').onclick = async () => { try { await document.documentElement.requestFullscreen?.(); } catch {} try { await screen.orientation?.lock?.('landscape'); } catch {} };
+document.addEventListener('gesturestart', e => e.preventDefault()); // iOS ignores user-scalable=no; this blocks pinch zoom
+addEventListener('pagehide', () => running && sender.stop());
+
+sender.onState(s => {
+  if (s.replaced) return say('別の端末がカメラになったので止めました。使うならもう一度「開始」', 'warn');
+  if (!running) return;
+  say(s.ws === 'open' ? `サーバーに接続中（映像画面 ${s.displays} 台）` : s.ws === 'connecting' ? 'サーバーにつないでいます…' : 'サーバーと切れました。つなぎ直しています…', s.ws === 'open' ? 'ok' : 'warn');
+});
+setInterval(() => {
+  if (!running) return;
+  const s = sender.getStats(), modeJa = { idle: '—', waiting: '映像画面の接続待ち', webrtc: 'WebRTC', jpeg: 'JPEG', 'webrtc+jpeg': 'WebRTC + JPEG' }[s.mode] ?? s.mode;
+  stats.textContent = `解像度 ${s.width}x${s.height}  ${s.fps} fps  送信 ${(s.kbps / 1000).toFixed(1)} Mbps${s.codec ? ' ' + s.codec : ''}${s.limit && s.limit !== 'none' ? `  制限: ${s.limit === 'cpu' ? '端末の処理が追いつかない' : '通信が細い'}` : ''}\n方式 ${modeJa}${s.jpegFps ? `（JPEG ${s.jpegFps} fps ${(s.jpegKbps / 1000).toFixed(1)} Mbps）` : ''}  遅延 RTT ${isNaN(s.rtt) ? '—' : s.rtt + ' ms'}${s.encodeMs ? `  エンコード ${s.encodeMs} ms` : ''}\n接続中の映像画面 ${s.displays} 台（WebRTC ${s.webrtc} / JPEG ${s.jpeg}）  ${s.label.length < 40 ? s.label : ''}`; // a canvas stream's label is a long random id: not worth showing
+  orient.style.display = v.videoWidth && v.videoHeight > v.videoWidth ? 'block' : 'none'; // the picture itself tells us the phone is upright
+}, 500);
+</script>
+</body>
+</html>

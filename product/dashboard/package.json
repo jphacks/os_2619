@@ -1,0 +1,15 @@
+{
+  "name": "bou-battle-dashboard",
+  "private": true,
+  "type": "module",
+  "description": "PC dashboard on one port (8000): phones A/B (SensorLink app), phone C (camera page), connections, 3D space, game, final render.",
+  "scripts": {
+    "start": "node server.mjs",
+    "fake": "node fake-world.mjs",
+    "fake:sim": "node fake-phone.mjs",
+    "test": "node test.mjs"
+  },
+  "dependencies": {
+    "ws": "8.18.0"
+  }
+}

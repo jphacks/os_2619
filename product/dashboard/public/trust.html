@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>カメラ用スマホの準備（証明書を信頼する）</title>
+<style>
+  body { font: 16px/1.7 -apple-system, "Hiragino Sans", sans-serif; margin: 0 auto; padding: 20px 16px 48px; max-width: 640px; color: #222; background: #fff; }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; border-left: 4px solid #e6a200; padding-left: 8px; }
+  ol { padding-left: 22px; } li { margin: 6px 0; }
+  code, .url { font-family: ui-monospace, Menlo, monospace; background: #f3f3f3; padding: 1px 5px; border-radius: 4px; word-break: break-all; }
+  a.btn { display: inline-block; padding: 12px 18px; margin: 6px 6px 6px 0; background: #1a73e8; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; }
+  .note { font-size: 14px; color: #555; }
+  .fp { font-size: 12px; }
+</style>
+<h1>カメラ用スマホの準備</h1>
+<p>スマホのカメラはブラウザが「安全な接続（https）」と判断したページでしか使えません。このPCは自分で証明書を作っているので、スマホに一度だけ「この証明書を信頼する」と登録してもらう必要があります。登録は1台につき1回で済みます。</p>
+
+<p><a class="btn" href="/ca.crt">証明書をダウンロード（ca.crt）</a> <a class="btn" href="/ca.pem" style="background:#666">pem形式</a></p>
+<p class="note fp">証明書の指紋（SHA-256）: <span id="fp">読み込み中…</span></p>
+
+<h2>iPhone（Safari）</h2>
+<ol>
+  <li>上の「証明書をダウンロード」を押す。「構成プロファイルをダウンロードしますか？」と聞かれたら「許可」を押す</li>
+  <li>「設定」アプリを開く。いちばん上に「プロファイルがダウンロード済み」が出るので押す（出ないときは「一般」→「VPNとデバイス管理」）</li>
+  <li>右上の「インストール」を押し、パスコードを入れて、もう一度「インストール」を押す</li>
+  <li>「設定」→「一般」→「情報」→いちばん下の「証明書信頼設定」を開き、<b>bou-battle local CA</b> のスイッチをオンにする</li>
+</ol>
+<p class="note">4つ目の手順を忘れると、インストール済みでも信頼されません。Safariで開いたときに警告が出る場合は、ここを確認してください。</p>
+
+<h2>Android（Chrome）</h2>
+<ol>
+  <li>上の「証明書をダウンロード」を押す。ファイルがダウンロードフォルダに保存される</li>
+  <li>「設定」→「セキュリティ」（機種によって「セキュリティとプライバシー」→「その他のセキュリティ設定」）→「証明書をインストール」→「CA証明書」を選ぶ</li>
+  <li>「インストールする」を押し、ダウンロードした <code>ca.crt</code> を選ぶ</li>
+</ol>
+
+<h2>カメラのページを開く</h2>
+<p>登録が終わったら、Safari または Chrome で次のURLを開きます。</p>
+<p class="url" id="cam">https://&lt;PCのIP&gt;:8000/cam.html</p>
+<p class="note">証明書の警告が出たら、信頼の登録ができていません。上の手順をやり直してください。PCのWi-Fiが変わってIPが変わったときは、サーバーが証明書を作り直すので、ページを開き直せば使えます（登録のやり直しは要りません）。</p>
+
+<script>
+  const cam = document.getElementById('cam');
+  const set = () => { cam.textContent = `https://${location.host}/cam.html`; cam.innerHTML = `<a href="${cam.textContent}">${cam.textContent}</a>`; };
+  set();
+  fetch('/info').then(r => r.json()).then(i => { document.getElementById('fp').textContent = i.certFingerprint ?? 'https が無効（PC に openssl がない）'; })
+    .catch(() => { document.getElementById('fp').textContent = '取得できませんでした'; });
+</script>
+</html>
