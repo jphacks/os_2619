@@ -20,6 +20,8 @@
   .hud .bar i { display: block; height: 100%; width: 100%; transition: width .15s; }
   .hud.A .bar i { background: var(--fire); } .hud.B .bar i { background: var(--thunder); margin-left: auto; }
   .hud .off { color: var(--dim); font-weight: 400; font-size: 12px; }
+  #timer { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; text-shadow: 0 0 8px #000; }
+  #phase { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); padding: 3px 14px; border-radius: 999px; background: rgba(0,0,0,.55); color: var(--dim); font-size: 14px; letter-spacing: .1em; }
   #banner { position: absolute; inset: 0; display: none; place-items: center; font-size: 72px; font-weight: 900; text-shadow: 0 0 24px #000; pointer-events: none; }
   #flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .25s; }
   #status { position: absolute; left: 16px; bottom: 10px; color: var(--dim); text-shadow: 0 0 4px #000; }
@@ -41,6 +43,8 @@
   <div id="flash"></div>
   <div class="hud A"><div class="name">A 炎 <span class="off">offline</span></div><div class="bar"><i></i></div></div>
   <div class="hud B"><div class="name"><span class="off">offline</span> 雷 B</div><div class="bar"><i></i></div></div>
+  <div id="timer" style="display:none"></div>
+  <div id="phase"></div>
   <div id="banner"></div>
   <div id="pipLabel">3D ビュー（V で全画面、D でドローン視点を切替）</div>
   <div id="status"></div>

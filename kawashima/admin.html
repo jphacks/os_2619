@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>棒バトル 管理</title>
+<style>
+  :root { --bg: #0d0f14; --card: #161a22; --line: #262c38; --fg: #eef0f4; --dim: #8a93a6; --fire: #ff7a1a; --thunder: #6cc8ff; --ok: #3ddc84; --warn: #ffcc4d; --bad: #ff5d5d; --accent: #8b7bff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; }
+  #link { font-size: 12px; color: var(--dim); }
+  #link b { font-weight: 600; }
+  main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; padding: 12px 16px 24px; }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .col { display: grid; gap: 12px; align-content: start; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  section h2 { margin: 0 0 10px; font-size: 12px; color: var(--dim); font-weight: 600; letter-spacing: .06em; }
+  button { font: inherit; color: var(--fg); background: #222836; border: 1px solid #343c4e; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+  button:hover { background: #2a3142; }
+  button:active { transform: translateY(1px); }
+  button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button kbd { font: 11px ui-monospace, monospace; color: var(--dim); margin-left: 6px; }
+  button.on kbd { color: #e6e1ff; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .phase { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+  .phase button { padding: 14px 8px; font-size: 15px; font-weight: 700; }
+  .phase button.go { background: #1f3b2b; border-color: #2f6b47; }
+  .phase button.go.on { background: var(--ok); border-color: var(--ok); color: #06210f; }
+  @media (max-width: 600px) { .phase { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  #now { display: flex; align-items: baseline; gap: 14px; margin-top: 12px; }
+  #nowPhase { font-size: 22px; font-weight: 800; }
+  #nowTimer { font-size: 22px; font-variant-numeric: tabular-nums; color: var(--dim); }
+  #thumb { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000; border-radius: 6px; display: block; }
+  .players { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .pl h3 { margin: 0 0 6px; font-size: 15px; }
+  .pl.A h3 { color: var(--fire); } .pl.B h3 { color: var(--thunder); }
+  .bar { height: 10px; border-radius: 5px; background: #2a3040; overflow: hidden; }
+  .bar i { display: block; height: 100%; }
+  .pl.A .bar i { background: var(--fire); } .pl.B .bar i { background: var(--thunder); }
+  .facts { font-size: 12px; color: var(--dim); margin: 6px 0 8px; display: grid; gap: 2px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--bad); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
+  label.f { display: grid; grid-template-columns: 110px minmax(0, 1fr) 54px; gap: 8px; align-items: center; margin: 6px 0; }
+  label.f output { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
+  select, input[type=number] { font: inherit; color: var(--fg); background: #222836; border: 1px solid #343c4e; border-radius: 6px; padding: 5px 6px; width: 100%; min-width: 0; }
+  input[type=range] { width: 100%; }
+  .msg { font-size: 12px; color: var(--dim); margin-top: 8px; overflow-wrap: anywhere; }
+  .note { font-size: 12px; color: var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>棒バトル 管理画面</h1>
+  <button id="openDisplay">映像画面を開く</button>
+  <span id="link">映像画面: <b>未接続</b></span>
+</header>
+<main>
+  <div class="col">
+    <section>
+      <h2>試合</h2>
+      <div class="phase">
+        <button data-phase="setup">準備中<kbd>1</kbd></button>
+        <button data-phase="demo">デモ開始<kbd>2</kbd></button>
+        <button data-phase="fight" class="go">試合開始<kbd>3</kbd></button>
+        <button id="pause">一時停止<kbd>4</kbd></button>
+        <button id="reset">やり直し<kbd>R</kbd></button>
+      </div>
+      <div id="now"><span id="nowPhase">-</span><span id="nowTimer"></span></div>
+      <label class="f"><span>試合時間（秒）</span><input id="sec" type="number" min="10" max="600" step="10" value="90"><span></span></label>
+      <p class="note">準備中とデモではHPが減りません。試合開始で3秒カウントしてから始まり、HPが0になるか時間切れで終わります。時間切れはHPが多い方の勝ちです。</p>
+    </section>
+    <section>
+      <h2>映像画面のプレビュー</h2>
+      <img id="thumb" alt="">
+    </section>
+    <section>
+      <h2>プレイヤー</h2>
+      <div class="players">
+        <div class="pl A"><h3>A 炎</h3><div class="bar"><i></i></div><div class="facts"></div>
+          <div class="row"><button data-shoot="A">発射<kbd>Space</kbd></button><button data-charge="A">溜め（押し続ける）<kbd>Q</kbd></button><button data-special="A">必殺技</button></div></div>
+        <div class="pl B"><h3>B 雷</h3><div class="bar"><i></i></div><div class="facts"></div>
+          <div class="row"><button data-shoot="B">発射<kbd>Enter</kbd></button><button data-charge="B">溜め（押し続ける）<kbd>P</kbd></button><button data-special="B">必殺技</button></div></div>
+      </div>
+    </section>
+  </div>
+  <div class="col">
+    <section>
+      <h2>3人称カメラ</h2>
+      <label class="f"><span>カメラ</span><select id="device"></select><span></span></label>
+      <label class="f"><span>合わせ方</span><select id="camMode"><option value="tags">tags（タグから）</option><option value="manual">manual（手動）</option></select><span></span></label>
+      <div class="row"><button id="calibrate">タグでカメラ合わせ<kbd>K</kbd></button></div>
+      <div class="msg" id="camInfo"></div>
+      <p class="note">人がいない状態で押してください。タグが2枚とも映っていると精度が上がります。</p>
+    </section>
+    <section>
+      <h2>表示</h2>
+      <div class="row" id="views">
+        <button data-view="off">実映像だけ</button><button data-view="pip">右下に3D</button><button data-view="full3d">3D全画面</button><span class="note">V</span>
+      </div>
+      <h2 style="margin-top:14px">ドローン視点 <span class="note">D</span></h2>
+      <div class="row" id="drones"></div>
+      <h2 style="margin-top:14px">スマホ視点 <span class="note">F</span></h2>
+      <div class="row" id="fpvs"><button data-fpv="">切</button><button data-fpv="A">A の胸</button><button data-fpv="B">B の胸</button></div>
+      <h2 style="margin-top:14px">切り替え</h2>
+      <div class="row" id="toggles">
+        <button data-toggle="minimap">ミニマップ<kbd>M</kbd></button>
+        <button data-toggle="debug">デバッグ表示<kbd>G</kbd></button>
+        <button data-toggle="anchors">タグの目印<kbd>H</kbd></button>
+        <button data-toggle="useTruth">正解位置（ダミー）<kbd>T</kbd></button>
+      </div>
+    </section>
+    <section>
+      <h2>ゲーム設定</h2>
+      <label class="f"><span>振り判定 deg/s</span><input id="swing" type="range" min="100" max="1500" step="10"><output id="swingOut"></output></label>
+      <label class="f"><span>狙い</span><select id="aim"><option value="stick">stick（棒の向き）</option><option value="eye">eye（目→棒先）</option></select><span></span></label>
+    </section>
+    <section>
+      <h2>状態</h2>
+      <div class="msg" id="sys"></div>
+    </section>
+  </div>
+</main>
+<script>
+const bus = new BroadcastChannel('bou-battle');
+const send = c => bus.postMessage(c);
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const PHASE = { setup: '準備中', demo: 'デモ中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
+const DRONE = { auto: '自動演出', orbit: '周回', chaseA: 'A 肩越し', chaseB: 'B 肩越し', top: '真上', side: '真横', free: '自由操作' };
+let st = null, lastState = 0, dragging = false;
+
+$('#openDisplay').onclick = () => window.open('index.html' + location.search, 'bou-display');
+$$('[data-phase]').forEach(b => b.onclick = () => send({ cmd: 'phase', phase: b.dataset.phase }));
+$('#pause').onclick = () => send({ cmd: 'pause' });
+$('#reset').onclick = () => send({ cmd: 'reset' });
+$('#sec').onchange = e => send({ cmd: 'matchSec', value: +e.target.value });
+$$('[data-shoot]').forEach(b => b.onclick = () => send({ cmd: 'shoot', slot: b.dataset.shoot }));
+$$('[data-special]').forEach(b => b.onclick = () => send({ cmd: 'shoot', slot: b.dataset.special, power: 1 }));
+$$('[data-charge]').forEach(b => {
+  const slot = b.dataset.charge;
+  b.onpointerdown = e => { b.setPointerCapture(e.pointerId); send({ cmd: 'charge', slot, on: true }); };
+  b.onpointerup = b.onpointercancel = () => send({ cmd: 'charge', slot, on: false });
+});
+$('#device').onchange = e => send({ cmd: 'camera', value: e.target.value });
+$('#camMode').onchange = e => send({ cmd: 'camMode', value: e.target.value });
+$('#calibrate').onclick = () => send({ cmd: 'calibrate' });
+$$('[data-view]').forEach(b => b.onclick = () => send({ cmd: 'view', value: b.dataset.view }));
+$('#drones').innerHTML = Object.entries(DRONE).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('');
+$$('[data-drone]').forEach(b => b.onclick = () => send({ cmd: 'drone', value: b.dataset.drone }));
+$$('[data-fpv]').forEach(b => b.onclick = () => send({ cmd: 'fpv', value: b.dataset.fpv || null }));
+$$('[data-toggle]').forEach(b => b.onclick = () => send({ cmd: 'toggle', key: b.dataset.toggle }));
+const swing = $('#swing');
+swing.oninput = () => { dragging = true; $('#swingOut').textContent = swing.value; send({ cmd: 'set', key: 'swingDps', value: +swing.value }); };
+swing.onchange = () => { dragging = false; };
+$('#aim').onchange = e => send({ cmd: 'set', key: 'aim', value: e.target.value });
+
+// the display page's keys work here too
+const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 2: { cmd: 'phase', phase: 'demo' }, 3: { cmd: 'phase', phase: 'fight' }, 4: { cmd: 'pause' },
+  g: { cmd: 'toggle', key: 'debug' }, d: { cmd: 'drone' }, m: { cmd: 'toggle', key: 'minimap' }, v: { cmd: 'view' }, k: { cmd: 'calibrate' },
+  t: { cmd: 'toggle', key: 'useTruth' }, f: { cmd: 'fpv' }, h: { cmd: 'toggle', key: 'anchors' }, ' ': { cmd: 'shoot', slot: 'A' }, Enter: { cmd: 'shoot', slot: 'B' }, r: { cmd: 'reset' } };
+const held = { q: 'A', p: 'B' };
+addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT'].includes(e.target.tagName) || e.repeat) return;
+  if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
+  if (held[e.key]) send({ cmd: 'charge', slot: held[e.key], on: true });
+  else if (KEYS[e.key]) send(KEYS[e.key]);
+});
+addEventListener('keyup', e => { if (held[e.key]) send({ cmd: 'charge', slot: held[e.key], on: false }); });
+
+let thumbUrl = null;
+bus.onmessage = ({ data: m }) => {
+  if (m.type === 'thumb') { if (thumbUrl) URL.revokeObjectURL(thumbUrl); thumbUrl = URL.createObjectURL(m.blob); $('#thumb').src = thumbUrl; return; }
+  if (m.type === 'state') { st = m; lastState = performance.now(); render(); }
+};
+
+const fmt = s => `${Math.floor(Math.ceil(s) / 60)}:${String(Math.ceil(s) % 60).padStart(2, '0')}`;
+const dot = c => `<span class="dot ${c}"></span>`;
+function render() {
+  const s = st;
+  const live = s.phase === 'fight' ? 'fight' : s.phase === 'countdown' ? 'fight' : s.phase;
+  $$('[data-phase]').forEach(b => b.classList.toggle('on', b.dataset.phase === live));
+  $('#pause').classList.toggle('on', s.paused);
+  $('#pause').firstChild.textContent = s.paused ? '再開' : '一時停止';
+  $('#nowPhase').textContent = (s.paused ? '一時停止 / ' : '') + (s.phase === 'result' ? (s.winner ? `${s.winner} の勝ち` : '引き分け') : PHASE[s.phase]);
+  $('#nowTimer').textContent = s.phase === 'countdown' ? `開始まで ${Math.ceil(s.until)}` : s.phase === 'fight' || s.phase === 'result' ? `残り ${fmt(s.left)} / ${fmt(s.sec)}` : `試合時間 ${fmt(s.sec)}`;
+  if (document.activeElement !== $('#sec')) $('#sec').value = s.sec;
+  for (const k of ['A', 'B']) {
+    const p = s.players[k], el = $('.pl.' + k);
+    el.querySelector('.bar i').style.width = p.hp + '%';
+    const L = p.loc;
+    el.querySelector('.facts').innerHTML = [
+      `HP ${p.hp}${p.charging ? `　溜め ${Math.round(p.charge * 100)}%` : ''}`,
+      `${dot(p.online ? 'ok' : '')}スマホ ${p.online ? '接続' : '未接続'}${p.fake ? '（ダミーデータ）' : ''}`,
+      `${dot(p.imu ? 'ok' : '')}IMU ${p.imu ? '受信中' : 'なし'}`,
+      `${dot(L.anchored ? (L.err < .1 ? 'ok' : 'warn') : '')}位置 ${L.anchored ? `タグで固定 ${L.fixes}回・ずれ ${(L.err * 100).toFixed(0)}cm` : '未固定（開始位置を仮に使用）'}`,
+    ].map(x => `<div>${x}</div>`).join('');
+  }
+  const dev = $('#device'), want = s.devices.map(d => d.id).join();
+  if (dev.dataset.list !== want) { dev.innerHTML = s.devices.map(d => `<option value="${d.id}">${d.label}</option>`).join(''); dev.dataset.list = want; }
+  if (document.activeElement !== dev) dev.value = s.video.id ?? '';
+  if (document.activeElement !== $('#camMode')) $('#camMode').value = s.camMode;
+  const tc = s.tagCam;
+  $('#camInfo').innerHTML = [
+    `映像 ${s.video.w ? `${s.video.w}×${s.video.h}　${s.video.label}` : '<b style="color:var(--bad)">届いていない</b>'}`,
+    tc ? `前回の合わせ: タグ ${tc.ids.join(', ')}　誤差 ${tc.err.toFixed(1)}px　縦画角 ${tc.fov.toFixed(1)}°　位置 (${tc.t.map(v => v.toFixed(2)).join(', ')}) m` : 'まだ合わせていない',
+    s.camMsg,
+  ].filter(Boolean).map(x => `<div>${x}</div>`).join('');
+  $$('[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === s.view));
+  $$('[data-drone]').forEach(b => b.classList.toggle('on', b.dataset.drone === s.drone));
+  $$('[data-fpv]').forEach(b => b.classList.toggle('on', (b.dataset.fpv || null) === s.fpv));
+  $$('[data-toggle]').forEach(b => b.classList.toggle('on', !!s.toggles[b.dataset.toggle]));
+  if (!dragging) { swing.value = s.swingDps; $('#swingOut').textContent = s.swingDps; }
+  if (document.activeElement !== $('#aim')) $('#aim').value = s.aim;
+  $('#sys').innerHTML = [
+    `中継サーバー ${s.host}: ${s.link}`,
+    `タグ配置 ${s.layout}　描画 ${s.fps} fps　ドローン ${DRONE[s.drone] ?? s.drone}（${s.shot}）`,
+    s.fpv ? `スマホ視点の推定画角 ${s.fovPhone[s.fpv]?.toFixed(1) ?? '推定待ち'}°` : '',
+  ].filter(Boolean).map(x => `<div>${x}</div>`).join('');
+}
+setInterval(() => {
+  const ok = performance.now() - lastState < 1500;
+  $('#link').innerHTML = `映像画面: <b style="color:var(${ok ? '--ok' : '--bad'})">${ok ? '接続中' : '未接続（「映像画面を開く」を押す）'}</b>`;
+}, 500);
+</script>
+</body>
+</html>

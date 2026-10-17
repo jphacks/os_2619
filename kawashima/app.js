@@ -138,7 +138,7 @@ function updatePlayer(p) {
   const s = loc.get(other(p).slot).seen?.opponent;
   p.seen.visible = !!s && now() - s.t < 1; // s.t is PC time; the check only hides stale marks
   if (s) p.seen.position.copy(v3(s.pos));
-  if (p.online || p.imu || params.has('demo')) {
+  if (p.online || p.imu || match.phase === 'demo') {
     fx.aura(p.element, p.base, p.tip, p.charging ? .6 + .4 * p.charge : .5);
     if (p.charging) fx.charge(p.element, p.tip, p.charge);
   }
@@ -149,7 +149,7 @@ const shots = [];
 let winner = null;
 
 function shoot(p, power = .5) {
-  if (winner || now() - p.lastShot < .6) return;
+  if (!canAct() || now() - p.lastShot < .6) return;
   p.lastShot = now();
   const foe = other(p);
   if (power >= 1) { // full charge: special move straight at the opponent
@@ -157,17 +157,16 @@ function shoot(p, power = .5) {
     drone.event('special', { owner: p.slot, from: p.tip.clone(), to: foe.chest.clone() });
     return damage(foe, p, 35);
   }
-  const aim = params.has('demo') ? foe.chest.clone().sub(p.tip).normalize()
+  const aim = match.phase === 'demo' ? foe.chest.clone().sub(p.tip).normalize()
     : cfg.aim === 'eye' ? p.tip.clone().sub(p.chest.clone().add(V(0, .35, 0))).normalize() : p.dir.clone();
   drone.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() });
   shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), power), owner: p, element: p.element, pos: p.tip.clone(), vel: aim.multiplyScalar(9), power, born: now() });
 }
-const noKO = params.has('demo') || params.has('test'); // setting up / testing: hits show but HP never drops
 function damage(foe, from, n) {
   flash(from.element);
-  if (noKO) return;
+  if (match.phase !== 'fight' || params.has('test')) return; // setting up / demo / ?test: hits show but HP never drops
   foe.hp = Math.max(0, foe.hp - n);
-  if (foe.hp === 0) winner = from;
+  if (foe.hp === 0) finish(from);
 }
 function stepShots(dt) {
   for (let i = shots.length - 1; i >= 0; i--) {
@@ -190,8 +189,27 @@ function stepCharge(dt) {
 }
 function reset() { for (const p of Object.values(players)) { p.hp = 100; p.charge = 0; p.charging = false; } for (const s of shots) fx.endShot(s.id); shots.length = 0; winner = null; }
 
-// ?demo: both players fire on their own, to check effects and hits without phones or keys
-if (params.has('demo')) setInterval(() => { shoot(players.A, Math.random() * .9); setTimeout(() => shoot(players.B, Math.random() * .9), 400); if (winner) setTimeout(reset, 1500); }, 800);
+// ---- match flow: setup -> demo / countdown -> fight -> result. Driven by keys 1-4 here or by admin.html ----
+// setup: shots work for checking but nothing counts. demo: both fire on their own (also ?demo). fight: HP and timer count.
+const match = { phase: params.has('demo') ? 'demo' : 'setup', paused: false, sec: 90, left: 90, until: 0, fightAt: -9 };
+const canAct = () => !match.paused && (match.phase === 'setup' || match.phase === 'demo' || match.phase === 'fight');
+function setPhase(ph) {
+  reset();
+  match.paused = false;
+  if (ph === 'fight') { match.phase = 'countdown'; match.until = now() + 3; } else match.phase = ph;
+}
+function finish(w) { winner = w; match.phase = 'result'; for (const p of Object.values(players)) p.charging = false; }
+function stepMatch(dt) {
+  if (match.phase === 'countdown' && now() >= match.until) { match.phase = 'fight'; match.left = match.sec; match.fightAt = now(); }
+  if (match.phase !== 'fight' || match.paused) return;
+  match.left = Math.max(0, match.left - dt);
+  const { A, B } = players;
+  if (match.left === 0) finish(A.hp === B.hp ? null : A.hp > B.hp ? A : B); // time up: more HP wins, equal is a draw
+}
+setInterval(() => {
+  if (match.phase !== 'demo' || match.paused) return;
+  shoot(players.A, Math.random() * .9); setTimeout(() => shoot(players.B, Math.random() * .9), 400);
+}, 800);
 
 const flashEl = document.getElementById('flash');
 function flash(el) {
@@ -327,6 +345,7 @@ const camSel = Object.assign(document.createElement('select'), { onchange: e => 
 async function fillDevices() {
   const list = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
   const cur = video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId;
+  devices = list.map(d => ({ id: d.deviceId, label: d.label || 'camera' }));
   camSel.innerHTML = list.map(d => `<option value="${d.deviceId}" ${d.deviceId === cur ? 'selected' : ''}>${d.label || 'camera'}</option>`).join('');
 }
 function buildPanel() {
@@ -342,30 +361,74 @@ function buildPanel() {
     slider('振り判定 deg/s', () => cfg.swingDps, v => cfg.swingDps = v, 100, 1500, 10),
     select('狙い', 'aim', ['stick', 'eye']),
     Object.assign(document.createElement('div'), { className: 'keys', innerHTML:
-      'C パネル / G デバッグ表示 / V 3Dビュー切替 / D ドローン視点の切替 / M ミニマップ / K タグでカメラ合わせ / T 正解位置(ダミー)<br>F スマホ視点(A→B→切) / H タグ位置の目印<br>Space A発射 / Enter B発射 / Q・P 長押しで溜め(A・B) / R リセット' }));
+      '1 準備中 / 2 デモ / 3 試合開始 / 4 一時停止 / R やり直し（管理画面は admin.html）<br>C パネル / G デバッグ表示 / V 3Dビュー切替 / D ドローン視点の切替 / M ミニマップ / K タグでカメラ合わせ / T 正解位置(ダミー)<br>F スマホ視点(A→B→切) / H タグ位置の目印<br>Space A発射 / Enter B発射 / Q・P 長押しで溜め(A・B)' }));
 }
 
-const held = { q: players.A, p: players.B };
+// ---- commands: the same set from the keys here and from admin.html (BroadcastChannel, same browser) ----
+const VIEWS = ['pip', 'full3d', 'off'], TOGGLES = ['debug', 'minimap', 'useTruth', 'anchors'];
+function command(c) {
+  const p = players[c.slot];
+  switch (c.cmd) {
+    case 'phase': return setPhase(c.phase);
+    case 'pause': if (match.phase === 'fight' || match.phase === 'demo') match.paused = !match.paused; return;
+    case 'reset': return setPhase(match.phase === 'result' || match.phase === 'countdown' ? 'fight' : match.phase); // again from the top
+    case 'matchSec': match.sec = Math.max(10, +c.value || 90); if (match.phase !== 'fight') match.left = match.sec; return;
+    case 'calibrate': return calibrate();
+    case 'camera': return startVideo(c.value);
+    case 'camMode': cfg.camMode = c.value; break;
+    case 'view': cfg.view = VIEWS.includes(c.value) ? c.value : VIEWS[(VIEWS.indexOf(cfg.view) + 1) % 3]; break;
+    case 'drone': if (c.value) drone.setMode(c.value); else drone.next(); cfg.drone = drone.mode; break;
+    case 'toggle': if (TOGGLES.includes(c.key)) cfg[c.key] = !cfg[c.key]; break;
+    case 'fpv': cfg.fpv = 'value' in c ? c.value : { null: 'A', A: 'B', B: null }[cfg.fpv]; save(); return resize();
+    case 'set': if (c.key === 'swingDps') cfg.swingDps = +c.value; else if (c.key === 'aim') cfg.aim = c.value; break;
+    case 'shoot': if (p) shoot(p, c.power ?? .5); return;
+    case 'charge': if (!p) return;
+      if (c.on) { p.charging = true; p.charge = 0; } else if (p.charging) { p.charging = false; p.lastShot = 0; shoot(p, p.charge); p.charge = 0; }
+      return;
+    case 'panel': return panel.classList.toggle('open');
+    default: return;
+  }
+  save(); applyCam();
+}
+const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 2: { cmd: 'phase', phase: 'demo' }, 3: { cmd: 'phase', phase: 'fight' }, 4: { cmd: 'pause' },
+  c: { cmd: 'panel' }, g: { cmd: 'toggle', key: 'debug' }, d: { cmd: 'drone' }, m: { cmd: 'toggle', key: 'minimap' }, v: { cmd: 'view' },
+  k: { cmd: 'calibrate' }, t: { cmd: 'toggle', key: 'useTruth' }, f: { cmd: 'fpv' }, h: { cmd: 'toggle', key: 'anchors' },
+  ' ': { cmd: 'shoot', slot: 'A' }, Enter: { cmd: 'shoot', slot: 'B' }, r: { cmd: 'reset' } };
+const held = { q: 'A', p: 'B' };
 addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.repeat) return;
-  if (held[e.key]) { held[e.key].charging = true; held[e.key].charge = 0; }
-  else if (e.key === 'c') panel.classList.toggle('open');
-  else if (e.key === 'g') { cfg.debug = !cfg.debug; save(); }
-  else if (e.key === 'd') { drone.next(); cfg.drone = drone.mode; save(); }
-  else if (e.key === 'm') { cfg.minimap = !cfg.minimap; save(); }
-  else if (e.key === 'v') { cfg.view = { pip: 'full3d', full3d: 'off', off: 'pip' }[cfg.view]; save(); }
-  else if (e.key === 'k') calibrate();
-  else if (e.key === 't') { cfg.useTruth = !cfg.useTruth; save(); }
-  else if (e.key === 'f') { cfg.fpv = { null: 'A', A: 'B', B: null }[cfg.fpv]; save(); resize(); }
-  else if (e.key === 'h') { cfg.anchors = !cfg.anchors; save(); }
-  else if (e.key === ' ') { e.preventDefault(); shoot(players.A); }
-  else if (e.key === 'Enter') shoot(players.B);
-  else if (e.key === 'r') reset();
+  if (e.key === ' ') e.preventDefault();
+  if (held[e.key]) command({ cmd: 'charge', slot: held[e.key], on: true });
+  else if (KEYS[e.key]) command(KEYS[e.key]);
 });
-addEventListener('keyup', e => {
-  const p = held[e.key]; if (!p?.charging) return;
-  p.charging = false; p.lastShot = 0; shoot(p, p.charge); p.charge = 0;
-});
+addEventListener('keyup', e => { if (held[e.key]) command({ cmd: 'charge', slot: held[e.key], on: false }); });
+
+const bus = new BroadcastChannel('bou-battle');
+bus.onmessage = e => command(e.data);
+let devices = [];
+navigator.mediaDevices.addEventListener?.('devicechange', fillDevices);
+function publish() { // state for admin.html, a few times a second
+  const L = s => { const l = loc.get(s); return { anchored: l.anchored, fixes: l.fixes, err: l.err }; };
+  const tc = cfg.tagCam;
+  bus.postMessage({ type: 'state', phase: match.phase, paused: match.paused, left: match.left, sec: match.sec, until: Math.max(0, match.until - now()),
+    winner: winner?.slot ?? null,
+    players: Object.fromEntries(Object.values(players).map(p => [p.slot, { hp: p.hp, online: p.online, imu: !!p.imu, fake: !!p.truth, charge: p.charge, charging: p.charging, loc: L(p.slot) }])),
+    link: linkState, host, camMode: cfg.camMode, tagCam: tc && { ids: tc.ids, err: tc.reprojErrPx, fov: tc.fovY, t: tc.pose.t }, camMsg: status.extra,
+    video: { w: video.videoWidth, h: video.videoHeight, label: video.srcObject?.getVideoTracks()[0]?.label ?? '', id: video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId }, devices,
+    view: cfg.view, drone: drone.mode, shot: drone.shot, fpv: cfg.fpv, fovPhone: intr,
+    toggles: Object.fromEntries(TOGGLES.map(k => [k, cfg[k]])), swingDps: cfg.swingDps, aim: cfg.aim, layout: W.LAYOUT, fps: Math.round(fps) });
+}
+setInterval(publish, 250);
+// a small picture of this screen for the admin page (drawn right after a render, so the WebGL buffer is still there)
+const thumb = Object.assign(document.createElement('canvas'), { width: 480, height: 270 }), thumbCtx = thumb.getContext('2d');
+let thumbAt = 0, thumbBusy = false;
+function sendThumb() {
+  if (thumbBusy || now() - thumbAt < .5) return;
+  thumbAt = now(); thumbBusy = true;
+  thumb.height = Math.round(480 / aspect);
+  thumbCtx.drawImage(canvas, 0, 0, thumb.width, thumb.height);
+  thumb.toBlob(b => { thumbBusy = false; if (b) bus.postMessage({ type: 'thumb', blob: b }); }, 'image/jpeg', .7);
+}
 
 // ---- main loop ----
 const banner = document.getElementById('banner'), statusEl = document.getElementById('status'), pipLabel = document.getElementById('pipLabel');
@@ -373,9 +436,20 @@ function locText(slot) {
   const L = loc.get(slot);
   return `${slot}: ${L.anchored ? `タグ固定 ${L.fixes}回 ずれ${(L.err * 100).toFixed(0)}cm` : '未固定(開始位置)'}`;
 }
-let last = now();
+const timerEl = document.getElementById('timer'), phaseEl = document.getElementById('phase');
+const PHASE_LABEL = { setup: '準備中', demo: 'デモ', countdown: '', fight: '', result: '' };
+function bannerText(t) {
+  if (match.paused) return '一時停止';
+  if (match.phase === 'countdown') return String(Math.ceil(match.until - t));
+  if (match.phase === 'fight' && t - match.fightAt < .9) return 'FIGHT!';
+  if (match.phase === 'result') return winner ? `${winner.slot} WIN!` : 'DRAW';
+  return '';
+}
+let last = now(), fps = 60;
 function frame() {
-  const t = now(), dt = Math.min(.05, t - last); last = t;
+  const t = now(), raw = t - last, dt = Math.min(.05, raw); last = t;
+  fps = .95 * fps + .05 / Math.max(raw, 1e-3);
+  stepMatch(raw);
   for (const p of Object.values(players)) {
     updatePlayer(p);
     p.hud.querySelector('.bar i').style.width = p.hp + '%';
@@ -389,10 +463,17 @@ function frame() {
     { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu }])));
   minimapCanvas.style.display = cfg.minimap ? '' : 'none';
   if (cfg.minimap) minimap.draw(players, shots);
-  banner.style.display = winner ? 'grid' : 'none';
-  banner.textContent = winner ? `${winner.slot} WIN!` : '';
+  const bt = bannerText(t);
+  banner.style.display = bt ? 'grid' : 'none';
+  banner.textContent = bt;
+  const showTimer = match.phase === 'fight' || match.phase === 'result';
+  timerEl.style.display = showTimer ? '' : 'none';
+  if (showTimer) timerEl.textContent = `${Math.floor(Math.ceil(match.left) / 60)}:${String(Math.ceil(match.left) % 60).padStart(2, '0')}`;
+  phaseEl.textContent = PHASE_LABEL[match.phase] ?? '';
+  phaseEl.style.display = phaseEl.textContent ? '' : 'none';
+  statusEl.style.display = cfg.debug ? '' : 'none'; // the operator reads all of this on admin.html
   statusEl.textContent = `${cfg.view !== 'off' ? `ドローン:${drone.mode}(${drone.shot})  ` : ''}server ${host}: ${linkState}  ${locText('A')}  ${locText('B')}  カメラ:${cfg.fpv ? `スマホ${cfg.fpv}視点 fov ${intr[cfg.fpv]?.toFixed(1) ?? '推定待ち'}°` : cfg.camMode}${cfg.useTruth ? '  [正解位置]' : ''}  ${status.extra}`;
-  pipLabel.style.display = cfg.view === 'pip' ? '' : 'none';
+  pipLabel.style.display = cfg.view === 'pip' && cfg.debug ? '' : 'none';
   const sx = (Math.random() - .5) * 24 * shake, sy = (Math.random() - .5) * 24 * shake;
   stage.style.transform = `translate(calc(-50% + ${sx}px), calc(-50% + ${sy}px))`;
   shake = shake < .01 ? 0 : shake * Math.exp(-8 * dt);
@@ -417,6 +498,7 @@ function frame() {
       renderer.setScissorTest(false); renderer.setViewport(0, 0, W_px, H_px);
     }
   }
+  sendThumb();
   requestAnimationFrame(frame);
 }
 
