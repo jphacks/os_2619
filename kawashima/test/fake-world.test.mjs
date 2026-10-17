@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { createSim, calibImu, due, DT } from '../fake-world.mjs';
 import {
-  START, STICK, CORNER_IDS, PLAYER_TAG, tagScale, mul3, tr3, app3, compose, invert, pose,
+  START, STICK, TAGS, CORNER_IDS, PLAYER_TAG, tagScale, mul3, tr3, app3, compose, invert, pose,
   fromQuat, fromRodrigues, bodyPose, worldTagPose, phoneArcamPose, arcam_T_cv,
 } from '../world.js';
 
@@ -54,8 +54,10 @@ for (const noise of [1, 0]) {
           const cv_T_tag = pose(fromRodrigues(k.r), k.p.map(v => v * tagScale(k.id)));
           const est = compose(worldTagPose(k.id), invert(cv_T_tag));
           e.tagPos.push(dist(est.t, ref.t)); e.tagRot.push(angErr(est.R, ref.R));
-          // corner order: (-h,h) top-left, (h,h) top-right in the image (tag upright, y down in image)
-          assert.ok(k.c[0][0] < k.c[1][0] && k.c[0][1] < k.c[3][1], `corner order id ${k.id}`);
+          // corner order: (-h,h) top-left, (h,h) top-right in the image (tag upright, y down in image);
+          // a flipped print (official orientation) puts corner 0 bottom-right, as on the real 10/17 sheets
+          const s = TAGS[k.id].flip ? -1 : 1;
+          assert.ok(s * (k.c[1][0] - k.c[0][0]) > 0 && s * (k.c[3][1] - k.c[0][1]) > 0, `corner order id ${k.id}`);
         }
       }
     }

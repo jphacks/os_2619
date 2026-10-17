@@ -10,7 +10,8 @@
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
   #stage { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: #111; }
   #stage video, #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-  #stage video { object-fit: fill; }
+  #stage video { display: none; }
+  #pipLabel { position: absolute; right: 16px; bottom: calc(30% + 20px); color: var(--dim); font-size: 11px; text-shadow: 0 0 4px #000; }
   .hud { position: absolute; top: 12px; width: 38%; }
   .hud.A { left: 16px; } .hud.B { right: 16px; text-align: right; }
   .hud .name { font-weight: 700; font-size: 18px; text-shadow: 0 0 6px #000; }
@@ -30,7 +31,7 @@
   #panel output { text-align: right; font-variant-numeric: tabular-nums; }
   #panel .keys { color: var(--dim); margin-top: 10px; }
 </style>
-<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }</script>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
 </head>
 <body>
 <div id="stage">
@@ -40,6 +41,7 @@
   <div class="hud A"><div class="name">A 炎 <span class="off">offline</span></div><div class="bar"><i></i></div></div>
   <div class="hud B"><div class="name"><span class="off">offline</span> 雷 B</div><div class="bar"><i></i></div></div>
   <div id="banner"></div>
+  <div id="pipLabel">3D ビュー（V で切替・ドラッグで回転）</div>
   <div id="status"></div>
 </div>
 <div id="panel"></div>

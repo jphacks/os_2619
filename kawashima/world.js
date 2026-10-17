@@ -20,20 +20,36 @@ export const START = { A: { pos: [-1.2, 0, 0], yaw: 0 }, B: { pos: [1.2, 0, 0], 
 export const PHONE_TAG_SIZE = 0.1;   // the size typed into the phones (m); every tags[].p is scaled by this
 export const STICK = { len: 0.8, axis: [1, 0, 0], up: [0, 0, 1], hand: { fwd: 0.3, right: 0.2, up: -0.3 } };
 
-// Fixed tags on poles at chest height, facing the arena centre: corners 0-3, plus 4 / 5 in the middle of the sides
-// behind B / A, so each player sees one straight ahead from the start mark. Chest tags 10 (A) and 11 (B) face forward.
+// Tag layouts. Pick one with ?layout= (browser) or LAYOUT= (node); default 'today'.
+// - full:  fixed tags on poles at chest height facing the arena centre: corners 0-3, plus 4 / 5 in the middle of the
+//          sides behind B / A so each player sees one straight ahead from the start mark. Chest tags 10 (A), 11 (B).
+// - today: what was printed on 10/17 (AprilTag Print Studio, 200 mm black square): only ids 0 and 1, behind B / A.
+// flip: printed in the official apriltag-imgs orientation, which OpenCV reads rotated 180° about the tag normal
+//       (our print/make_tags.py PDFs are in OpenCV's orientation and need no flip). Mount sheets upright as printed.
 const H = ARENA.half;
-export const TAGS = {
-  0: { size: 0.25, pos: [-H, CHEST_H, -H] },
-  1: { size: 0.25, pos: [H, CHEST_H, -H] },
-  2: { size: 0.25, pos: [H, CHEST_H, H] },
-  3: { size: 0.25, pos: [-H, CHEST_H, H] },
-  4: { size: 0.25, pos: [H, CHEST_H, 0] },
-  5: { size: 0.25, pos: [-H, CHEST_H, 0] },
-  10: { size: 0.18, player: 'A' },
-  11: { size: 0.18, player: 'B' },
+const LAYOUTS = {
+  full: {
+    0: { size: 0.25, pos: [-H, CHEST_H, -H] },
+    1: { size: 0.25, pos: [H, CHEST_H, -H] },
+    2: { size: 0.25, pos: [H, CHEST_H, H] },
+    3: { size: 0.25, pos: [-H, CHEST_H, H] },
+    4: { size: 0.25, pos: [H, CHEST_H, 0] },
+    5: { size: 0.25, pos: [-H, CHEST_H, 0] },
+    10: { size: 0.18, player: 'A' },
+    11: { size: 0.18, player: 'B' },
+  },
+  today: {
+    0: { size: 0.2, pos: [H, CHEST_H, 0], flip: true },
+    1: { size: 0.2, pos: [-H, CHEST_H, 0], flip: true },
+    10: { size: 0.18, player: 'A' }, // not printed yet: kept so the dummy room and the simulator still use them
+    11: { size: 0.18, player: 'B' },
+  },
 };
-export const CORNER_IDS = [0, 1, 2, 3, 4, 5]; // every fixed tag (name kept for the modules that use it)
+const pick = (typeof location !== 'undefined' && new URLSearchParams(location.search).get('layout'))
+  || (typeof process !== 'undefined' && process.env?.LAYOUT) || 'today';
+export const LAYOUT = LAYOUTS[pick] ? pick : 'today';
+export const TAGS = LAYOUTS[LAYOUT];
+export const CORNER_IDS = Object.keys(TAGS).map(Number).filter(id => TAGS[id].pos); // every fixed tag (name kept for the modules that use it)
 export const PLAYER_TAG = { A: 10, B: 11 };
 export const tagScale = id => (TAGS[id]?.size ?? PHONE_TAG_SIZE) / PHONE_TAG_SIZE;
 
@@ -81,7 +97,8 @@ export function worldTagPose(id, body) {
   const tag = TAGS[id];
   if (!tag.pos) return chestTagPose(body);
   const n = Math.hypot(tag.pos[0], tag.pos[2]), z = [-tag.pos[0] / n, 0, -tag.pos[2] / n], y = [0, 1, 0];
-  return pose(fromCols([z[2], 0, -z[0]], y, z), tag.pos); // x = y × z
+  const x = [z[2], 0, -z[0]]; // x = y × z
+  return tag.flip ? pose(fromCols(x.map(v => -v), [0, -1, 0], z), tag.pos) : pose(fromCols(x, y, z), tag.pos);
 }
 
 /** Body frame of a standing player: x forward, y up, z right. A chest tag faces forward: tag z = body forward. */
