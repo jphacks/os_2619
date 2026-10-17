@@ -22,7 +22,7 @@ export const DRONE_JA = { auto: '自動演出', orbit: '周回', chaseA: 'A の�
 
 const FIELD_KEY = 'pd-field-fixed3-' + W.LAYOUT, CAM_KEY = 'pd-tagcam-fixed3'; // v3: drops scans made with map4 sheets taken as standing (phone C turned 180° from the phones); a saved scan only holds the sheets' turns and phone C
 
-export function createStage({ video, cfg, hub, PA, isSetup = () => true }) {
+export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay = null }) { // overlay.compose(src, w, h, dt): the picture with the recognition layers (visionfx.js) or null
   const el = document.createElement('div'); el.className = 'stage';
   const canvas = document.createElement('canvas'), guideCanvas = Object.assign(document.createElement('canvas'), { className: 'guide2d' }), gctx = guideCanvas.getContext('2d');
   el.append(canvas, guideCanvas);
@@ -30,7 +30,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true }) {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   const scene = new THREE.Scene();
   const videoTex = new THREE.VideoTexture(video); videoTex.colorSpace = THREE.SRGBColorSpace;
-  let dummyTex = null, dummyCanvas = null;
+  let dummyTex = null, dummyCanvas = null, overTex = null;
   const camera = new THREE.PerspectiveCamera(GUIDE_CAM.fov, 16 / 9, 0.05, 100); camera.rotation.order = 'YXZ';
   const overCam = new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 100); overCam.position.set(0, 5.5, 6.5);
   const drone = createDrone(overCam, canvas, { mode: cfg.drone });
@@ -243,6 +243,11 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true }) {
     drawGuide2d(guiding);
     // Use the canvas sampled for game placement, avoiding captureStream/video's extra frame of delay.
     scene.background = fpv ? phoneTex : dummyTex ?? (video.videoWidth ? videoTex : null);
+    const over = !fpv && scene.background && overlay?.compose(dummyCanvas ?? video, dummyCanvas?.width ?? video.videoWidth, dummyCanvas?.height ?? video.videoHeight, dt);
+    if (over) { // a new texture when the picture size changes: three keeps a texture's storage at its first size
+      if (overTex?.image !== over || overTex.w !== over.width || overTex.h !== over.height) { overTex?.dispose(); overTex = Object.assign(new THREE.CanvasTexture(over), { w: over.width, h: over.height }); overTex.colorSpace = THREE.SRGBColorSpace; }
+      overTex.needsUpdate = true; scene.background = overTex;
+    }
     // Final output is camera pixels + the dedicated transparent FX scene. Arena,
     // avatars, sticks, skeletons, scan guides and debug geometry never enter it.
     field.group.visible = false; world3d.visible = false; camHelper.visible = false; guide.visible = guiding;

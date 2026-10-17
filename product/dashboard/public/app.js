@@ -16,6 +16,8 @@ import { createSmashStyle } from './fx-smash.js';
 import { createSpace } from './space3d.js';
 import { createConnect } from './connect.js';
 import { createFinalControls } from './final-controls.js';
+import { createVision } from './vision.js';
+import { createVisionFx } from './visionfx.js';
 
 const $ = s => document.querySelector(s);
 const nowS = () => Date.now() / 1000;
@@ -50,7 +52,12 @@ const vsrc = createVideoSource(video, { onChange: () => { stage?.resize(); } });
 let sfx = null; // sound: loaded lazily so a failing module never stops the picture
 import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const v = JSON.parse(localStorage.getItem('pd-vol')); if (v) for (const [k, x] of Object.entries(v)) sfx.setVolume(k, x); } catch {} }).catch(e => console.warn('audio', e));
 
-const stage = createStage({ video, cfg, hub, PA, isSetup: () => game.match.phase === 'setup' });
+// recognition on the final screen (vision.js) and its layers under the effects (visionfx.js); the worker only runs while a layer is on
+const VIS_KEYS = ['visDraw', 'visGhost', 'visSpot', 'visTrail'], EL_COLOR = { fire: '#ff7a1a', thunder: '#6cc8ff' };
+const vision = createVision({ getSource: () => video.__dummy?.canvas ?? video, stickLen: () => (cfg.stickLen.A + cfg.stickLen.B) / 2 });
+const vfx = createVisionFx();
+const overlay = { compose: (src, w, h, dt) => vfx.compose(src, w, h, dt, vision, { draw: cfg.visDraw, ghost: cfg.visGhost, spot: cfg.visSpot, trail: cfg.visTrail }, { A: EL_COLOR[game.players.A.element], B: EL_COLOR[game.players.B.element] }) };
+const stage = createStage({ video, cfg, hub, PA, isSetup: () => game.match.phase === 'setup', overlay });
 const hudFlash = { el: null };
 const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), getDummyFrame: () => vsrc.dummy?.frame });
 stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: プログラム版 (smash, default) / 画像素材版 (textured) / いつもの (classic)
@@ -175,7 +182,7 @@ for (const b of document.querySelectorAll('[data-tog]')) b.onclick = () => toggl
 
 // ---- final screen toolbar ----
 const finalBar = $('#finalBar');
-const finalControls = createFinalControls({ bar: finalBar, stage, game, vsrc, cfg, save, scan, fullscreen });
+const finalControls = createFinalControls({ bar: finalBar, stage, game, vsrc, cfg, save, scan, fullscreen, vision });
 function fullscreen() { const box = $('#finalBox'); document.fullscreenElement ? document.exitFullscreen() : box.requestFullscreen?.().then(() => setTimeout(stage.resize, 100)); }
 document.addEventListener('fullscreenchange', () => setTimeout(stage.resize, 50));
 async function scan() { game.command({ cmd: 'phase', phase: 'setup' }); vsrc.dummy?.showPlayers(false); await stage.scan(); vsrc.dummy?.showPlayers(true); }
@@ -307,6 +314,19 @@ function updateSlowUi() {
   $('#audioInfo').textContent = !sfx ? '読み込み中' : !sfx.unlocked ? 'ページを一度クリックすると音が出ます' : '';
 }
 
+/** Where the sensors put each player in phone C's picture (0..1), for naming the people found and as the stick's prior. */
+function visionHints() {
+  if (cfg.fpv || !(stage.state.scanned || video.__dummy)) return {};
+  const uv = p => { const q = p.clone().project(stage.camera); return q.z < 1 && Math.abs(q.x) < 1.5 && Math.abs(q.y) < 1.5 ? [(q.x + 1) / 2, (1 - q.y) / 2] : null; };
+  const out = {}, w = video.__dummy?.canvas.width ?? video.videoWidth, h = video.__dummy?.canvas.height ?? video.videoHeight;
+  for (const s of ['A', 'B']) {
+    const p = game.players[s], chest = p.src === 'start' ? null : uv(p.chest), b = uv(p.base), t = uv(p.tip);
+    const real = p.stickSrc !== 'IMU なし（前向き）'; // only a measured stick direction helps the search
+    out[s] = { chest, stick: real && b && t ? { x: b[0], y: b[1], a: Math.atan2((t[1] - b[1]) * h, (t[0] - b[0]) * w) } : null };
+  }
+  return out;
+}
+
 // ---- main loop ----
 let last = performance.now() / 1000, fps = 60, lastSlow = 0, est = PA.estimate(nowS());
 function frame(ts) {
@@ -319,6 +339,8 @@ function frame(ts) {
   vsrc.dummy?.render(t); // the picture and game placement consume this exact same pose snapshot
   game.step(dt, raw, est, { sensorOnly: screen === 'final' });
   if (screen === 'final') finalControls.step(t);
+  vision.want(screen === 'final' && !cfg.fpv && VIS_KEYS.some(k => cfg[k]));
+  if (screen === 'final') vision.setHints(visionHints());
   if (screen === 'game' || screen === 'final') { stage.render(dt, game, est); updateHud(); }
   else stage.fx.step(dt); // effects keep their time even when nobody looks
   if (screen === 'final') finalControls.updateStatus();

@@ -2,7 +2,7 @@
 // changing the match, HP, hit detection, or firing a game projectile.
 export const finalChargeTier = seconds => seconds < 2 ? 'small' : seconds < 5 ? 'medium' : 'large';
 
-export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, fullscreen }) {
+export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, fullscreen, vision = null }) {
   const $ = s => bar.querySelector(s);
   bar.innerHTML = `
     <div class="final-control-row">
@@ -21,6 +21,13 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
         <button data-thunder="small">電気 小</button><button data-thunder="medium">電気 中</button><button data-thunder="large">電気 大</button>
         <button id="thunderPause">電気を停止</button><button id="thunderStep">電気を1コマ進める</button>
         <span id="thunderTextureStatus" class="msg"></span>
+      </div>
+    </div>
+    <div class="final-control-row">
+      <strong class="final-control-title">映像の認識</strong>
+      <div class="final-control-items">
+        <button data-tog="visDraw">骨格・手・棒を表示</button><button data-tog="visGhost">人の残像</button><button data-tog="visSpot">二人の周りを暗く</button><button data-tog="visTrail">棒の残像</button>
+        <span id="visionStatus" class="msg"></span>
       </div>
     </div>
     <div class="final-control-row">
@@ -110,6 +117,10 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
       $('#fireTextureStatus').textContent = f.errors.length ? '炎素材を読み込めません: ' + f.errors.join(', ') : f.loaded.length < f.total ? '炎素材を読み込み中…' : '';
       const th = stage.fx.stats().thunder;
       $('#thunderTextureStatus').textContent = th.errors.length ? '電気素材を読み込めません: ' + th.errors.join(', ') : th.loaded.length < th.total ? '電気素材を読み込み中…' : '';
+      const v = vision?.state, on = v?.on;
+      $('#visionStatus').textContent = !v ? '' : cfg.fpv && ['visDraw', 'visGhost', 'visSpot', 'visTrail'].some(k => cfg[k]) ? '胸の視点では使えません（第三者カメラに切り替える）'
+        : !on ? '' : v.error ? v.error : !v.ready ? 'MediaPipe を読み込み中…（初回は数十秒）'
+        : `${v.delegate} ${v.hz.toFixed(0)} 回/秒 · 1回 ${v.ms.toFixed(0)} ms · 認識 ${['A', 'B'].filter(s => vision.persons[s]).join('・') || 'なし'}`;
       const ch = stage.fx.stats().charging;
       $('#chargeTextureStatus').textContent = ch.errors.length ? 'チャージ素材を読み込めません: ' + ch.errors.join(', ') : ch.loaded.length < ch.total ? 'チャージ素材を読み込み中…' : '';
     },

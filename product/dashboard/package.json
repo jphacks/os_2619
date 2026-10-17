@@ -8,7 +8,7 @@
     "fake": "node fake-world.mjs",
     "fake:sim": "node fake-phone.mjs",
     "fake:moves": "node fake-moves.mjs",
-    "test": "node test.mjs && node test-game.mjs",
+    "test": "node test.mjs && node test-game.mjs && node test-vision.mjs",
     "test:game": "node test-game.mjs"
   },
   "dependencies": {
