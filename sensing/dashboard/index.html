@@ -397,6 +397,20 @@ function phone3d(g, P, p, col) {
   const [lx, ly] = xy(at(0.5, 0.75, 1)); g.fillStyle = css('--bg'); g.beginPath(); g.arc(lx, ly, 3, 0, 7); g.fill();
 }
 
+/** Torso only (no head, arms or legs): an upright box 0.36 x 0.5 x 0.2 m behind the chest phone, facing the way the phone looks. */
+function torso3d(g, P, p, col) {
+  const f = p.fwd, r = [-f[2], 0, f[0]], ctr = [p.p[0] - f[0] * 0.12, p.p[1] - 0.2, p.p[2] - f[2] * 0.12];
+  const at = (a, b, c) => [0, 1, 2].map(i => ctr[i] + r[i] * a * 0.18 + (i === 1 ? b * 0.25 : 0) + f[i] * c * 0.1), xy = q => P(q).slice(0, 2);
+  const ring = c => [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([a, b]) => at(a, b, c));
+  g.strokeStyle = g.fillStyle = col; g.lineWidth = 1.2; g.lineJoin = 'round';
+  for (const [c, alpha] of [[-1, 0.08], [1, 0.16]]) { // back, front
+    g.globalAlpha = alpha; g.beginPath(); ring(c).forEach((q, i) => i ? g.lineTo(...xy(q)) : g.moveTo(...xy(q))); g.closePath(); g.fill(); g.globalAlpha = 0.8; g.stroke();
+  }
+  g.globalAlpha = 0.8; g.beginPath();
+  for (const [a, b] of [[-1, 1], [1, 1], [1, -1], [-1, -1]]) { g.moveTo(...xy(at(a, b, -1))); g.lineTo(...xy(at(a, b, 1))); }
+  g.stroke(); g.globalAlpha = 1;
+}
+
 function view3d(c, e) {
   const [g, w, h] = fit(c);
   g.clearRect(0, 0, w, h);
@@ -443,6 +457,7 @@ function view3d(c, e) {
     g.globalAlpha = 0.35; g.lineWidth = 1.5; g.beginPath(); p.trail.forEach((q, i) => i ? g.lineTo(...P(q).slice(0, 2)) : g.moveTo(...P(q).slice(0, 2))); g.stroke(); g.globalAlpha = 1;
     drop(p.p, col);
     const [x, y] = P(p.p);
+    if (p.fwd) torso3d(g, P, p, col);
     if (p.axes) phone3d(g, P, p, col); else { g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill(); }
     g.fillStyle = css('--text-primary'); g.font = '600 12px system-ui'; g.fillText(s, x + 9, y + 4); g.font = '11px system-ui';
   }
