@@ -24,7 +24,13 @@ function grab(src) {
   if (!w || !h) return null;
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(src, 0, 0, w, h);
-  return x.getImageData(0, 0, w, h);
+  return Object.assign(x.getImageData(0, 0, w, h), { canvas: c });
+}
+function upscaled(img, s) { // same frame, s times larger (smooth): small / oblique tags pass js-aruco2's size limits
+  const c = document.createElement('canvas'); c.width = img.width * s; c.height = img.height * s;
+  const x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
+  x.drawImage(img.canvas, 0, 0, c.width, c.height);
+  return x.getImageData(0, 0, c.width, c.height);
 }
 
 // ---- sub-pixel corners: fit a line to each edge of the black square (gradient peak along the normal), intersect ----
@@ -144,14 +150,35 @@ function gridOf(det, id) {
 }
 
 /** Detect tag36h11 tags: [{ id, corners: [[u,v] x4] }] with corners in OpenCV order (tag (-h,h), (h,h), (h,-h), (-h,-h)). */
-export async function detectTags(videoOrCanvas, ids = null) {
+// js-aruco2's detect() with a choice of adaptive-threshold window (its default radius 2 hollows out tags whose
+// cells are wider than ~3 px, and small or oblique tags need the upscaled passes).
+function arucoDetect(det, img, radius) {
+  const CV = globalThis.CV;
+  CV.grayscale(img, det.grey);
+  CV.adaptiveThreshold(det.grey, det.thres, radius, 7);
+  det.contours = CV.findContours(det.thres, det.binary);
+  let c = det.findCandidates(det.contours, img.width * .01, .05, 10);
+  c = det.clockwiseCorners(c); // no notTooNear: it keeps the paper sheet's outline and drops the tag inside it
+  return det.findMarkers(det.grey, c, 49);
+}
+const PASSES = [[1, 2], [1, 6], [2, 4], [2, 12], [3, 6], [3, 18], [4, 8]]; // [upscale, threshold radius]
+
+/**
+ * Detect tag36h11 tags: [{ id, corners: [[u,v] x4], misfit, scale }] with corners in OpenCV order
+ * (tag (-h,h), (h,h), (h,-h), (-h,-h)). Tries PASSES in order while some of `ids` are still missing.
+ */
+export async function detectTags(videoOrCanvas, ids = null, { passes = PASSES } = {}) {
   const img = grab(videoOrCanvas); if (!img) return [];
   const det = await detector(), I = sampler(greyOf(img), img.width, img.height);
-  const out = [];
-  for (const m of det.detect(img)) {
-    if (ids && !ids.includes(m.id)) continue;
-    const q = [0, 1, 2, 3].map(k => { const c = m.corners[[0, 1, 2, 3].find(j => ARUCO_TO_CV(j) === k)]; return [c.x + .5, c.y + .5]; });
-    out.push({ id: m.id, hamming: m.hammingDistance, coarse: q, ...photoRefine(I, refineQuad(I, q), gridOf(det, m.id)) });
+  const out = [], big = {};
+  for (const [s, rad] of passes) {
+    if (ids && ids.every(id => out.some(o => o.id === id))) break;
+    for (const m of arucoDetect(det, s === 1 ? img : (big[s] ??= upscaled(img, s)), rad)) {
+      if ((ids && !ids.includes(m.id)) || out.some(o => o.id === m.id)) continue;
+      const q = [0, 1, 2, 3].map(k => { const c = m.corners[[0, 1, 2, 3].find(j => ARUCO_TO_CV(j) === k)]; return [(c.x + .5) / s, (c.y + .5) / s]; });
+      const r = photoRefine(I, refineQuad(I, q), gridOf(det, m.id));
+      if (r.misfit < 1) out.push({ id: m.id, hamming: m.hammingDistance, coarse: q, scale: s, ...r });
+    }
   }
   return Object.assign(out, { width: img.width, height: img.height });
 }
@@ -206,17 +233,17 @@ function refine(camT, f, pts, cx, cy, fitF) {
   const resid = (T, ff) => { const r = []; for (const { P, uv } of pts) { const p = project(T, ff, cx, cy, P); if (p[2] <= 0) return null; r.push(p[0] - uv[0], p[1] - uv[1]); } return r; };
   const step = (T, ff, d) => [{ R: W.mul3(expSO3(d.slice(0, 3)), T.R), t: T.t.map((v, i) => v + d[3 + i]) }, fitF ? ff * Math.exp(d[6]) : ff];
   const cost = r => r ? r.reduce((s, v) => s + v * v, 0) : Infinity;
-  let r = resid(camT, f), c = cost(r), lam = 1e-3;
+  let r = resid(camT, f), c = cost(r), lam = 1e-3, JtJ = null;
   for (let it = 0; it < 100 && isFinite(c); it++) {
     const J = []; // numeric Jacobian, columns
     for (let k = 0; k < n; k++) {
       const e = 1e-6, d = Array(7).fill(0); d[k] = e;
       const [T1, f1] = step(camT, f, d), r1 = resid(T1, f1); d[k] = -e;
       const [T2, f2] = step(camT, f, d), r2 = resid(T2, f2);
-      if (!r1 || !r2) return { camT, f, cost: c };
+      if (!r1 || !r2) return { camT, f, cost: c, JtJ };
       J.push(r1.map((v, i) => (v - r2[i]) / (2 * e)));
     }
-    const JtJ = J.map(a => J.map(b => dot2(a, b))), Jtr = J.map(a => -dot2(a, r));
+    JtJ = J.map(a => J.map(b => dot2(a, b))); const Jtr = J.map(a => -dot2(a, r));
     let improved = false;
     for (let tries = 0; tries < 10; tries++) {
       const A = JtJ.map((row, i) => row.map((v, j) => v + (i === j ? lam * (v + 1e-9) : 0)));
@@ -227,20 +254,21 @@ function refine(camT, f, pts, cx, cy, fitF) {
         const done = (c - c1) < 1e-10 * c;
         camT = T1; f = f1; r = r1; c = c1; lam = Math.max(1e-9, lam / 5); improved = true;
         camT.R = orthonormal(camT.R);
-        if (done) return { camT, f, cost: c };
+        if (done) return { camT, f, cost: c, JtJ };
         break;
       }
       lam *= 10;
     }
     if (!improved) break;
   }
-  return { camT, f, cost: c };
+  return { camT, f, cost: c, JtJ };
 }
 const dot2 = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
 
 const fToFov = (f, h) => 2 * Math.atan(h / 2 / f) * 180 / Math.PI;
 const fovToF = (fov, h) => h / 2 / Math.tan(fov * Math.PI / 360);
 
+const FOV_SIGMA_MAX = 1; // deg
 /** Pose from detections already in hand (see detectTags). Same result shape as calibrateCamera. */
 export function solveCamera(dets, width, height, { fovYGuess = 55, fitFocal = 'auto' } = {}) {
   const tags = dets.filter(d => W.CORNER_IDS.includes(d.id));
@@ -260,10 +288,18 @@ export function solveCamera(dets, width, height, { fovYGuess = 55, fitFocal = 'a
     if (!best || r.cost < best.cost) best = r;
   }
   if (!best || !isFinite(best.cost)) return null;
+  // focal only when it is pinned down: 1-sigma of the fitted fov (corner noise >= 0.2 px) under FOV_SIGMA_MAX, else redo with the guess
+  let fovSigma = null;
+  if (fitF) {
+    const e6 = [0, 0, 0, 0, 0, 0, 1], col = best.JtJ && solve(best.JtJ, e6), sPx = Math.max(.2, Math.sqrt(best.cost / pts.length));
+    const sLogF = col ? Math.sqrt(Math.max(0, col[6])) * sPx : Infinity, fov = fToFov(best.f, height);
+    fovSigma = Math.abs(fToFov(best.f * Math.exp(-sLogF), height) - fov);
+    if (!(fovSigma < FOV_SIGMA_MAX) || fov < 15 || fov > 130) return { ...solveCamera(dets, width, height, { fovYGuess, fitFocal: false }), fovSigma };
+  }
   const p = W.invert(best.camT);
   return {
     pose: { R: p.R, t: p.t }, fovY: fToFov(best.f, height), focalPx: best.f, width, height,
-    ids: tags.map(d => d.id), reprojErrPx: Math.sqrt(best.cost / pts.length), focalFitted: fitF,
+    ids: tags.map(d => d.id), reprojErrPx: Math.sqrt(best.cost / pts.length), focalFitted: fitF, fovSigma,
   };
 }
 

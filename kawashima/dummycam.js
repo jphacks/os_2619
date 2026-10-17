@@ -47,8 +47,9 @@ export function lookAtPose(pos, target, rollDeg = 0) {
   const x = add(x0.map(v => v * c), y0, s), y = add(y0.map(v => v * c), x0, -s);
   return W.pose(W.fromCols(x, y, z), [...pos]);
 }
-// Deliberately not app.js's default slider camera (0, 1.4, 4, pitch -8, fov 50).
-export const DEFAULT_POSE = lookAtPose([0.3, 1.6, 4.2], [-0.1, 1.0, -0.6], 2.5);
+// Deliberately not app.js's default slider camera (0, 1.4, 4, pitch -8, fov 50). Placed so today's side tags (x = +-2)
+// are seen at <= 60° from their normal and >= 40 px tall at 720p: from z = 4.2 they are ~68° off and too thin to decode.
+export const DEFAULT_POSE = lookAtPose([0.3, 1.7, 2.9], [0, 1.0, -0.6], 2.5);
 
 function canvasTex(w, h, draw, repeat) {
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
@@ -135,11 +136,11 @@ function synthTruth(slot, time) {
 }
 
 /**
- * createDummyCam({ width, height, fovY, pose, host }) -> { stream, canvas, truePose, setTruth, render, stop }
+ * createDummyCam({ width, height, fovY, pose, host, players }) -> { stream, canvas, truePose, setPose, setTruth, render, showPlayers, stop }
  * pose: world_T_cam (OpenCV cam frame). truePose = { R, t, fovY }. host: optional 'localhost:8000' to read truth itself
  * (app.js already relays truth through setTruth, so leave it off there). render(timeSec) draws one frame now.
  */
-export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = DEFAULT_POSE, host = null } = {}) {
+export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = DEFAULT_POSE, host = null, players: showPlayers = true } = {}) {
   const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(1); renderer.setSize(width, height, false);
@@ -148,8 +149,13 @@ export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = D
 
   // camera: three's camera frame is the cv frame turned 180° about x
   const camera = new THREE.PerspectiveCamera(fovY, width / height, .05, 60);
-  const Rt = W.mul3(pose.R, [1, 0, 0, 0, -1, 0, 0, 0, -1]);
-  camera.matrixAutoUpdate = false; camera.matrix.copy(m4(W.pose(Rt, pose.t))); camera.matrixWorldNeedsUpdate = true;
+  camera.matrixAutoUpdate = false;
+  const truePose = { R: [], t: [], fovY };
+  const setPose = p => { // world_T_cam (cv frame)
+    camera.matrix.copy(m4(W.pose(W.mul3(p.R, [1, 0, 0, 0, -1, 0, 0, 0, -1]), p.t))); camera.matrixWorldNeedsUpdate = true;
+    truePose.R = [...p.R]; truePose.t = [...p.t];
+  };
+  setPose(pose);
 
   // lights
   scene.add(new THREE.HemisphereLight(0xfff4e6, 0x504030, 1.4));
@@ -177,10 +183,12 @@ export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = D
     const m = new THREE.Mesh(new THREE.RingGeometry(.12, .16, 24), tape); m.rotation.x = -Math.PI / 2; m.position.set(W.START[s].pos[0], .003, W.START[s].pos[2]); scene.add(m);
   }
 
-  // corner tags on poles: tag plane exactly at worldTagPose, board and pole behind it
+  // fixed tags on poles: tag plane exactly at worldTagPose (flip: the sheet is upright, the tag frame turned 180°),
+  // board and pole behind it in an upright frame
   for (const id of W.CORNER_IDS) {
-    const tp = W.worldTagPose(id), s = W.TAGS[id].size, g = new THREE.Group();
-    g.matrixAutoUpdate = false; g.matrix.copy(m4(tp)); scene.add(g);
+    const tp = W.worldTagPose(id), s = W.TAGS[id].size, g = new THREE.Group(), gu = new THREE.Group();
+    const up = tp.R[4] > 0 ? tp : W.pose(W.mul3(tp.R, [-1, 0, 0, 0, -1, 0, 0, 0, 1]), tp.t);
+    g.matrixAutoUpdate = gu.matrixAutoUpdate = false; g.matrix.copy(m4(tp)); gu.matrix.copy(m4(up)); scene.add(g, gu);
     const face = new THREE.Mesh(new THREE.PlaneGeometry(s * 10 / 8, s * 10 / 8), new THREE.MeshStandardMaterial({ map: tagTex(id), roughness: .9 }));
     const board = new THREE.Mesh(new THREE.BoxGeometry(s * 1.5, s * 1.5, .012), new THREE.MeshStandardMaterial({ color: 0xeeeeea, roughness: .9 }));
     board.position.z = -.0065; board.castShadow = true;
@@ -188,11 +196,11 @@ export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = D
     pole.position.set(0, (.3 - W.CHEST_H) / 2, -.035); pole.castShadow = true;
     const foot = new THREE.Mesh(new THREE.CylinderGeometry(.18, .2, .03, 24), new THREE.MeshStandardMaterial({ color: 0x30343a }));
     foot.position.set(0, .015 - W.CHEST_H, -.035);
-    g.add(face, board, pole, foot);
+    g.add(face); gu.add(board, pole, foot);
   }
 
   const players = { A: makePlayer(0xd2532a, W.PLAYER_TAG.A), B: makePlayer(0x2f7fd0, W.PLAYER_TAG.B) };
-  for (const p of Object.values(players)) { p.group.traverse(o => { if (o.isMesh) o.castShadow = true; }); scene.add(p.group); }
+  for (const p of Object.values(players)) { p.group.traverse(o => { if (o.isMesh) o.castShadow = true; }); p.group.visible = showPlayers; scene.add(p.group); }
   const truth = { A: null, B: null }, last = { A: -1e9, B: -1e9 };
   const setTruth = (slot, k) => { if (!truth.hasOwnProperty(slot)) return; truth[slot] = k; last[slot] = performance.now(); };
 
@@ -215,7 +223,8 @@ export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = D
   const stream = canvas.captureStream(30);
   return {
     stream, canvas, render, setTruth,
-    truePose: { R: [...pose.R], t: [...pose.t], fovY },
+    showPlayers(on) { for (const p of Object.values(players)) p.group.visible = on; }, // off = empty arena, as when calibrating
+    truePose, setPose,
     stop() { alive = false; cancelAnimationFrame(raf); ws?.close(); stream.getTracks().forEach(t => t.stop()); renderer.dispose(); },
   };
 }
