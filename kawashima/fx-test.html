@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>エフェクト テスト</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #eee; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #hud { position: absolute; left: 10px; top: 8px; text-shadow: 0 0 4px #000; white-space: pre; font-variant-numeric: tabular-nums; }
+</style>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud"></div>
+<script type="module">
+// Effects demo over a fake room ("video" layer = ordinary scene meshes, so bloom must not touch them).
+// ?fx=aura|charge|shot|hit|dodge|special|all  &el=fire|thunder  &t=<s since the effect started: simulate then freeze>
+// &aura=0 hides the stick auras, &bg=dark uses a plain gradient, &q=low, &stress=1 keeps 6 shots in the air.
+import * as THREE from 'three';
+import { createFx } from './effects.js';
+
+const P = new URLSearchParams(location.search);
+const MODE = P.get('fx') ?? 'all', EL = P.get('el') ?? 'fire', FREEZE = P.has('t') ? +P.get('t') : null;
+const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, 16 / 9, .05, 100);
+const CAM = V(0, 1.4, 4);
+camera.position.copy(CAM); camera.lookAt(0, 0, 0);
+const camQ = camera.quaternion.clone();
+
+// ---- fake room ----
+function canvasTex(w, h, draw) {
+  const c = Object.assign(document.createElement('canvas'), { width: w, height: h }), g = c.getContext('2d');
+  draw(g, w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+}
+let rs = 3; const rnd = () => (rs = (rs * 16807) % 2147483647) / 2147483647;
+if (P.get('bg') === 'dark') {
+  scene.background = canvasTex(4, 256, (g, w, h) => { const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, '#1c2433'); gr.addColorStop(1, '#07080c'); g.fillStyle = gr; g.fillRect(0, 0, w, h); });
+} else {
+  scene.background = new THREE.Color(0x777068);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(9, 9), new THREE.MeshBasicMaterial({ map: canvasTex(1024, 1024, (g, w, h) => {
+    for (let i = 0; i < 16; i++) { const l = 95 + rnd() * 30; g.fillStyle = `rgb(${l + 35},${l + 10},${l - 20})`; g.fillRect(0, i * h / 16, w, h / 16 - 2); }
+    g.fillStyle = 'rgba(0,0,0,.25)'; for (let i = 0; i < 16; i++) g.fillRect(rnd() * w, i * h / 16, 2, h / 16);
+    g.fillStyle = 'rgba(255,255,255,.85)'; g.fillRect(w * (.5 - 1.2 / 9) - 14, h / 2 - 14, 28, 28); g.fillRect(w * (.5 + 1.2 / 9) - 14, h / 2 - 14, 28, 28);
+  }) }));
+  floor.rotation.x = -Math.PI / 2; scene.add(floor);
+  const wall = new THREE.Mesh(new THREE.PlaneGeometry(9, 4), new THREE.MeshBasicMaterial({ map: canvasTex(1800, 800, (g, w, h) => {
+    const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, '#d9d4ca'); gr.addColorStop(1, '#b8b1a4'); g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#f7f9ff'; g.fillRect(1150, 120, 420, 330); g.strokeStyle = '#8f8a80'; g.lineWidth = 14; g.strokeRect(1150, 120, 420, 330); g.fillStyle = '#8f8a80'; g.fillRect(1353, 120, 14, 330);
+    g.fillStyle = '#5a4634'; g.fillRect(250, 210, 260, 590); g.fillStyle = '#c9a26b'; g.fillRect(470, 500, 16, 16);
+    g.fillStyle = '#3d6a8f'; g.fillRect(700, 160, 240, 170); g.fillStyle = '#e8c547'; g.fillRect(730, 190, 90, 110);
+    g.fillStyle = '#8c8578'; g.fillRect(0, h - 30, w, 30);
+  }) }));
+  wall.position.set(0, 2, -2.6); scene.add(wall);
+  for (const s of [-1, 1]) {
+    const side = new THREE.Mesh(new THREE.PlaneGeometry(9, 4), new THREE.MeshBasicMaterial({ color: s < 0 ? 0xb5ae9f : 0xa59e90 }));
+    side.position.set(s * 4.2, 2, 1.9); side.rotation.y = -s * Math.PI / 2; scene.add(side);
+  }
+  const desk = new THREE.Mesh(new THREE.BoxGeometry(1.4, .75, .6), new THREE.MeshBasicMaterial({ color: 0x6b5a48 }));
+  desk.position.set(-2.8, .375, -2.1); scene.add(desk);
+}
+// placeholder players: bodies + sticks are part of the "video"
+const players = {};
+for (const [slot, side, el] of [['A', -1, 'fire'], ['B', 1, 'thunder']]) {
+  const g = new THREE.Group(), mat = new THREE.MeshBasicMaterial({ color: slot === 'A' ? 0x3a3f4a : 0x4a3c3a });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(.2, 1, 4, 12), mat); body.position.y = .9; g.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.12, 16, 12), new THREE.MeshBasicMaterial({ color: 0xc9a68a })); head.position.y = 1.62; g.add(head);
+  g.position.x = side * 1.2; scene.add(g);
+  const stick = new THREE.Mesh(new THREE.CylinderGeometry(.012, .012, 1, 8), new THREE.MeshBasicMaterial({ color: 0x3b2a1a }));
+  scene.add(stick);
+  players[slot] = { slot, side, el, facing: V(-side, 0, 0), right: V(0, 0, -side), chest: V(side * 1.2, 1.3, 0), base: V(), tip: V(), stick };
+}
+const other = p => p === players.A ? players.B : players.A;
+const byEl = el => el === 'fire' ? players.A : players.B;
+const UPV = V(0, 1, 0);
+function placeSticks(T) {
+  for (const p of Object.values(players)) {
+    p.base.copy(p.chest).addScaledVector(p.facing, .3).addScaledVector(p.right, .2).addScaledVector(UPV, -.3);
+    const a = .5 + .12 * Math.sin(T * 1.3 + p.side), yaw = .15 * Math.sin(T * .9 + p.side * 2);
+    const d = p.facing.clone().multiplyScalar(Math.cos(a)).addScaledVector(UPV, Math.sin(a)).addScaledVector(p.right, yaw).normalize();
+    p.tip.copy(p.base).addScaledVector(d, .8);
+    p.stick.position.copy(p.base).lerp(p.tip, .5); p.stick.quaternion.setFromUnitVectors(UPV, d);
+  }
+}
+
+// ---- fx ----
+let shake = 0;
+const fx = createFx(renderer, scene, camera, { quality: P.get('q') ?? 'high', onShake: a => { shake = Math.max(shake, a); } });
+function resize() { fx.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+if (P.has('bloom')) fx.setBloom({ strength: +P.get('bloom') });
+
+const flying = [];
+function fire(p, power = 1) {
+  const foe = other(p), dir = foe.chest.clone().sub(p.tip).normalize();
+  flying.push({ id: fx.shot(p.el, p.tip, dir, power), el: p.el, pos: p.tip.clone(), vel: dir.multiplyScalar(5), foe, power });
+}
+function stepFlying(dt) {
+  for (let i = flying.length - 1; i >= 0; i--) {
+    const s = flying[i]; s.pos.addScaledVector(s.vel, dt); fx.moveShot(s.id, s.pos);
+    if (s.pos.distanceTo(s.foe.chest) < .3 || Math.abs(s.pos.x) > 2) {
+      if (!stress) fx.hit(s.el, s.pos, s.power);
+      fx.endShot(s.id); flying.splice(i, 1);
+    }
+  }
+}
+const stress = P.has('stress');
+
+// one effect for the given element, starting at T = 0
+const SINGLE = {
+  aura() {},
+  charge(T, p) { if (T >= 0) fx.charge(p.el, p.tip, Math.min(1, T / 1.6)); },
+  shot(T, p, at) { if (at(0)) fire(p, 1); },
+  hit(T, p, at) { if (at(0)) fx.hit(p.el, other(p).chest.clone().add(V(0, .1, 0)), 1); },
+  dodge(T, p, at) { if (at(0)) fx.dodge(p.el, p.chest.clone().add(V(0, -.25, .3)), V(0, 0, 1)); },
+  special(T, p, at) { if (at(0)) fx.special(p.el, p.tip, other(p).chest); },
+};
+let label = '';
+function scenario(T, prev) {
+  const at = x => prev < x && T >= x;
+  placeSticks(T);
+  if (P.get('aura') !== '0') for (const p of Object.values(players)) fx.aura(p.el, p.base, p.tip, .8 + .2 * Math.sin(T * 2));
+  if (stress) { if (flying.length < 6 && at(Math.floor(T * 4) / 4)) fire(Math.floor(T * 4) % 2 ? players.A : players.B, R01()); return; }
+  if (MODE !== 'all') {
+    const t = T - 1; label = `${MODE} ${EL} t=${t.toFixed(2)}`;
+    SINGLE[MODE](t, byEl(EL), x => at(x + 1));
+    return;
+  }
+  const L = 14, t = T % L, tp = prev % L, A = players.A, B = players.B, on = x => tp < x && t >= x;
+  const seq = [[0, 'aura'], [2, 'charge fire'], [4, 'shot fire'], [5, 'charge thunder'], [7, 'shot thunder'], [8, 'dodge'], [9.6, 'special fire'], [12, 'special thunder']];
+  label = seq.filter(s => t >= s[0]).pop()[1];
+  if (t >= 2 && t < 4) fx.charge('fire', A.tip, Math.min(1, (t - 2) / 1.6));
+  if (on(4)) fire(A, 1);
+  if (t >= 5 && t < 7) fx.charge('thunder', B.tip, Math.min(1, (t - 5) / 1.6));
+  if (on(7)) fire(B, 1);
+  if (on(8.2)) fx.dodge('fire', A.chest.clone().add(V(0, -.25, .3)), V(0, 0, 1));
+  if (on(8.9)) fx.dodge('thunder', B.chest.clone().add(V(0, -.25, -.3)), V(0, 0, -1));
+  if (on(9.6)) fx.special('fire', A.tip, B.chest);
+  if (on(12)) fx.special('thunder', B.tip, A.chest);
+}
+let seed = 9; const R01 = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+// ---- loop ----
+const hud = document.getElementById('hud'), DT = 1 / 60;
+let T = 0, last = performance.now(), frames = 0, fpsT = last, fps = 0;
+function advance(dt) { const prev = T; T += dt; scenario(T, prev); stepFlying(dt); fx.step(dt); }
+if (FREEZE !== null) { const end = 1 + FREEZE; while (T < end - 1e-6) advance(DT); }
+// ?bench=N: simulate + render N frames back to back (synced with a 1px readback), report ms per frame
+if (P.has('bench')) {
+  const n = +P.get('bench') || 120, gl = renderer.getContext(), px = new Uint8Array(4);
+  for (let i = 0; i < 10; i++) { advance(DT); fx.render(); }
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  const t0 = performance.now();
+  for (let i = 0; i < n; i++) { advance(DT); fx.render(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); }
+  const ms = (performance.now() - t0) / n;
+  console.log(`BENCH ${ms.toFixed(2)} ms/frame`); label = `bench ${ms.toFixed(2)} ms/frame (${(1000 / ms).toFixed(0)} fps)`;
+}
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (FREEZE === null) advance(dt);
+  shake *= Math.exp(-dt * 8);
+  camera.position.copy(CAM); camera.quaternion.copy(camQ);
+  if (FREEZE === null && shake > .01) camera.position.add(V(Math.random() - .5, Math.random() - .5, 0).multiplyScalar(shake * .06));
+  fx.render();
+  frames++;
+  if (now - fpsT > 500) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; }
+  const s = fx.stats();
+  hud.textContent = `${fps.toFixed(0)} fps  ${renderer.domElement.width}x${renderer.domElement.height}\n${label}\nsprites ${s.sprites}  segments ${s.segments}  shots ${s.shots}`;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

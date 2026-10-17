@@ -66,6 +66,8 @@ function resize() {
 }
 
 const fx = createFx(renderer, scene, camera);
+let shake = 0;
+fx.opts.onShake = a => { shake = Math.max(shake, a); };
 
 // ---- 3D world: arena, tags, phones, third-person camera (always in the 3D view, in the main view with G) ----
 const world3d = new THREE.Group(); scene.add(world3d);
@@ -303,6 +305,9 @@ function frame() {
   banner.textContent = winner ? `${winner.slot} WIN!` : '';
   statusEl.textContent = `server ${host}: ${linkState}  ${locText('A')}  ${locText('B')}  カメラ:${cfg.camMode}${cfg.useTruth ? '  [正解位置]' : ''}  ${status.extra}`;
   pipLabel.style.display = cfg.view === 'pip' ? '' : 'none';
+  const sx = (Math.random() - .5) * 24 * shake, sy = (Math.random() - .5) * 24 * shake;
+  stage.style.transform = `translate(calc(-50% + ${sx}px), calc(-50% + ${sy}px))`;
+  shake = shake < .01 ? 0 : shake * Math.exp(-8 * dt);
 
   renderer.setScissorTest(false);
   if (cfg.view === 'full3d') {
