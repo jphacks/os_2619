@@ -98,7 +98,7 @@
       <div class="row"><button id="calibrate">タグでカメラ合わせ<kbd>K</kbd></button><button id="guideCam">ガイドを推奨位置から表示</button></div>
       <div class="msg" id="tagCheck"></div>
       <div class="msg" id="camInfo"></div>
-      <p class="note">準備中は、映像画面に設置ガイド（タグを置く枠・立ち位置・フィールドの線）が出ます。合わせる前は推奨位置（中心から手前2.9m・高さ1.7m）のiPhoneから見た位置に枠を描くので、実物のタグが枠に重なるようにiPhoneを動かしてください。全部OKになったら、人がいない状態で「タグでカメラ合わせ」を押します。</p>
+      <p class="note">準備中は、映像画面に設置ガイド（タグを置く枠・立ち位置・フィールドの線）が出ます。床のタグ2枚が両方OKになったら、人がいない状態で「タグでカメラ合わせ」を押します。タグ同士の間隔とカメラの画角はスキャンで測るので、ぴったりの位置でなくてもかまいません。2枚とも表を上にして、文字の行をカメラ側に向けてください。</p>
     </section>
     <section>
       <h2>表示</h2>
@@ -176,11 +176,26 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { if (held[e.key]) send({ cmd: 'charge', slot: held[e.key], on: false }); });
 
-let thumbUrl = null;
-bus.onmessage = ({ data: m }) => {
-  if (m.type === 'thumb') { if (thumbUrl) URL.revokeObjectURL(thumbUrl); thumbUrl = URL.createObjectURL(m.blob); $('#thumb').src = thumbUrl; return; }
-  if (m.type === 'state') { st = m; lastState = performance.now(); render(); }
+// Several display pages may be open (an old window left behind): follow the one on screen, newest first, and warn.
+let thumbUrl = null, lastHtml = {};
+const displays = new Map(); // id -> { s, at }
+const pick = () => {
+  const t = performance.now();
+  for (const [id, d] of displays) if (t - d.at > 2500) displays.delete(id);
+  return [...displays.values()].sort((a, b) => (b.s.visible - a.s.visible) || (b.s.born ?? 0) - (a.s.born ?? 0))[0]?.s;
 };
+bus.onmessage = ({ data: m }) => {
+  const id = m.id ?? 'old';
+  if (m.type === 'thumb') {
+    if (pick()?.id !== m.id) return;
+    if (thumbUrl) URL.revokeObjectURL(thumbUrl); thumbUrl = URL.createObjectURL(m.blob); $('#thumb').src = thumbUrl; return;
+  }
+  if (m.type !== 'state') return;
+  displays.set(id, { s: m, at: performance.now() });
+  const s = pick();
+  if (s === m) { st = m; lastState = performance.now(); render(); }
+};
+const setHtml = (sel, html) => { if (lastHtml[sel] !== html) { lastHtml[sel] = html; $(sel).innerHTML = html; } }; // only touch the DOM on a change
 
 const fmt = s => `${Math.floor(Math.ceil(s) / 60)}:${String(Math.ceil(s) % 60).padStart(2, '0')}`;
 const dot = c => `<span class="dot ${c}"></span>`;
@@ -200,40 +215,41 @@ function render() {
     const p = s.players[k], el = $('.pl.' + k);
     el.querySelector('.bar i').style.width = p.hp + '%';
     const L = p.loc;
-    el.querySelector('.facts').innerHTML = [
+    setHtml(`.pl.${k} .facts`, [
       `HP ${p.hp}${p.charging ? `　溜め ${Math.round(p.charge * 100)}%` : ''}`,
       `${dot(p.online ? 'ok' : '')}スマホ ${p.online ? '接続' : '未接続'}${p.fake ? '（ダミーデータ）' : ''}`,
       `${dot(p.imu ? 'ok' : '')}IMU ${p.imu ? '受信中' : 'なし'}`,
-      `${dot(L.anchored ? (L.err < .1 ? 'ok' : 'warn') : '')}位置 ${L.anchored ? `タグで固定 ${L.fixes}回・ずれ ${(L.err * 100).toFixed(0)}cm` : '未固定（開始位置を仮に使用）'}`,
-    ].map(x => `<div>${x}</div>`).join('');
+      `${dot(L.anchored ? (L.err < .1 ? 'ok' : 'warn') : '')}位置 ${L.anchored ? `タグで固定・ずれ ${(L.err * 100).toFixed(0)}cm` : '未固定（開始位置を仮に使用）'}`,
+    ].map(x => `<div>${x}</div>`).join(''));
   }
   const dev = $('#device'), want = s.devices.map(d => d.id).join();
   if (dev.dataset.list !== want) { dev.innerHTML = s.devices.map(d => `<option value="${d.id}">${d.label}</option>`).join(''); dev.dataset.list = want; }
   if (document.activeElement !== dev) dev.value = s.video.id ?? '';
   if (document.activeElement !== $('#camMode')) $('#camMode').value = s.camMode;
   const tc = s.tagCam;
-  $('#camInfo').innerHTML = [
+  setHtml('#camInfo', [
     `映像 ${s.video.w ? `${s.video.w}×${s.video.h}　${s.video.label}` : '<b style="color:var(--bad)">届いていない</b>'}`,
     tc ? `前回の合わせ: タグ ${tc.ids.join(', ')}　誤差 ${tc.err.toFixed(1)}px　縦画角 ${tc.fov.toFixed(1)}°　位置 (${tc.t.map(v => v.toFixed(2)).join(', ')}) m` : 'まだ合わせていない',
     s.camMsg,
-  ].filter(Boolean).map(x => `<div>${x}</div>`).join('');
+  ].filter(Boolean).map(x => `<div>${x}</div>`).join(''));
   const SIDE = { left: '左', right: '右' };
-  $('#tagCheck').innerHTML = s.phase !== 'setup' ? '' : '<div>タグの見え方（準備中だけ確認）</div>' + s.setupTags.map(c => `<div>${dot(!c.seen ? '' : c.side !== c.want || c.px < 14 ? 'warn' : 'ok')}ID ${c.id}（${SIDE[c.want]}端に置く）：${!c.seen ? '見えていない' : c.side !== c.want ? `画面の${SIDE[c.side]}に見えている。左右が逆かも` : c.px < 14 ? `小さい（${c.px.toFixed(0)}px）` : `OK（${c.px.toFixed(0)}px）`}</div>`).join('') + `<div>検出 ${s.tagCheckMs}ms</div>`;
+  setHtml('#tagCheck', s.phase !== 'setup' ? '' : '<div>タグの見え方（準備中だけ確認）</div>' + s.setupTags.map(c => `<div>${dot(!c.seen ? '' : c.side !== c.want || c.px < 14 ? 'warn' : 'ok')}ID ${c.id}（${SIDE[c.want]}側）：${!c.seen ? '見えていない' : c.side !== c.want ? `画面の${SIDE[c.side]}に見えている。左右が逆かも` : c.px < 14 ? '小さい' : 'OK'}</div>`).join(''));
   $$('[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === s.view));
   $$('[data-drone]').forEach(b => b.classList.toggle('on', b.dataset.drone === s.drone));
   $$('[data-fpv]').forEach(b => b.classList.toggle('on', (b.dataset.fpv || null) === s.fpv));
   $$('[data-toggle]').forEach(b => b.classList.toggle('on', !!s.toggles[b.dataset.toggle]));
   if (!dragging) { swing.value = s.swingDps; $('#swingOut').textContent = s.swingDps; }
   if (document.activeElement !== $('#aim')) $('#aim').value = s.aim;
-  $('#sys').innerHTML = [
+  setHtml('#sys', [
     `中継サーバー ${s.host}: ${s.link}`,
-    `タグ配置 ${s.layout}　描画 ${s.fps} fps　ドローン ${DRONE[s.drone] ?? s.drone}（${s.shot}）`,
+    `タグ配置 ${s.layout}　ドローン ${DRONE[s.drone] ?? s.drone}（${s.shot}）`,
     s.fpv ? `スマホ視点の推定画角 ${s.fovPhone[s.fpv]?.toFixed(1) ?? '推定待ち'}°` : '',
-  ].filter(Boolean).map(x => `<div>${x}</div>`).join('');
+  ].filter(Boolean).map(x => `<div>${x}</div>`).join(''));
 }
 setInterval(() => {
-  const ok = performance.now() - lastState < 1500;
-  $('#link').innerHTML = `映像画面: <b style="color:var(${ok ? '--ok' : '--bad'})">${ok ? '接続中' : '未接続（「映像画面を開く」を押す）'}</b>`;
+  const ok = performance.now() - lastState < 1500; pick();
+  setHtml('#link', `映像画面: <b style="color:var(${ok ? '--ok' : '--bad'})">${ok ? '接続中' : '未接続（「映像画面を開く」を押す）'}</b>` +
+    (displays.size > 1 ? `　<b style="color:var(--warn)">映像画面が ${displays.size} 個開いています。古いほうを閉じて1つにしてください（操作は全部に届きます）</b>` : ''));
 }, 500);
 </script>
 </body>

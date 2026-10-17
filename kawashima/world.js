@@ -61,6 +61,13 @@ export const LAYOUT = LAYOUTS[pick] ? pick : 'floor';
 export const TAGS = LAYOUTS[LAYOUT];
 export const CORNER_IDS = Object.keys(TAGS).map(Number).filter(id => TAGS[id].pos); // every fixed tag (name kept for the modules that use it)
 export const PLAYER_TAG = { A: 10, B: 11 };
+// floor layout: the scan measures how far apart the two sheets really are (app.js) and keeps it, so the
+// sheets only need to lie level and face the same way, not sit exactly 3 m apart
+export const FLOOR_IDS = CORNER_IDS.filter(id => TAGS[id].floor);
+export function setFloorSep(sep) { for (const id of FLOOR_IDS) TAGS[id].pos[0] = Math.sign(TAGS[id].pos[0]) * sep / 2; }
+if (typeof location !== 'undefined' && FLOOR_IDS.length) {
+  try { const v = +localStorage.getItem('fx-tagsep'); if (v > .2 && v < 8) setFloorSep(v); } catch {}
+}
 export const tagScale = id => (TAGS[id]?.size ?? PHONE_TAG_SIZE) / PHONE_TAG_SIZE;
 
 // ---- small pose maths ----

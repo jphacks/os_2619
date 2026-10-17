@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import * as W from './world.js';
 import { createLocalizer } from './localize.js';
 import { createFx } from './effects.js';
-import { calibrateCamera, toThreeCamera, detectTags } from './extrinsics.js';
+import { calibrateCamera, toThreeCamera, detectTags, solveCamera } from './extrinsics.js';
 import { createDrone } from './drone.js';
 import { createField, createMinimap } from './field3d.js';
 
@@ -20,8 +20,8 @@ const now = () => performance.now() / 1000;
 const GUIDE_CAM = { x: 0, y: 1.7, z: 3.5, yaw: 0, pitch: -16, roll: 0, fov: 45 };
 const SIDE = { left: '左', right: '右' };
 function tagPlace(id) { // where a fixed tag goes, in words
-  const [x, y, z] = W.TAGS[id].pos, lr = `中心から${x < 0 ? '左' : '右'}へ${Math.abs(x)}m`;
-  return W.TAGS[id].floor ? `${lr}${z ? `・${z > 0 ? '手前' : '奥'}へ${Math.abs(z)}m` : ''}の床`
+  const [x, y, z] = W.TAGS[id].pos, m = v => `${+Math.abs(v).toFixed(2)}m`, lr = `中心から${x < 0 ? '左' : '右'}へ${m(x)}`;
+  return W.TAGS[id].floor ? `${lr}${z ? `・${z > 0 ? '手前' : '奥'}へ${m(z)}` : ''}の床`
     : `${x < 0 ? '左' : '右'}端（${lr}）・中心の高さ ${y}m`;
 }
 const DEFAULTS = {
@@ -56,7 +56,7 @@ camera.rotation.order = 'YXZ';
 const overCam = new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 100);
 overCam.position.set(0, 5.5, 6.5);
 const drone = createDrone(overCam, canvas, { mode: cfg.drone });
-const field = createField(scene); // arena + avatars, only shown in the 3D views
+let field = createField(scene); // arena + avatars, only shown in the 3D views
 field.group.visible = false;
 const minimapCanvas = Object.assign(document.createElement('canvas'), { id: 'minimap' });
 stage.append(minimapCanvas);
@@ -95,16 +95,21 @@ fx.opts.onShake = a => { shake = Math.max(shake, a); };
 const world3d = new THREE.Group(); scene.add(world3d);
 const toMat = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
 world3d.add(new THREE.GridHelper(W.ARENA.half * 2, 8, 0x888888, 0x444444));
-for (const id of W.CORNER_IDS) {
-  const p = W.worldTagPose(id), size = W.TAGS[id].size;
-  const tag = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
-  tag.matrixAutoUpdate = false; tag.matrix.copy(toMat(p));
-  world3d.add(tag);
-  if (W.TAGS[id].floor) continue;
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(.02, .02, p.t[1]), new THREE.MeshBasicMaterial({ color: 0x777777 }));
-  pole.position.set(p.t[0], p.t[1] / 2, p.t[2]);
-  world3d.add(pole);
+const tags3d = new THREE.Group(); world3d.add(tags3d);
+function buildTags3d() { // again whenever a scan measures where the floor tags really are
+  tags3d.clear();
+  for (const id of W.CORNER_IDS) {
+    const p = W.worldTagPose(id), size = W.TAGS[id].size;
+    const tag = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+    tag.matrixAutoUpdate = false; tag.matrix.copy(toMat(p));
+    tags3d.add(tag);
+    if (W.TAGS[id].floor) continue;
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(.02, .02, p.t[1]), new THREE.MeshBasicMaterial({ color: 0x777777 }));
+    pole.position.set(p.t[0], p.t[1] / 2, p.t[2]);
+    tags3d.add(pole);
+  }
 }
+buildTags3d();
 const camHelper = new THREE.CameraHelper(camera); world3d.add(camHelper);
 
 // ---- players ----
@@ -273,14 +278,42 @@ async function startDummy() {
 }
 video.onloadedmetadata = () => { video.play(); videoAspect = video.videoWidth / video.videoHeight; resize(); };
 
+// Floor sheets: their spacing is measured, not assumed. Each sheet alone gives a camera pose; for a trial focal length the
+// two poses say how far apart the sheets are. Keep the focal length where the two-sheet fit is best (flat, same way up),
+// then refine the focal with both sheets.
+function fitFloor(tags, width, height) {
+  if (W.FLOOR_IDS.length !== 2 || !W.FLOOR_IDS.every(id => tags.some(t => t.id === id))) return null;
+  const keep = W.TAGS[W.FLOOR_IDS[0]].pos[0] * 2 * Math.sign(W.TAGS[W.FLOOR_IDS[0]].pos[0]);
+  let best = null;
+  for (let fov = 12; fov <= 90; fov += 1) {
+    const c = W.FLOOR_IDS.map(id => { const r = solveCamera(tags.filter(t => t.id === id), width, height, { fovYGuess: fov, fitFocal: false }); return r && W.compose(W.invert(r.pose), W.worldTagPose(id)); });
+    if (!c[0] || !c[1]) continue;
+    const gap = Math.hypot(...c[0].t.map((v, i) => v - c[1].t[i]));
+    W.setFloorSep(gap);
+    const r = solveCamera(tags, width, height, { fovYGuess: fov, fitFocal: false });
+    if (r && (!best || r.reprojErrPx < best.err)) best = { fov, gap, err: r.reprojErrPx };
+  }
+  if (!best || best.gap < .3 || best.gap > 8) { W.setFloorSep(keep); return null; }
+  W.setFloorSep(best.gap);
+  const r = solveCamera(tags, width, height, { fovYGuess: best.fov, fitFocal: true });
+  return r && { ...r, floorSep: best.gap };
+}
+function relayout() { // tag positions changed: redraw everything built from them
+  buildTags3d(); buildGuide();
+  scene.remove(field.group); field = createField(scene); field.group.visible = false;
+}
+
 async function calibrate() {
   status.extra = 'タグでカメラ合わせ中…';
-  const r = await calibrateCamera(dummy?.canvas ?? video, { fovYGuess: cfg.cam.fov });
+  let r = await calibrateCamera(dummy?.canvas ?? video, { fovYGuess: cfg.cam.fov });
   if (!r) { status.extra = 'スキャン失敗：固定タグが見つからない'; return; }
+  const fl = fitFloor(r.tags, r.width, r.height);
+  if (fl) { r = { ...fl, tags: r.tags }; try { localStorage.setItem('fx-tagsep', fl.floorSep.toFixed(3)); } catch {} relayout(); }
   cfg.tagCam = r; cfg.camMode = 'tags'; save(); applyCam();
   const missing = W.CORNER_IDS.filter(id => !r.ids.includes(id)), good = !missing.length && r.reprojErrPx < 4;
   if (good) match.ready = true;
-  status.extra = good ? `スキャン完了：タグ ${r.ids.join(',')}  誤差 ${r.reprojErrPx.toFixed(1)}px  縦画角 ${r.fovY.toFixed(1)}°。試合を始められる`
+  const gap = r.floorSep ? `  タグの間隔 ${r.floorSep.toFixed(2)}m（実測）` : '';
+  status.extra = good ? `スキャン完了：タグ ${r.ids.join(',')}  誤差 ${r.reprojErrPx.toFixed(1)}px  縦画角 ${r.fovY.toFixed(1)}°${gap}。試合を始められる`
     : `スキャン不十分：${missing.length ? `ID ${missing.join(',')} が見えていない` : `誤差 ${r.reprojErrPx.toFixed(1)}px が大きい`}。置き方を直してもう一度`;
 }
 
@@ -361,7 +394,8 @@ function strip(a, b, color, w = .05) { // flat band on the floor from a to b
   m.rotation.set(-Math.PI / 2, 0, -Math.atan2(d.z, d.x)); m.position.copy(a).add(b).multiplyScalar(.5).setY(.005); m.renderOrder = 10;
   return m;
 }
-{
+function buildGuide() {
+  guide.clear();
   const H = W.ARENA.half, c = [V(-H, 0, -H), V(H, 0, -H), V(H, 0, H), V(-H, 0, H)];
   c.forEach((p, i) => guide.add(strip(p, c[(i + 1) % 4], 0xffffff)));
   guide.add(strip(V(-.3, 0, 0), V(.3, 0, 0), 0xffffff, .03), strip(V(0, 0, -.3), V(0, 0, .3), 0xffffff, .03));
@@ -395,6 +429,7 @@ function strip(a, b, color, w = .05) { // flat band on the floor from a to b
     guide.add(pole, foot, lb);
   }
 }
+buildGuide();
 // live check of the tags while setting up: which ids the iPhone sees, and on which side of the picture
 const seenTags = { list: [], at: 0, busy: false, ms: 0 };
 async function checkTags() {
@@ -502,7 +537,7 @@ function command(c) {
     case 'camera': return startVideo(c.value);
     case 'camMode': cfg.camMode = c.value; break;
     case 'forceReady': match.ready = true; status.extra = 'スキャンを省いて開始可能にした（前回の合わせ結果を使う）'; return;
-    case 'guideCam': cfg.cam = { ...GUIDE_CAM }; cfg.camMode = 'manual'; break; // show the guide from the recommended iPhone spot
+    case 'guideCam': cfg.cam = { ...GUIDE_CAM, fov: cfg.tagCam?.fovY ?? GUIDE_CAM.fov }; cfg.camMode = 'manual'; break; // show the guide from the recommended iPhone spot
     case 'view': cfg.view = VIEWS.includes(c.value) ? c.value : VIEWS[(VIEWS.indexOf(cfg.view) + 1) % 3]; break;
     case 'drone': if (c.value) drone.setMode(c.value); else drone.next(); cfg.drone = drone.mode; break;
     case 'toggle': if (TOGGLES.includes(c.key)) cfg[c.key] = !cfg[c.key]; break;
@@ -531,13 +566,14 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => { if (held[e.key]) command({ cmd: 'charge', slot: held[e.key], on: false }); });
 
 const bus = new BroadcastChannel('bou-battle');
+const DISPLAY_ID = Math.random().toString(36).slice(2, 8); // admin.html follows one display when several are open
 bus.onmessage = e => command(e.data);
 let devices = [];
 navigator.mediaDevices.addEventListener?.('devicechange', fillDevices);
 function publish() { // state for admin.html, a few times a second
   const L = s => { const l = loc.get(s); return { anchored: l.anchored, fixes: l.fixes, err: l.err }; };
   const tc = cfg.tagCam;
-  bus.postMessage({ type: 'state', phase: match.phase, ready: match.ready, paused: match.paused, left: match.left, sec: match.sec, until: Math.max(0, match.until - now()),
+  bus.postMessage({ type: 'state', id: DISPLAY_ID, visible: !document.hidden, born: performance.timeOrigin, phase: match.phase, ready: match.ready, paused: match.paused, left: match.left, sec: match.sec, until: Math.max(0, match.until - now()),
     winner: winner?.slot ?? null,
     players: Object.fromEntries(Object.values(players).map(p => [p.slot, { hp: p.hp, online: p.online, imu: !!p.imu, fake: !!p.truth, charge: p.charge, charging: p.charging, loc: L(p.slot) }])),
     link: linkState, host, camMode: cfg.camMode, tagCam: tc && { ids: tc.ids, err: tc.reprojErrPx, fov: tc.fovY, t: tc.pose.t }, camMsg: status.extra,
@@ -554,7 +590,7 @@ function sendThumb() {
   thumbAt = now(); thumbBusy = true;
   thumb.height = Math.round(480 / aspect);
   thumbCtx.drawImage(canvas, 0, 0, thumb.width, thumb.height);
-  thumb.toBlob(b => { thumbBusy = false; if (b) bus.postMessage({ type: 'thumb', blob: b }); }, 'image/jpeg', .7);
+  thumb.toBlob(b => { thumbBusy = false; if (b) bus.postMessage({ type: 'thumb', id: DISPLAY_ID, blob: b }); }, 'image/jpeg', .7);
 }
 
 // ---- main loop ----
