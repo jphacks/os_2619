@@ -9,7 +9,7 @@ import { tagCanvas } from './dummycam.js';
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
 const m4 = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
-export const TEAM = { A: 0xff7a1a, B: 0x3fc4ff };
+export const TEAM = { A: 0xff3b3b, B: 0x2fd46a };
 const css = c => '#' + c.toString(16).padStart(6, '0');
 const UP = V(0, 1, 0);
 
@@ -92,22 +92,20 @@ float sdPoly(vec2 p) { // signed distance to the outline, < 0 inside (any simple
 }
 void main() {
   vec2 p = vP; float r = length(p), d = sdPoly(p), inside = step(d, 0.);
-  vec3 team = mix(uCA, uCB, smoothstep(uX.x * .9, uX.y * .9, p.x));
+  vec3 team = p.x < 0. ? uCA : uCB;
   vec3 c = mix(vec3(.028, .034, .052), vec3(.05, .06, .09), inside);
   c += inside * vec3(.035, .04, .06) * exp(-r * r / 5.);                                           // soft centre spot
   c += mix(vec3(.04, .05, .08), vec3(.10, .12, .17), inside) * gridAt(p, .5) * (inside > .5 ? 1. : exp(-d * .8));
   c += inside * vec3(.07, .08, .11) * gridAt(p, 1.);
-  // boundary: bright core + glow, a light pulse running round it
-  float ang = atan(p.y, p.x), pulse = .75 + .25 * sin(uTime * 2.2 - ang * 4.);
-  c += team * (1. - smoothstep(.012, .03, abs(d))) * 1.6 * pulse;
-  c += team * exp(-abs(d) * (d < 0. ? 9. : 16.)) * .32 * pulse;
+  // boundary: one thin flat line
+  c += team * aline(abs(d) / fwidth(d), 1.);
   // centre line (dashed, x = 0 runs across the field between the A and B halves) and circle
   float dash = step(.45, fract(p.y * 2.5 + uTime * .3));
-  c += inside * vec3(.55, .6, .7) * aline(abs(p.x) / fwidth(p.x), 1.) * dash * .6;
-  c += inside * vec3(.35, .4, .5) * ring(p, vec2(0.), .6, .015) * .6;
+  c += inside * vec3(.55, .6, .7) * aline(abs(p.x) / fwidth(p.x), .7) * dash * .5;
+  c += inside * vec3(.35, .4, .5) * ring(p, vec2(0.), .6, .008) * .5;
   // start rings
-  c += uCA * (ring(p, uSA, .32, .03) * .9 + exp(-abs(length(p - uSA) - .32) * 30.) * .2);
-  c += uCB * (ring(p, uSB, .32, .03) * .9 + exp(-abs(length(p - uSB) - .32) * 30.) * .2);
+  c += uCA * ring(p, uSA, .32, .01) * .8;
+  c += uCB * ring(p, uSB, .32, .01) * .8;
   // players: contact shadow, team ring with HP arc (from -z, clockwise seen from above)
   for (int i = 0; i < 2; i++) {
     vec4 P = uP[i]; if (P.w <= 0.) continue;
@@ -116,8 +114,7 @@ void main() {
     c *= 1. - .7 * exp(-dq * dq / .045) * P.w;
     float a = fract(atan(q.x, -q.y) / 6.2831853 + .5);
     float on = step(a, P.z);
-    c += tc * ring(p, P.xy, .46, .05) * mix(.12, 1.3, on) * P.w;
-    c += tc * exp(-abs(dq - .46) * 22.) * .25 * on * P.w;
+    c += tc * ring(p, P.xy, .46, .015) * mix(.15, 1., on) * P.w;
   }
   float alpha = 1. - smoothstep(uR + 1.4, uR + 5.7, r);
   gl_FragColor = vec4(c, alpha);
@@ -130,9 +127,8 @@ void main() { vUv = uv; vec4 w = modelMatrix * vec4(position, 1.); vX = w.x; gl_
 const WALL_FS = `
 uniform float uTime; uniform vec2 uX; uniform vec3 uCA, uCB; varying vec2 vUv; varying float vX;
 void main() {
-  vec3 team = mix(uCA, uCB, smoothstep(uX.x * .9, uX.y * .9, vX));
-  float f = pow(1. - vUv.y, 2.2), scan = .65 + .35 * step(.5, fract(vUv.y * 7. - uTime * .5));
-  gl_FragColor = vec4(team * f * scan * .55, 1.);
+  vec3 team = vX < 0. ? uCA : uCB;
+  gl_FragColor = vec4(team * (.06 + .7 * step(.97, vUv.y)), 1.);
 }`;
 
 function makeFloor(uniforms) { // unit quad, scaled to the field on rebuild
@@ -155,7 +151,7 @@ function wallGeometry(poly, h = .32) {
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); g.setIndex(idx);
   return g;
 }
-const POST = new THREE.CylinderGeometry(.035, .035, .6, 6); // shared by every rebuild, never disposed
+const POST = new THREE.CylinderGeometry(.012, .012, .6, 6); // shared by every rebuild, never disposed
 const POST_MAT = { A: new THREE.MeshBasicMaterial({ color: new THREE.Color(TEAM.A).multiplyScalar(1.1) }), B: new THREE.MeshBasicMaterial({ color: new THREE.Color(TEAM.B).multiplyScalar(1.1) }) };
 function makePosts(g) { // one at every outline vertex, unless a tag pole stands there; a floor sheet there pushes it just outside
   for (const [x, z] of W.FIELD.poly) {
@@ -237,6 +233,48 @@ const CYL = new THREE.CylinderGeometry(1, 1, 1, 6); // scaled per limb
 const JOINT = new THREE.IcosahedronGeometry(1, 0);
 const UPPER = .3, FORE = .3, SHOULDER = [-.1, .07, .21], HIP = [-.1, -.5, .1];
 
+// The body that is drawn: a wireframe human (three.js's Xbot, a Mixamo rig), loaded once and cloned per avatar. Its bones aim
+// at the points the avatar code below computes (those primitive meshes stay hidden and only serve as the rig).
+const FIG = Promise.all([import('three/addons/loaders/GLTFLoader.js'), import('three/addons/utils/SkeletonUtils.js')])
+  .then(([{ GLTFLoader }, SU]) => new GLTFLoader().loadAsync(new URL('./assets/models/Xbot.glb', import.meta.url).href)
+    .then(g => (mat, root) => makeFig(SU.clone(g.scene), mat, root)))
+  .catch(e => { if (typeof window.fetch === 'function' && document.body) console.warn('avatar model:', e); return null; });
+const AIM = ['RightArm', 'RightForeArm', 'LeftArm', 'LeftForeArm', 'RightUpLeg', 'RightLeg', 'RightFoot', 'LeftUpLeg', 'LeftLeg', 'LeftFoot'];
+function makeFig(obj, mat, root) {
+  const b = {};
+  obj.traverse(o => { if (o.isBone) b[o.name.replace(/^mixamorig:?/, '')] = o; if (o.isMesh) { o.material = mat; o.frustumCulled = false; } });
+  obj.updateMatrixWorld(true);
+  const wp = n => b[n].getWorldPosition(V()), hipM = wp('LeftUpLeg').add(wp('RightUpLeg')).multiplyScalar(.5);
+  const leg = wp('LeftUpLeg').distanceTo(wp('LeftLeg')) + wp('LeftLeg').distanceTo(wp('LeftFoot'));
+  const headBind = b.Head.getWorldQuaternion(new THREE.Quaternion()); // the head's turn in the model's own frame
+  const bind = Object.fromEntries(AIM.map(n => [n, b[n].quaternion.clone()]));
+  obj.quaternion.setFromAxisAngle(UP, Math.PI / 2); // model: +z forward, +x its left -> body frame: +x forward, +z right
+  root.add(obj);
+  const pq = new THREE.Quaternion(), wq = new THREE.Quaternion(), dq = new THREE.Quaternion(), cur = V(), tgt = V();
+  function aim(n, from, to) { // turn bone n from its bind pose so its child lies along from -> to (root-frame points)
+    const bone = b[n]; bone.quaternion.copy(bind[n]);
+    if (to.distanceToSquared(from) < 1e-8) return;
+    bone.parent.getWorldQuaternion(pq); wq.multiplyQuaternions(pq, bone.quaternion);
+    cur.copy(bone.children[0].position).normalize().applyQuaternion(wq);
+    tgt.subVectors(to, from).transformDirection(root.matrixWorld);
+    dq.setFromUnitVectors(cur, tgt);
+    bone.quaternion.copy(pq.invert().multiply(dq.multiply(wq)));
+    bone.updateMatrixWorld(true);
+  }
+  return function pose(r) { // r: root-frame points of the rig, headQ the head's turn in the body frame
+    // legs as long as the rig's (so the feet stand on the floor), hips on the rig's hips
+    const sc = r.legs.reduce((a, l) => a + l.hip.distanceTo(l.knee) + l.knee.distanceTo(l.foot), 0) / 2 / leg;
+    obj.scale.setScalar(sc); obj.position.set(HIP[0], HIP[1], 0).sub(tgt.copy(hipM).multiplyScalar(sc).applyQuaternion(obj.quaternion));
+    root.updateWorldMatrix(true, true);
+    aim('RightArm', r.sR, r.eR); aim('RightForeArm', r.eR, r.hR); aim('LeftArm', r.sL, r.eL); aim('LeftForeArm', r.eL, r.hL);
+    for (const [side, l] of [['Right', r.legs[1]], ['Left', r.legs[0]]]) {
+      aim(side + 'UpLeg', l.hip, l.knee); aim(side + 'Leg', l.knee, l.foot); aim(side + 'Foot', l.foot, l.toe);
+    }
+    b.Head.parent.getWorldQuaternion(pq); root.getWorldQuaternion(wq);
+    b.Head.quaternion.copy(pq.invert().multiply(wq.multiply(r.headQ).multiply(obj.quaternion).multiply(headBind)));
+  };
+}
+
 function makeAvatar(slot) {
   const color = TEAM[slot], root = new THREE.Group(), world = new THREE.Group();
   root.matrixAutoUpdate = false;
@@ -263,10 +301,15 @@ function makeAvatar(slot) {
   const offU = limb(.045, suit), offF = limb(.04, suit), offE = joint(.045, suit), offH = joint(.05, dark);
   const legs = [-1, 1].map(s => ({ s, thigh: limb(.07, dark), shin: limb(.06, dark), knee: joint(.065, dark), boot: mesh(new THREE.BoxGeometry(.22, .08, .11), suit) }));
   // stick (world space)
-  const stickMat = new THREE.MeshStandardMaterial({ color: 0x3a2c22, roughness: .6, emissive: color, emissiveIntensity: .5 });
+  const metal = slot === 'A' ? 0xc8ccd2 : 0xd4af37; // A silver, B gold
+  const stickMat = new THREE.MeshStandardMaterial({ color: metal, metalness: .85, roughness: .28, emissive: metal, emissiveIntensity: .25 });
   const stick = mesh(new THREE.CylinderGeometry(1, 1, 1, 6), stickMat, world); stick.userData.r = .02;
-  const tipMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(1.5) });
+  const tipMat = new THREE.MeshBasicMaterial({ color: metal });
   const tip = joint(.04, tipMat, world);
+  root.traverse(o => { if (o.isMesh) o.visible = false; }); // the rig: only the wireframe figure is drawn
+  const wire = new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: .55, depthWrite: false });
+  let fig = null;
+  FIG.then(f => { if (f) fig = f(wire, root); });
   // floating HP bar
   const hpCanvas = Object.assign(document.createElement('canvas'), { width: 320, height: 88 }), hpCtx = hpCanvas.getContext('2d');
   const hpTex = new THREE.CanvasTexture(hpCanvas); hpTex.colorSpace = THREE.SRGBColorSpace;
@@ -274,22 +317,19 @@ function makeAvatar(slot) {
   hpSprite.scale.set(1, 88 / 320, 1); hpSprite.center.set(.5, -.15); world.add(hpSprite); // anchored below: stays above the head on screen from any angle
   const facing = V(1, 0, 0); limitSprite(hpSprite, { facing });
   let hpKey = '';
-  function drawHp(hp, online, charge) {
+  function drawHp(hp, online, charge) { // a thin flat bar, the slot and HP in small type above it
     const key = `${Math.ceil(hp)}|${online}|${Math.round(charge * 10)}`; if (key === hpKey) return; hpKey = key;
-    const g = hpCtx, w = 320, h = 88, c = online ? css(color) : '#7a7f8a';
+    const g = hpCtx, w = 320, h = 88, c = online ? css(color) : '#7a7f8a', bx = 20, bw = w - 40, by = 52, bh = 10;
     g.clearRect(0, 0, w, h);
-    g.fillStyle = 'rgba(6,8,14,.78)'; g.beginPath(); g.roundRect(2, 6, w - 4, h - 12, 20); g.fill();
-    g.lineWidth = 3; g.strokeStyle = c; g.stroke();
-    g.font = '900 52px system-ui, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillStyle = c; g.fillText(slot, 40, h / 2 + 2);
-    const bx = 76, bw = w - bx - 20, bh = 30, by = h / 2 - bh / 2;
-    g.fillStyle = 'rgba(255,255,255,.14)'; g.beginPath(); g.roundRect(bx, by, bw, bh, 10); g.fill();
+    g.font = '600 26px system-ui, sans-serif'; g.textBaseline = 'alphabetic'; g.shadowColor = '#000'; g.shadowBlur = 6;
+    g.textAlign = 'left'; g.fillStyle = c; g.fillText(slot, bx, by - 10);
+    g.textAlign = 'right'; g.fillStyle = '#d8dbe2'; g.fillText(!online ? 'OFFLINE' : hp <= 0 ? 'KO' : String(Math.ceil(hp)), bx + bw, by - 10);
+    g.shadowBlur = 0;
+    g.fillStyle = 'rgba(255,255,255,.18)'; g.fillRect(bx, by, bw, bh);
     if (online) {
-      const f = Math.max(0, Math.min(1, hp / 100)), gr = g.createLinearGradient(bx, 0, bx + bw, 0);
-      gr.addColorStop(0, c); gr.addColorStop(1, f < .3 ? '#ff3b3b' : '#ffffff');
-      g.fillStyle = hp < 30 ? '#ff4040' : c; g.beginPath(); g.roundRect(bx, by, Math.max(bh * .6, bw * f), bh, 10); g.fill();
-      if (charge > 0) { g.fillStyle = 'rgba(255,255,255,.85)'; g.fillRect(bx, by + bh + 3, bw * charge, 4); }
-      g.font = '800 24px system-ui, sans-serif'; g.fillStyle = '#fff'; g.fillText(hp <= 0 ? 'KO' : String(Math.ceil(hp)), bx + bw / 2, h / 2 + 1);
-    } else { g.font = '700 24px system-ui, sans-serif'; g.fillStyle = '#c8ccd6'; g.fillText('OFFLINE', bx + bw / 2, h / 2 + 1); }
+      g.fillStyle = c; g.fillRect(bx, by, bw * Math.max(0, Math.min(1, hp / 100)), bh);
+      if (charge > 0) { g.fillStyle = 'rgba(255,255,255,.85)'; g.fillRect(bx, by + bh + 4, bw * charge, 3); }
+    }
     hpTex.needsUpdate = true;
   }
 
@@ -304,7 +344,7 @@ function makeAvatar(slot) {
       const d = V().subVectors(tipP, base).normalize();
       between(stick, base.clone().addScaledVector(d, -.08), tipP); stick.scale.x = stick.scale.z = stick.userData.r;
       tip.position.copy(tipP);
-      stickMat.emissiveIntensity = p.charging ? .8 + 1.2 * (p.charge ?? 0) * (.7 + .3 * Math.sin(st.time * 30)) : .5;
+      stickMat.emissiveIntensity = p.charging ? .5 + 1.2 * (p.charge ?? 0) * (.7 + .3 * Math.sin(st.time * 30)) : .25;
       tip.scale.setScalar(.04 * (1 + (p.charging ? (p.charge ?? 0) : 0)));
     }
     stick.visible = tip.visible = !!(base && tipP);
@@ -313,6 +353,7 @@ function makeAvatar(slot) {
       wasOnline = online;
       suit.color.copy(online ? onColor : offColor); suit.emissive.copy(online ? onColor : offColor); suit.emissiveIntensity = online ? .12 : 0;
       glow.color.copy(online ? onColor : offColor).multiplyScalar(1.4);
+      wire.color.copy(online ? onColor : offColor);
     }
     drawHp(p.hp ?? 100, online, p.charging ? (p.charge ?? 0) : 0);
   }
@@ -344,12 +385,14 @@ function makeAvatar(slot) {
       const knee = anchor(hip, h0, r ? 26 : 25), foot = anchor(hip, h0, r ? 28 : 27);
       setLimb(lg.thigh, hip, knee); setLimb(lg.shin, knee, foot); lg.knee.position.copy(knee);
       const toe = anchor(hip, h0, r ? 32 : 31), heel = anchor(hip, h0, r ? 30 : 29), dir = toe.clone().sub(heel);
+      lg.p = { hip, knee, foot, toe };
       lg.boot.position.copy(toe).add(heel).multiplyScalar(.5).add(V(0, -.02, 0));
       if (dir.lengthSq() > 4e-4) lg.boot.quaternion.setFromUnitVectors(X, dir.normalize()); else lg.boot.quaternion.identity();
     }
     // head: the nose against the ears
     const hf = loc(0).sub(loc(7).add(loc(8)).multiplyScalar(.5));
     headG.rotation.set(0, Math.max(-1.3, Math.min(1.3, Math.atan2(-hf.z, hf.x))), Math.max(-.9, Math.min(.9, Math.atan2(hf.y, Math.hypot(hf.x, hf.z)))), 'YZX');
+    fig?.({ sR, eR, hR, sL, eL, hL, legs: legs.map(l => l.p), headQ: headG.quaternion });
     // the stick follows the hand that is nearest to where the sensors put its base (same length and direction as the sensors say)
     let base = null, tipP = null;
     if (p.base && p.tip) {
@@ -409,7 +452,9 @@ function makeAvatar(slot) {
         const leg = (ch + HIP[1] - .04) * .515, knee = elbowFor(hip, foot, V(1, 0, 0), leg, leg); // nearly straight when standing
         setLimb(lg.thigh, hip, knee); setLimb(lg.shin, knee, foot); lg.knee.position.copy(knee);
         lg.boot.position.copy(foot).add(V(.04, -.01, 0)); lg.boot.quaternion.identity();
+        lg.p = { hip, knee, foot, toe: foot.clone().add(V(.16, -.03, 0)) };
       }
+      fig?.({ sR: S, eR: E, hR: Hn, sL: so, eL: Eo, hL: ho, legs: legs.map(l => l.p), headQ: headG.quaternion });
       finish(p, p.base, p.tip);
       facing.set(f[0], 0, f[2]).normalize();
       hpSprite.position.set(bp.t[0], ch + .5 + .02 * Math.sin(st.time * 1.7) - st.ko * .3, bp.t[2]);
@@ -480,9 +525,7 @@ export function createField(scene, opts = {}) {
   }
 
   const background = canvasTex(4, 512, (g, w, h) => {
-    const gr = g.createLinearGradient(0, 0, 0, h);
-    gr.addColorStop(0, '#05070d'); gr.addColorStop(.45, '#0d1322'); gr.addColorStop(.62, '#121a2c'); gr.addColorStop(1, '#040508');
-    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#07090d'; g.fillRect(0, 0, w, h);
   });
 
   scene.add(group);
@@ -532,9 +575,11 @@ export function createMinimap(canvas) {
     b.setLineDash([6 * u, 6 * u]); b.strokeStyle = 'rgba(220,230,255,.35)'; b.lineWidth = 1.5 * u;
     b.beginPath(); b.moveTo(...P(0, e.minZ)); b.lineTo(...P(0, e.maxZ)); b.stroke(); b.setLineDash([]);
     b.restore();
-    const grad = b.createLinearGradient(...P(e.minX, 0), ...P(e.maxX, 0)); grad.addColorStop(0, css(TEAM.A)); grad.addColorStop(1, css(TEAM.B));
-    outline(); b.strokeStyle = grad; b.lineWidth = 3 * u; b.lineJoin = 'round'; b.stroke();
-    for (const s of ['A', 'B']) { b.strokeStyle = css(TEAM[s]); b.globalAlpha = .55; b.lineWidth = 2 * u; b.beginPath(); b.arc(...P(W.START[s].pos[0], W.START[s].pos[2]), .32 * k, 0, 7); b.stroke(); b.globalAlpha = 1; }
+    for (const s of ['A', 'B']) { // each half in its team colour
+      b.save(); b.beginPath(); b.rect(s === 'A' ? 0 : P(0, 0)[0], 0, s === 'A' ? P(0, 0)[0] : w, h); b.clip();
+      outline(); b.strokeStyle = css(TEAM[s]); b.lineWidth = 1.5 * u; b.lineJoin = 'round'; b.stroke(); b.restore();
+    }
+    for (const s of ['A', 'B']) { b.strokeStyle = css(TEAM[s]); b.globalAlpha = .55; b.lineWidth = 1 * u; b.beginPath(); b.arc(...P(W.START[s].pos[0], W.START[s].pos[2]), .32 * k, 0, 7); b.stroke(); b.globalAlpha = 1; }
     // tags: floor sheets as small turned squares with a tick on the top edge (tag +y), standing ones as a bar along
     // the tag's x axis; id outside, away from the centre
     b.font = `700 ${11 * u}px system-ui, sans-serif`; b.textAlign = 'center'; b.textBaseline = 'middle';
@@ -575,7 +620,7 @@ export function createMinimap(canvas) {
         g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 1.5 * u; g.stroke();
         const hp = Math.max(0, Math.min(1, (p.hp ?? 100) / 100));
         g.strokeStyle = 'rgba(255,255,255,.18)'; g.lineWidth = 3 * u; g.beginPath(); g.arc(x, y, r + 5 * u, 0, 7); g.stroke();
-        g.strokeStyle = hp < .3 ? '#ff4a4a' : c; g.beginPath(); g.arc(x, y, r + 5 * u, -Math.PI / 2, -Math.PI / 2 + hp * Math.PI * 2); g.stroke();
+        g.strokeStyle = c; g.beginPath(); g.arc(x, y, r + 5 * u, -Math.PI / 2, -Math.PI / 2 + hp * Math.PI * 2); g.stroke();
         g.fillStyle = '#0b0e16'; g.fillText(s, x, y + .5 * u);
       }
     },

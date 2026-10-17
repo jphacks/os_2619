@@ -69,7 +69,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     if (W.LAYOUT === 'map4' && !S.scanned) return; // sheets not scanned yet: nothing to draw where they are
     const c = W.FIELD.poly.map(([x, z]) => V(x, 0, z));
     c.forEach((p, i) => guide.add(strip(p, c[(i + 1) % c.length], 0xffffff)));
-    for (const [slot, color, css] of [['A', 0xff7a1a, '#ffb070'], ['B', 0x6cc8ff, '#a8dcff']]) {
+    for (const [slot, color, css] of [['A', 0xff3b3b, '#ff8a8a'], ['B', 0x2fd46a, '#8ae8a8']]) {
       const st = W.START[slot], ring = new THREE.Mesh(new THREE.RingGeometry(.26, .32, 48), onTop(new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, opacity: .9 })));
       ring.rotation.x = -Math.PI / 2; ring.position.set(st.pos[0], .006, st.pos[2]); ring.renderOrder = 10;
       const tip = v3(W.apply(W.bodyPose(st.pos, st.yaw, .006), [.55, 0, 0]));
