@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SensorLink Dashboard</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f4f2; --surface-1: #fcfcfb; --line: #e2e1dc; --grid: #ecebe7;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #8a8984;
+    --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+    --good: #008300; --warning: #c98500; --critical: #e34948;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #111110; --surface-1: #1a1a19; --line: #2e2e2c; --grid: #262624;
+      --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+      --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+      --good: #3aa53a; --warning: #c98500; --critical: #e66767;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #111110; --surface-1: #1a1a19; --line: #2e2e2c; --grid: #262624;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+    --good: #3aa53a; --warning: #c98500; --critical: #e66767;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text-primary); font: 13px/1.4 system-ui, sans-serif; }
+  header.top { display: flex; gap: 16px; align-items: baseline; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  header.top h1 { font-size: 16px; margin: 0; }
+  #conn { color: var(--text-secondary); }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 640px), 1fr)); gap: 12px; padding: 12px 16px; }
+  .card { background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
+  .card > header { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+  .card h2 { margin: 0; font-size: 18px; }
+  .name { color: var(--text-secondary); }
+  .badge { font-size: 12px; padding: 1px 8px; border-radius: 10px; border: 1px solid currentColor; }
+  .ok { color: var(--good); } .warn { color: var(--warning); } .bad { color: var(--critical); } .off { color: var(--text-muted); }
+  .cols { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 700px) { .cols { grid-template-columns: 1fr; } }
+  canvas { display: block; width: 100%; }
+  canvas.video { aspect-ratio: 3 / 4; background: #000; border-radius: 6px; }
+  h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-secondary); margin: 10px 0 4px; display: flex; gap: 8px; align-items: center; }
+  h3:first-child { margin-top: 0; }
+  .legend { display: flex; gap: 12px; font-size: 12px; color: var(--text-secondary); margin-bottom: 2px; font-variant-numeric: tabular-nums; }
+  .legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) 110px; gap: 8px; align-items: center; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  td, th { text-align: left; padding: 2px 6px 2px 0; font-weight: normal; }
+  th { color: var(--text-muted); font-size: 11px; }
+  .kv { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .chart { height: 90px; }
+  .square { aspect-ratio: 1; }
+</style>
+</head>
+<body>
+<header class="top"><h1>SensorLink</h1><span id="conn">connecting…</span></header>
+<main id="cards"></main>
+
+<template id="card">
+  <section class="card">
+    <header><h2></h2><span class="name">waiting for phone</span><span class="badge off state">offline</span></header>
+    <div class="cols">
+      <div>
+        <canvas class="video" width="480" height="640" aria-label="camera feed with detections"></canvas>
+        <h3>Streams</h3>
+        <table class="rates"><thead><tr><th>type</th><th>Hz</th><th>latency</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div>
+        <h3>IMU orientation (deg)</h3>
+        <div class="row">
+          <div><div class="legend euler"></div><canvas class="chart euler" aria-label="roll pitch yaw over the last 10 s"></canvas></div>
+          <canvas class="square orient" aria-label="calibrated IMU orientation axes"></canvas>
+        </div>
+        <h3>IMU gyro (deg/s)</h3>
+        <div class="legend gyro"></div><canvas class="chart gyro" aria-label="gyro rates over the last 10 s"></canvas>
+        <h3>IMU acceleration (m/s²)</h3>
+        <div class="legend acc"></div><canvas class="chart acc" aria-label="acceleration over the last 10 s"></canvas>
+        <h3>ARCore <span class="badge off ar">—</span></h3>
+        <div class="row">
+          <div class="kv arinfo">no data</div>
+          <canvas class="square traj" aria-label="top-down AR trajectory"></canvas>
+        </div>
+        <h3>AprilTags</h3>
+        <table class="tags"><thead><tr><th>id</th><th>x</th><th>y</th><th>z (m)</th><th>dist</th></tr></thead><tbody></tbody></table>
+        <h3>MediaPipe &amp; colour</h3>
+        <div class="kv vision">no data</div>
+      </div>
+    </div>
+  </section>
+</template>
+
+<script>
+const HAND = [0,1, 1,2, 2,3, 3,4, 0,5, 5,6, 6,7, 7,8, 5,9, 9,10, 10,11, 11,12, 9,13, 13,14, 14,15, 15,16, 13,17, 0,17, 17,18, 18,19, 19,20];
+const POSE = [11,12, 11,13, 13,15, 12,14, 14,16, 11,23, 12,24, 23,24, 23,25, 25,27, 24,26, 26,28, 27,29, 29,31, 27,31, 28,30, 30,32, 28,32,
+  0,1, 1,2, 2,3, 3,7, 0,4, 4,5, 5,6, 6,8, 9,10, 15,17, 15,19, 15,21, 17,19, 16,18, 16,20, 16,22, 18,20];
+const WINDOW = 10; // seconds shown in the IMU charts
+const now = () => Date.now() / 1000;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+const slots = {};
+for (const s of ['A', 'B']) {
+  const el = document.getElementById('card').content.firstElementChild.cloneNode(true);
+  el.querySelector('h2').textContent = s;
+  document.getElementById('cards').append(el);
+  const q = c => el.querySelector(c);
+  slots[s] = { el, q, last: {}, rate: {}, lat: {}, imu: [], traj: [], img: null, decoding: false, online: false };
+  for (const [k, names] of [['euler', ['roll', 'pitch', 'yaw']], ['gyro', ['x', 'y', 'z']], ['acc', ['x', 'y', 'z']]])
+    q('.legend.' + k).innerHTML = names.map((n, i) => `<span><i style="background:var(--series-${i + 1})"></i>${n} <b data-i="${i}">–</b></span>`).join('');
+}
+
+// ---- data in ----
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { ws.send(JSON.stringify({ type: 'hello', role: 'dashboard', id: 'dash' })); conn.textContent = 'server connected'; };
+  ws.onclose = () => { conn.textContent = 'server lost, retrying…'; setTimeout(connect, 1000); };
+  ws.onmessage = m => {
+    if (m.data instanceof ArrayBuffer) return video(m.data);
+    let k; try { k = JSON.parse(m.data); } catch { return; }
+    if (k.type === 'phones') return phonesChanged(k.list);
+    const s = slots[k.slot]; if (!s) return;
+    count(s, k.type, k.t);
+    k.rx = now();
+    s.last[k.type] = k;
+    if (k.type === 'imu') { s.imu.push(k); while (s.imu.length && s.imu[0].t < k.t - WINDOW) s.imu.shift(); }
+    if (k.type === 'ar' && k.tracking === 'TRACKING') { s.traj.push(k.p); if (s.traj.length > 600) s.traj.shift(); }
+    if (k.type === 'calib') s.traj.length = 0;
+  };
+}
+connect();
+
+function count(s, type, t) {
+  const r = s.rate[type] ??= { n: 0, t0: now(), hz: 0 };
+  r.n++;
+  if (t) s.lat[type] = s.lat[type] == null ? now() - t : 0.9 * s.lat[type] + 0.1 * (now() - t);
+}
+
+function video(buf) {
+  const s = slots[String.fromCharCode(new Uint8Array(buf, 0, 1)[0])]; if (!s) return;
+  count(s, 'video');
+  if (s.decoding) return; // drop frames rather than fall behind
+  s.decoding = true;
+  createImageBitmap(new Blob([buf.slice(1)], { type: 'image/jpeg' }))
+    .then(b => { s.img?.close(); s.img = b; }).catch(() => {}).finally(() => { s.decoding = false; });
+}
+
+function phonesChanged(list) {
+  for (const [id, s] of Object.entries(slots)) {
+    const p = list.find(p => p.slot === id);
+    s.online = !!p;
+    s.q('.name').textContent = p ? p.name : 'waiting for phone';
+    const st = s.q('.state'); st.textContent = p ? 'online' : 'offline'; st.className = 'badge state ' + (p ? 'ok' : 'off');
+    if (!p) { s.last = {}; s.img?.close(); s.img = null; }
+  }
+}
+
+// ---- drawing ----
+function fit(c) { // match the backing store to the CSS size so lines stay crisp
+  const d = devicePixelRatio, w = Math.round(c.clientWidth * d), h = Math.round(c.clientHeight * d);
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const g = c.getContext('2d'); g.setTransform(d, 0, 0, d, 0, 0);
+  return [g, c.clientWidth, c.clientHeight];
+}
+
+function chart(s, key, fixed) {
+  const [g, w, h] = fit(s.q('canvas.' + key));
+  g.clearRect(0, 0, w, h);
+  const pts = s.imu, last = pts.at(-1);
+  if (!last) return;
+  let lo = fixed ? -fixed : Infinity, hi = fixed ? fixed : -Infinity;
+  if (!fixed) for (const p of pts) for (const v of p[key]) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  if (hi - lo < 1) { lo -= 0.5; hi += 0.5; }
+  const pad = 14, X = t => (t - last.t + WINDOW) / WINDOW * w, Y = v => pad + (hi - v) / (hi - lo) * (h - 2 * pad);
+  g.strokeStyle = css('--grid'); g.lineWidth = 1; g.fillStyle = css('--text-muted'); g.font = '10px system-ui';
+  for (const v of [lo, 0, hi]) if (v === lo || v === hi || Math.min(Y(lo) - Y(0), Y(0) - Y(hi)) > 12) { g.beginPath(); g.moveTo(0, Y(v)); g.lineTo(w, Y(v)); g.stroke(); g.fillText(v.toFixed(0), 2, Y(v) - 2); }
+  g.lineWidth = 2; g.lineJoin = 'round';
+  for (let i = 0; i < 3; i++) {
+    g.strokeStyle = css(`--series-${i + 1}`); g.beginPath();
+    pts.forEach((p, j) => { const x = X(p.t), y = Y(p[key][i]); j ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.stroke();
+  }
+  s.q('.legend.' + key).querySelectorAll('b').forEach((b, i) => b.textContent = last[key][i].toFixed(key === 'acc' ? 1 : 0));
+}
+
+const rot = (q, v) => { // rotate v by quaternion q = [w, x, y, z]
+  const [w, x, y, z] = q, [a, b, c] = v;
+  const ix = w * a + y * c - z * b, iy = w * b + z * a - x * c, iz = w * c + x * b - y * a, iw = -x * a - y * b - z * c;
+  return [ix * w + iw * -x + iy * -z - iz * -y, iy * w + iw * -y + iz * -x - ix * -z, iz * w + iw * -z + ix * -y - iy * -x];
+};
+
+function orient(s) {
+  const [g, w, h] = fit(s.q('.orient'));
+  g.clearRect(0, 0, w, h);
+  const k = s.last.imu; if (!k) return;
+  const r = w * 0.36, cx = w / 2, cy = h / 2;
+  const P = v => [cx + r * (v[0] - 0.5 * v[1]), cy - r * (v[2] - 0.3 * v[1])]; // oblique view, sensor Z up
+  g.strokeStyle = css('--grid'); g.lineWidth = 1; g.beginPath(); g.arc(cx, cy, r, 0, 7); g.stroke();
+  g.font = '11px system-ui'; g.lineWidth = 2; g.lineCap = 'round';
+  ['X', 'Y', 'Z'].forEach((n, i) => {
+    const e = [0, 0, 0]; e[i] = 1;
+    const [x, y] = P(rot(k.q, e));
+    g.strokeStyle = css(`--series-${i + 1}`); g.beginPath(); g.moveTo(cx, cy); g.lineTo(x, y); g.stroke();
+    g.fillStyle = css('--text-primary'); g.fillText(n, x + 3, y - 3);
+  });
+}
+
+function traj(s) {
+  const [g, w, h] = fit(s.q('.traj'));
+  g.clearRect(0, 0, w, h);
+  let m = 1; for (const p of s.traj) m = Math.max(m, Math.abs(p[0]), Math.abs(p[2]));
+  const sc = w / 2 / (m * 1.1), X = v => w / 2 + v * sc, Z = v => h / 2 + v * sc; // top view: x right, -z (ARCore forward) up
+  g.strokeStyle = css('--grid'); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.stroke();
+  g.fillStyle = css('--text-muted'); g.font = '10px system-ui'; g.fillText(`±${(m * 1.1).toFixed(1)} m`, 2, 10);
+  g.strokeStyle = css('--series-1'); g.lineWidth = 2; g.beginPath();
+  s.traj.forEach((p, i) => i ? g.lineTo(X(p[0]), Z(p[2])) : g.moveTo(X(p[0]), Z(p[2]))); g.stroke();
+  const k = s.last.ar; if (!k) return;
+  const f = rot([k.q[3], k.q[0], k.q[1], k.q[2]], [0, 0, -1]); // camera looks down its -Z
+  const x = X(k.p[0]), z = Z(k.p[2]);
+  g.fillStyle = css('--series-2'); g.beginPath(); g.arc(x, z, 5, 0, 7); g.fill();
+  g.strokeStyle = css('--series-2'); g.beginPath(); g.moveTo(x, z); g.lineTo(x + f[0] * 20, z + f[2] * 20); g.stroke();
+}
+
+function videoView(s) {
+  const c = s.q('canvas.video'), g = c.getContext('2d');
+  if (s.img && (c.width !== s.img.width || c.height !== s.img.height)) { c.width = s.img.width; c.height = s.img.height; }
+  const w = c.width, h = c.height, lw = Math.max(2, w / 200);
+  g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
+  if (s.img) g.drawImage(s.img, 0, 0);
+  else { g.fillStyle = '#888'; g.font = `${w / 20}px system-ui`; g.fillText(s.online ? 'waiting for video…' : 'no phone', w * 0.05, h / 2); }
+  const fresh = k => k && now() - k.rx < 0.5; // don't leave stale detections on screen
+  g.lineWidth = lw; g.font = `${w / 22}px system-ui`;
+  const tg = s.last.tags;
+  if (fresh(tg)) for (const t of tg.tags) {
+    g.strokeStyle = '#3f3'; g.beginPath(); t.c.forEach(([x, y], i) => i ? g.lineTo(x * w, y * h) : g.moveTo(x * w, y * h)); g.closePath(); g.stroke();
+    g.fillStyle = '#3f3'; g.fillText(`id ${t.id}${t.p ? ' ' + t.p[2].toFixed(2) + 'm' : ''}`, t.c[0][0] * w, t.c[0][1] * h - 6);
+  }
+  const skel = (lm, links, col) => {
+    g.strokeStyle = g.fillStyle = col;
+    for (let i = 0; i < links.length; i += 2) { const a = lm[links[i]], b = lm[links[i + 1]]; if (a && b) { g.beginPath(); g.moveTo(a[0] * w, a[1] * h); g.lineTo(b[0] * w, b[1] * h); g.stroke(); } }
+    for (const p of lm) { g.beginPath(); g.arc(p[0] * w, p[1] * h, lw * 1.5, 0, 7); g.fill(); }
+  };
+  if (fresh(s.last.pose) && s.last.pose.found) skel(s.last.pose.lm, POSE, '#f0f');
+  if (fresh(s.last.hands)) for (const hd of s.last.hands.hands) skel(hd.lm, HAND, '#0ff');
+  const co = s.last.color;
+  if (fresh(co) && co.found) {
+    g.strokeStyle = '#ff0'; g.strokeRect(co.box[0] * w, co.box[1] * h, co.box[2] * w, co.box[3] * h);
+    const x = co.x * w, y = co.y * h; g.beginPath(); g.moveTo(x - 20, y); g.lineTo(x + 20, y); g.moveTo(x, y - 20); g.lineTo(x, y + 20); g.stroke();
+  }
+}
+
+function hsvCss([h, s, v]) { // OpenCV HSV (h 0..179) -> css
+  s /= 255; v /= 255; h *= 2;
+  const f = n => { const k = (n + h / 60) % 6; return Math.round(255 * (v - v * s * Math.max(0, Math.min(k, 4 - k, 1)))); };
+  return `rgb(${f(5)},${f(3)},${f(1)})`;
+}
+
+const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
+
+function panels(s) {
+  const ar = s.last.ar, b = s.q('.badge.ar');
+  if (ar) {
+    b.textContent = ar.tracking + (ar.reason !== 'NONE' ? ` · ${ar.reason}` : '');
+    b.className = 'badge ar ' + (ar.tracking === 'TRACKING' ? 'ok' : ar.tracking === 'PAUSED' ? 'warn' : 'bad');
+    s.q('.arinfo').innerHTML = `x ${ar.p[0].toFixed(2)} &nbsp;y ${ar.p[1].toFixed(2)} &nbsp;z ${ar.p[2].toFixed(2)} m<br>planes ${ar.planes}`;
+  } else { b.textContent = '—'; b.className = 'badge ar off'; s.q('.arinfo').textContent = 'no data'; }
+
+  const tg = s.last.tags;
+  s.q('.tags tbody').innerHTML = (tg?.tags ?? []).map(t => t.p
+    ? `<tr><td>${esc(t.id)}</td>${t.p.map(v => `<td>${v.toFixed(2)}</td>`).join('')}<td>${Math.hypot(...t.p).toFixed(2)}</td></tr>`
+    : `<tr><td>${esc(t.id)}</td><td colspan=4>no pose</td></tr>`).join('') || '<tr><td colspan=5 class=kv>none in view</td></tr>';
+
+  const h = s.last.hands, p = s.last.pose, c = s.last.color;
+  s.q('.vision').innerHTML = [
+    `hands: ${h ? (h.hands.map(x => `${esc(x.side)} ${(x.score * 100).toFixed(0)}%`).join(', ') || 'none') : 'no data'}`,
+    `opponent pose: ${p ? (p.found ? `found, ${p.lm.filter(l => l[3] > 0.5).length}/33 visible` : 'none') : 'no data'}`,
+    `colour: ${c ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;background:${hsvCss(c.target)}"></span> ` +
+      (c.found ? `at (${c.x.toFixed(2)}, ${c.y.toFixed(2)}), area ${(c.area * 100).toFixed(1)}%` : 'not found') : 'no target picked'}`,
+  ].join('<br>');
+}
+
+function rates(s) {
+  const t = now();
+  for (const r of Object.values(s.rate)) if (t - r.t0 >= 1) { r.hz = r.n / (t - r.t0); r.n = 0; r.t0 = t; }
+  s.q('.rates tbody').innerHTML = Object.entries(s.rate).sort().map(([k, r]) =>
+    `<tr><td>${esc(k)}</td><td>${r.hz.toFixed(0)}</td><td>${s.lat[k] == null ? '–' : (s.lat[k] * 1000).toFixed(0) + ' ms'}</td></tr>`).join('');
+}
+
+let lastSlow = 0;
+function frame() {
+  const slow = now() - lastSlow > 0.1; // tables and text 10x a second, canvases every frame
+  if (slow) lastSlow = now();
+  for (const s of Object.values(slots)) {
+    videoView(s); chart(s, 'euler', 180); chart(s, 'gyro'); chart(s, 'acc'); orient(s); traj(s);
+    if (slow) { panels(s); rates(s); }
+  }
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>
