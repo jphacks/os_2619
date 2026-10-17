@@ -46,7 +46,7 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
           <button id="scanBtn" class="go">タグでスキャン<kbd>K</kbd></button>
           <span class="kv" id="tagCheck"></span><span class="msg" id="finalMsg"></span>
           <div class="seg" id="fpvs"><button data-fpv="">第三者カメラ</button><button data-fpv="A">A の胸</button><button data-fpv="B">B の胸</button></div>
-          <button data-tog="pip">小窓に 3D</button><button id="fullBtn">全画面<kbd>F</kbd></button>
+          <button data-tog="pip">小窓に 3D</button><button data-tog="flip3rd">3D を 180° 回す</button><button id="fullBtn">全画面<kbd>F</kbd></button>
         </div>
       </div>
     </div>`;
