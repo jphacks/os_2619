@@ -85,11 +85,8 @@ export function createPlayable({ vsrc, game, cfg, save, isActive }) {
       if (isActive()) {
         let x = 0, z = 0; for (const k of held) { x += ARROWS[k][0]; z += ARROWS[k][1]; }
         const n = Math.hypot(x, z);
-        if (n) {
-          const xs = W.FIELD.poly.map(q => q[0]), zs = W.FIELD.poly.map(q => q[1]), m = .2;
-          st.chest[0] = Math.max(Math.min(...xs) + m, Math.min(Math.max(...xs) - m, st.chest[0] + x / n * SPEED * dt));
-          st.chest[2] = Math.max(Math.min(...zs) + m, Math.min(Math.max(...zs) - m, st.chest[2] + z / n * SPEED * dt));
-        }
+        // no bounds: the field outline is only a guide on the floor
+        if (n) { st.chest[0] += x / n * SPEED * dt; st.chest[2] += z / n * SPEED * dt; }
       }
       d.setTruth(st.slot, pose(time, foe));
     },
