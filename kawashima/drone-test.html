@@ -20,7 +20,7 @@
 <script type="module">
 // Drone camera demo: synthetic players and events. Keys 1-7 pick a mode, N cycles.
 // ?mode=auto|orbit|chaseA|chaseB|top|side|free  &t=<s>: simulate at dt=1/60 up to t, render once, freeze.
-// ?cycle: press N every 3 s.  ?check: 30 s of auto with events, prints smoothness numbers.
+// ?sep=<scale> spacing.  ?cycle: press N every 3 s.  ?check: 30 s of auto with events, prints smoothness numbers.
 import * as THREE from 'three';
 import * as W from './world.js';
 import { createDrone } from './drone.js';
@@ -66,9 +66,10 @@ function makePlayer(color) {
   return { g, stick, chest: V(), tip: V(), base: V(), yaw: 0, fwd: V(), color };
 }
 const pl = { A: makePlayer(0xe0503a), B: makePlayer(0x3a7ce0) };
+const SEP = +(P.get('sep') ?? 1); // ?sep=0.6: players closer together (stress test for event framing)
 const posOf = (k, t) => k === 'A'
-  ? V(-1.2 + .35 * Math.sin(.6 * t) + .4 * Math.sin(.21 * t), 0, .9 * Math.sin(.43 * t))
-  : V(1.2 + .3 * Math.sin(.5 * t + 1) - .4 * Math.sin(.17 * t), 0, .9 * Math.sin(.37 * t + 2));
+  ? V(-1.2 * SEP + .35 * Math.sin(.6 * t) + .4 * Math.sin(.21 * t), 0, .9 * Math.sin(.43 * t))
+  : V(1.2 * SEP + .3 * Math.sin(.5 * t + 1) - .4 * Math.sin(.17 * t), 0, .9 * Math.sin(.37 * t + 2));
 function stepPlayers(t) {
   for (const k of ['A', 'B']) {
     const p = pl[k], q = posOf(k, t), op = posOf(k === 'A' ? 'B' : 'A', t);
@@ -163,6 +164,9 @@ if (CHECK) {
   const fr = new THREE.Frustum(), M = new THREE.Matrix4(), f0 = V(), f1 = V(), p0 = V();
   let maxV = 0, maxW = 0, maxWBase = 0, minD = 1e9, minY = 1e9, inBoth = 0, n = 0, wide = 0, wideIn = 0, first = true;
   const vs = [], ws = [], log = [];
+  let evN = 0, evOcc = 0, evMinD = 1e9, minBody = 1e9;
+  const segD = (p, c) => p.distanceTo(V(c.x, Math.min(1.95, Math.max(0.1, p.y)), c.z)); // body = floor..head
+  const occludes = (p, look, c) => { for (let i = 1; i < 24; i++) { const q = p.clone().lerp(look, i / 24); if (q.y < 1.95 && Math.hypot(q.x - c.x, q.z - c.z) < 0.3) return true; } return false; };
   stepPlayers(0);
   while (simT < 30) {
     step(DT);
@@ -175,6 +179,13 @@ if (CHECK) {
     first = false; p0.copy(camera.position); f0.copy(f1);
     for (const k of ['A', 'B']) minD = Math.min(minD, camera.position.distanceTo(pl[k].chest));
     minY = Math.min(minY, camera.position.y);
+    for (const k of ['A', 'B']) minBody = Math.min(minBody, segD(camera.position, pl[k].chest));
+    const m = /^(hit|charge|special)([AB])$/.exec(drone.shot);
+    if (m && !drone.blending) { // focus player vs the other one
+      const fk = m[1] === 'special' ? (m[2] === 'A' ? 'B' : 'A') : m[2], ok = fk === 'A' ? 'B' : 'A';
+      evN++; evMinD = Math.min(evMinD, segD(camera.position, pl[ok].chest));
+      evOcc += occludes(camera.position, pl[fk].chest, pl[ok].chest);
+    }
     M.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); fr.setFromProjectionMatrix(M);
     const both = fr.containsPoint(pl.A.chest) && fr.containsPoint(pl.B.chest);
     n++; inBoth += both;
@@ -188,6 +199,8 @@ max camera speed     ${maxV.toFixed(2)} m/s   (p99 ${pct(vs).toFixed(2)})
 max angular speed    ${maxW.toFixed(1)} deg/s (p99 ${pct(ws).toFixed(1)}, incl. hit shake)
 min dist to chests   ${minD.toFixed(2)} m
 min camera height    ${minY.toFixed(2)} m
+min dist to bodies   ${minBody.toFixed(2)} m (floor..1.95 m segment)
+event shots (${evN} settled frames): other player min dist ${evMinD.toFixed(2)} m, blocking the focus ${(100 * evOcc / Math.max(1, evN)).toFixed(1)} %
 both chests in frame ${(100 * inBoth / n).toFixed(1)} % of frames (settled wide shots ${(100 * wideIn / Math.max(1, wide)).toFixed(1)} % of ${wide})` + (log.length ? '\n' + log.join('\n') : '');
   document.title = 'CHECK ' + el.textContent.replace(/\s+/g, ' ');
   showHud(simT);

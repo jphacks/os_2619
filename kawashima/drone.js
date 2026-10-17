@@ -72,10 +72,23 @@ export function createDrone(camera, domElement, opts = {}) {
   const cur = { pos: V(0, 4.5, 6), vel: V(), look: V(0, 1, 0), lookV: V(), fov: o.fovWide, fovV: 0, yaw: 0, pitch: 0 };
   let t = 0, shot = null, blend = null, shakeAmp = 0, shakeT = 0, inited = false;
 
+  // Keep-out volume of a player: vertical segment from the floor to the top of the head.
+  const HEAD = 1.95;
+  const bodyDist = (p, c) => p.distanceTo(V(c.x, clamp(p.y, 0.1, HEAD), c.z));
+  // Event shots: is player k at least `near` m from the camera and off the camera->look line (with margin)?
+  function clear(pos, look, k, near = 1.6) {
+    const c = chest(k);
+    if (bodyDist(pos, c) < near) return false;
+    for (let i = 1; i <= 24; i++) {
+      const q = pos.clone().lerp(look, i / 24);
+      if (q.y < HEAD + 0.1 && Math.hypot(q.x - c.x, q.z - c.z) < 0.55) return false;
+    }
+    return true;
+  }
   // Push a point out of the players' bodies and keep it above the floor / near the arena.
   function safe(p) {
     for (const c of [S.a, S.b]) {
-      const q = V(c.x, clamp(p.y, 0.2, c.y + 0.45), c.z), d = p.clone().sub(q), n = d.length();
+      const q = V(c.x, clamp(p.y, 0.2, HEAD), c.z), d = p.clone().sub(q), n = d.length();
       if (n < o.minDist) p.copy(q).addScaledVector(n > 1e-4 ? d.divideScalar(n) : V(0, 1, 0), o.minDist);
     }
     p.y = clamp(p.y, o.minY, 9);
@@ -143,7 +156,7 @@ export function createDrone(camera, domElement, opts = {}) {
     // events
     follow(owner, from, dir) { // behind the shooter along the projectile, or a pan from here if that's a big swing
       const d = dir.clone().normalize(), dh = flat(d).normalize(), rr = V(-dh.z, 0, dh.x), c0 = chest(owner).clone();
-      const behind = c0.clone().addScaledVector(dh, -2.0).addScaledVector(rr, 0.7); behind.y = 1.85;
+      const behind = c0.clone().addScaledVector(dh, -2.0).addScaledVector(rr, 0.8); behind.y = 2.2; // above the shooter's head
       const near = Math.abs(wrap(az(behind, S.mid) - camAz())) < 60 * D2R;
       const stay = cur.pos.clone().lerp(S.mid, 0.12), far = from.clone().addScaledVector(d, Math.max(2, S.sep));
       let e = 0;
@@ -156,31 +169,51 @@ export function createDrone(camera, domElement, opts = {}) {
       } };
     },
     hit(target, at, power) {
-      const p0 = at.clone(), dir = cur.pos.clone().sub(p0), d0 = dir.length(); dir.normalize();
-      const dd = Math.max(2.2, d0 * 0.6);
+      // push in from the camera's side; rotate around the impact until the attacker is out of the way, else go wide
+      const p0 = at.clone(), a0 = az(cur.pos, p0), d0 = flat(cur.pos).distanceTo(flat(p0)), dd = clamp(d0 * 0.6, 2.2, 3.2);
+      let pos = null, fov = lerp(o.fovWide, o.fovTight, 0.4 + 0.3 * power);
+      for (const off of [0, 20, -20, 40, -40, 60, -60, 80, -80, 100, -100]) {
+        const q = fromAz(p0, a0 + off * D2R, dd, Math.max(p0.y + 0.3, 1.6));
+        if (clear(q, p0, other(target))) { pos = q; break; }
+      }
+      if (!pos) { // nothing clean: wide and high, looking over the attacker
+        const q = fromAz(p0, a0, Math.max(d0, 4), 3.2); pos = q; fov = o.fovWide;
+      }
       return { name: 'hit' + target, w: 5, dur: 1.3, prio: 2, blend: 0.3, gen() {
-        const pos = p0.clone().addScaledVector(dir, dd); pos.y = Math.max(pos.y, 1.4);
-        return { pos, look: p0.clone(), fov: lerp(o.fovWide, o.fovTight, 0.4 + 0.3 * power) };
+        return { pos: pos.clone(), look: p0.clone(), fov };
       } };
     },
     special(owner, to) {
       const tg = (to ?? chest(other(owner))).clone(), aO = az(chest(owner), tg);
-      const turn = wrap(camAz(tg) - aO) >= 0 ? 1 : -1; // on the camera's side of the beam
+      const pref = wrap(camAz(tg) - aO) >= 0 ? 1 : -1; // on the camera's side of the beam
+      // arc swings from beside the beam to behind the target; take the first (side, arc) that keeps the caster clear
+      const pose = (turn, a, b, k, wide) => {
+        const look = tg.clone().lerp(chest(owner), 0.3 * (1 - k)); look.y = 1.15;
+        return { pos: fromAz(tg, aO + turn * lerp(a, b, k) * D2R, wide ? 4.5 : 3.0 - 0.5 * k, wide ? 3.0 : 1.5 + 0.5 * k), look };
+      };
+      let plan = null;
+      for (const [turn, a, b] of [[pref, 55, 120], [-pref, 55, 120], [pref, 80, 150], [-pref, 80, 150]])
+        if ([0, 0.5, 1].every(k => { const q = pose(turn, a, b, k); return clear(q.pos, tg, owner); })) { plan = [turn, a, b, false]; break; }
+      plan ??= [pref, 70, 130, true];
       let e = 0;
       return { name: 'special' + owner, w: 2.2, dur: 2.4, prio: 3, blend: 0.7, gen(dt) {
         e += dt;
-        const k = ease(e / 2.4), ph = aO + turn * (55 + 65 * k) * D2R; // swings from beside the beam to behind the target
-        const look = tg.clone().lerp(chest(owner), 0.3 * (1 - k)); look.y = 1.15;
-        return { pos: fromAz(tg, ph, 3.0 - 0.5 * k, 1.5 + 0.5 * k), look, fov: lerp(o.fovWide + 8, o.fovTight, k) };
+        const k = ease(e / 2.4), q = pose(plan[0], plan[1], plan[2], k, plan[3]);
+        return { ...q, fov: plan[3] ? o.fovWide : lerp(o.fovWide + 8, o.fovTight, k) };
       } };
     },
     charge(owner) {
       const c = () => chaseChest(owner), f = () => flat(chaseChest(other(owner))).sub(flat(c())).normalize();
-      const side = Math.sign(V(-f().z, 0, f().x).dot(flat(cur.pos).sub(flat(c())))) || 1;
+      const pref = Math.sign(V(-f().z, 0, f().x).dot(flat(cur.pos).sub(flat(c())))) || 1;
+      const at = (ang, R) => { const fv = f(); return fromAz(c(), Math.atan2(fv.z, fv.x) + ang * D2R, R, 1.6); };
+      let ang = null; // 3/4 front, opponent kept clear at both ends of the push-in
+      for (const a of [75, 100, 125, 150]) for (const sd of [pref, -pref])
+        if (ang == null && [3.0, 1.9].every(R => clear(at(sd * a, R), V(c().x, 1.2, c().z), other(owner)))) ang = sd * a;
+      ang ??= pref * 160;
       let e = 0;
       return { name: 'charge' + owner, w: 2, dur: 2.2, prio: 1, blend: 0.8, gen(dt) {
         e += dt;
-        const fv = f(), a = Math.atan2(fv.z, fv.x) + side * 75 * D2R, R = lerp(3.0, 1.9, ease(e / 2.2)); // 3/4 front, opponent off to the side
+        const fv = f(), a = Math.atan2(fv.z, fv.x) + ang * D2R, R = lerp(3.0, 1.9, ease(e / 2.2));
         return { pos: fromAz(c(), a, R, 1.6), look: V(c().x, 1.2, c().z), fov: lerp(o.fovWide, o.fovTight, ease(e / 2.2) * 0.8) };
       } };
     },
