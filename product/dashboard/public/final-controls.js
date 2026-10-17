@@ -2,7 +2,7 @@
 // changing the match, HP, hit detection, or firing a game projectile.
 export const finalChargeTier = seconds => seconds < 2 ? 'small' : seconds < 5 ? 'medium' : 'large';
 
-export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, fullscreen }) {
+export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, fullscreen, playable = null }) {
   const $ = s => bar.querySelector(s);
   bar.innerHTML = `
     <div class="final-control-row">
@@ -29,6 +29,12 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
         <span class="kv" data-charge-status="A">炎：Aキー長押しでチャージ、離して発射</span>
         <span class="kv" data-charge-status="B">電気：Bキー長押しでチャージ、離して発射</span>
         <span id="chargeTextureStatus" class="msg"></span>
+      </div>
+    </div>
+    <div class="final-control-row">
+      <strong class="final-control-title">キーボード操作</strong>
+      <div class="final-control-items">
+        <div id="finalPlay" class="row"></div>
         <div class="final-shared-controls">
           <button id="scanBtn" class="go">タグでスキャン<kbd>K</kbd></button>
           <span class="kv" id="tagCheck"></span><span class="msg" id="finalMsg"></span>
@@ -39,6 +45,7 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
     </div>`;
 
   $('#scanBtn').onclick = scan;
+  playable?.mountControl($('#finalPlay'));
   for (const b of bar.querySelectorAll('[data-fire]')) b.onclick = () => {
     const owner = $('#fireDirection').value, target = owner === 'A' ? 'B' : 'A';
     const from = game.players[owner], to = game.players[target];
@@ -72,6 +79,8 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
   const updateChargeText = (slot, time) => {
     const s = charge[slot], seconds = secondsAt(s, time), tier = finalChargeTier(seconds);
     const label = bar.querySelector(`[data-charge-status="${slot}"]`);
+    // the keyboard player's key goes to the match (playable.js), not to this preview
+    if (playable?.owns(slot)) { label.textContent = `${slot === 'A' ? '炎' : '電気'}：${slot}キーは試合の溜め（キーボード操作中）`; label.classList.toggle('ok', playable.charging); return; }
     label.textContent = `${slot === 'A' ? '炎' : '電気'}：${keyFor(slot)}キー ${s.held ? `チャージ中 ${seconds.toFixed(1)}秒 ${tierJa[tier]}` : '長押しでチャージ、離して発射'}`;
     label.classList.toggle('ok', s.held || seconds > 0);
   };
@@ -107,11 +116,11 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
     },
     updateStatus() {
       const f = stage.fx.stats().fire;
-      $('#fireTextureStatus').textContent = f.errors.length ? '炎素材を読み込めません: ' + f.errors.join(', ') : f.loaded.length < 5 ? '炎素材を読み込み中…' : '';
+      $('#fireTextureStatus').textContent = f.errors.length ? '炎素材を読み込めません: ' + f.errors.join(', ') : f.loaded.length < f.total ? '炎素材を読み込み中…' : '';
       const th = stage.fx.stats().thunder;
-      $('#thunderTextureStatus').textContent = th.errors.length ? '電気素材を読み込めません: ' + th.errors.join(', ') : th.loaded.length < 4 ? '電気素材を読み込み中…' : '';
+      $('#thunderTextureStatus').textContent = th.errors.length ? '電気素材を読み込めません: ' + th.errors.join(', ') : th.loaded.length < th.total ? '電気素材を読み込み中…' : '';
       const ch = stage.fx.stats().charging;
-      $('#chargeTextureStatus').textContent = ch.errors.length ? 'チャージ素材を読み込めません: ' + ch.errors.join(', ') : ch.loaded.length < 5 ? 'チャージ素材を読み込み中…' : '';
+      $('#chargeTextureStatus').textContent = ch.errors.length ? 'チャージ素材を読み込めません: ' + ch.errors.join(', ') : ch.loaded.length < ch.total ? 'チャージ素材を読み込み中…' : '';
     },
   };
 }

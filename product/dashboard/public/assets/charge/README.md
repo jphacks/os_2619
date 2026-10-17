@@ -1,11 +1,14 @@
 # チャージ実行用テクスチャ
 
-原本は `effect-assets/textures/` です。
+原本は `effect-assets/textures/`。このフォルダはダッシュボードから配信するためのコピーです。
 
-- `aura-wisp.png`: 全身の周囲を上昇する細いオーラ。
-- `plasma-flow.png`: 炎属性の杖先球を流れるエネルギー。
-- `electric-filament.png`: 電気属性の杖先球を走る放電。
-- `glow.png`: 全身と球の中心光。
-- `spark.png`: 球の外側に出る短い火花。
+- `aura-wisp.png`: 炎属性で脚の周りを上がる揺らぎ。
+- `electric-filament.png`: 電気属性で脚の周りを走る放電。
+- `smoke-puff.png`: 足元から広がる白い土煙。
+- `spark-corona.png`: 杖先球の外周のギザギザ。
+- `star-flare.png`: 杖先球の中の星、全身の周りの瞬き。
+- `spike-burst.png`: 杖先球の中心。
+- `shock-ring.png`: 足元の輪、満タン時に広がる輪。
+- `glow.png`・`spark.png`: 中心光と周回する火花。
 
-球、立体的な配置、回転する輪、属性色、溜めによる拡大は `charge-effects.js` が描画します。
+`spark-corona.png`・`star-flare.png`・`spike-burst.png`・`shock-ring.png` は `effect-assets/procedural/make-textures.mjs` で生成しています。光の柱、杖先球の球体と稲妻は `charge-effects.js` が3D形状として描きます。

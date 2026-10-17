@@ -8,9 +8,11 @@
 
 | 段階 | 実装した見た目 | 参考 |
 |---|---|---|
-| 小 | 細く尖った黄白い直進弾。短い角張った放電片が進行方向へ伸び、命中時だけ小さく放射する | [Thunder (Robin)](https://www.ssbwiki.com/Thunder_(Robin)) |
-| 中 | 黄白い球状コアの前後に複数の放電が絡み、短い尾を残す。命中時は小より太い球状放電になる | [Elthunder / Thunder (Robin)](https://www.ssbwiki.com/Thunder_(Robin)) |
-| 大 | 相手の着弾位置の上空から太い折れ線状の雷が落ち、中心閃光、放射状放電、火花が広がる | [Thunder (Pokémon)](https://www.ssbwiki.com/Thunder_(Pok%C3%A9mon)) |
+| 小 | ギザギザの星が明滅するコアと、後ろへ伸びる黄色い光の尾。尾には細い稲妻が絡む。命中時は小さなギザギザの星と短い放射状の稲妻 | [Thunder (Robin)](https://www.ssbwiki.com/Thunder_(Robin)) |
+| 中 | 小より大きい二重のコアと太い光の尾。命中時は黒い縁取りの付いた大きなギザギザの星、放射状放電、放射する稲妻 | [Elthunder / Thunder (Robin)](https://www.ssbwiki.com/Thunder_(Robin)) |
+| 大 | 上空に光が集まり、太い折れ線の雷が相手へ落ちる。相手を包む約2 mのギザギザの爆発（白い中心・紫の閃光）、後半に黒い芯の稲妻、残って走る稲妻 | [Thunder (Pokémon)](https://www.ssbwiki.com/Thunder_(Pok%C3%A9mon)) |
+
+ギザギザの星（`spike-burst.png`・`spike-burst-2.png`）と星形フレアは `procedural/make-textures.mjs` で生成しています。
 
 新規PNGは `electric-arc-v2.png` と `electric-burst-v2.png` です。既存の電気素材は主放電としては灰色の霞が広く、輪郭が炎に近かったため、referenceに合わせて白い芯と狭い発光を持つ角張った形へ作り直しました。生成指示は `thunder-generation.json` に記録しています。
 
@@ -26,6 +28,6 @@
 
 ## 3D表現
 
-主雷は複数の円柱セグメントで3D経路を作り、PNGは局所的な放電と着弾の密度に使います。小・中の弾と着弾粒子も3D位置を持ちます。確認用演出は経過時間と固定シードから形を再現するため、停止・コマ送り中に形が変わりません。
+主雷は3Dの折れ線に沿ってカメラを向く帯を並べて描き、PNGは局所的な放電と着弾の密度に使います。小・中の弾と着弾粒子も3D位置を持ちます。確認用演出は経過時間と固定シードから形を再現するため、停止・コマ送り中に形が変わりません。
 
 カメラ映像は背景画像として合成します。実写人物の深度や人物マスクによる遮蔽、試合全体のリプレイ保存は今回の範囲に含みません。

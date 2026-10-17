@@ -8,11 +8,11 @@
 
 | 段階 | 実装した見た目 | 参考 |
 |---|---|---|
-| 小 | 杖先から黄色い鋭いジグザグの立体弾。命中時は元の `flame-tongue.png` を2:3の自然な縦横比で小さく重ね、着弾点から低く燃える | [PK Fire](https://www.ssbwiki.com/PK_Fire) |
-| 中 | 白黄の中心と橙の炎を持つ火球。通過位置に短い炎の尾を残し、命中時は飛翔火球の約2倍の球状爆炎になる | [Magic / Firaga](https://www.ssbwiki.com/Magic) |
-| 大 | 指定地点で赤橙の球状爆炎が膨張。複数方向の金色の輪、中心の閃光、火花、遅れて消える煙 | [Explosive Flame](https://www.ssbwiki.com/Explosive_Flame) |
+| 小 | 杖先から黄色く光るジグザグの立体弾（残像付き）。命中すると星形の閃光のあと、相手の膝あたりから頭上まで約1.9 mの火柱が立つ。白い芯・黄〜深紅の炎、上部から暗赤色の煙、周りを◆が漂い、約1.6秒で消える | [PK Fire](https://www.ssbwiki.com/PK_Fire) |
+| 中 | ノイズで揺れる火球（白黄の芯）と、後方へ流れる炎の尾・火の粉。命中時は星形とギザギザの閃光、炎の塊が外へ飛び散り、相手に短く炎が残る | [Magic / Firaga](https://www.ssbwiki.com/Magic) |
+| 大 | 小さな光から半径約0.95 mの炎の球が膨らむ。明るい輪郭、暗い赤の渦を巻く内部、外周の炎、中心の大きな星形フレア。約1秒保持したあと破裂し、炎の塊・火の粉・黒煙になる | [Explosive Flame](https://www.ssbwiki.com/Explosive_Flame) |
 
-追加した `textures/fire-lobe-v2.png` は、ファイガ・爆炎のreferenceを色と明るさの参考として内蔵生成ツールで新規生成しました。生成指示は `fire-generation.json` に記録しています。
+`textures/fire-lobe-v2.png` は、ファイガ・爆炎のreferenceを色と明るさの参考として内蔵生成ツールで新規生成しました。生成指示は `fire-generation.json` に記録しています。星形フレア・ギザギザの閃光・◆・輪は `procedural/make-textures.mjs` で生成しています。
 
 ## 使い方
 

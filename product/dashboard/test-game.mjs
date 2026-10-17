@@ -194,6 +194,19 @@ scenario('大も横に1.2m動けば外れる', () => {
   const S = setup(); S.fight(); S.charge('A'); S.run(5.5); S.walk('B', 0, 1.2, .3); S.swing('A'); S.run(1.8);
   eq(S.B.hp, 100, 'B の HP');
 });
+scenario('45cmずれても小は当たる（玉の当たり判定は見た目より少し大きい）', () => {
+  const S = setup(); S.fight(); S.walk('B', 0, .45, .3); S.swing('A'); S.run(1.8);
+  eq(S.B.hp, 95, 'B の HP');
+});
+scenario('棒を背中側で止めた振りでは撃たず、体の前で止めれば撃つ', () => {
+  const S = setup(); S.fight();
+  S.g.ingest({ type: 'truth', slot: 'A', chest: [-1.2, 1.3, 0], yaw: 0, base: [-1.4, 1.2, 0], dir: [-1, 0, 0] }); S.run(.1);
+  S.swing('A'); S.run(.5); eq(S.A.shots, 0, '背中側での発射数');
+  S.charge('A'); S.run(2.5); S.swing('A'); S.run(.1);
+  eq(S.A.charging, true, '背中側で振ったあとも溜めは続く');
+  S.put('A', -1.2, 0); S.run(.1); S.swing('A'); S.run(1.5);
+  eq(S.A.shots, 1, '前で止めたときの発射数'); eq(S.B.hp, 80, '中が当たったあとの B の HP');
+});
 scenario('ガードと回避のセンサー判定は、ゲームでは何も起きない', () => {
   const S = setup(); S.fight();
   S.g.onSensed({ slot: 'B', name: 'Guard' }); S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'left', speed: 1.5 });
