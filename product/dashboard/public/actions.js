@@ -6,7 +6,7 @@ import { cross, dot, norm, qrot } from './map.js';
 
 const D = Math.PI / 180;
 export const ACTIONS = [
-  { name: 'Charge', how: 'stick within 45° of straight up, tip circles one full turn within 2 s' },
+  { name: 'Charge', how: 'stick keeps turning one way (gyro only): 180°+ about a steady axis within 2 s, slower than a swing' },
   { name: 'Swing', how: 'stick turns faster than 300°/s and stops; direction plus start and stop position' },
   { name: 'Dodge', how: 'chest phone moves faster than 1.2 m/s; left / right / back / forward' },
   { name: 'Guard', how: 'stick within 20° of horizontal and still (under 60°/s) for 1 s' },
@@ -26,7 +26,7 @@ const where = s => `elev ${deg(s.el)}°, heading ${deg(s.hd)}°`;
 
 export function createActions() {
   const P = {};
-  const st = s => P[s] ??= { yaw0: 0, last: null, ring: [], still: null, sw: null, guard: null, guarded: false, ar: [], dodging: false };
+  const st = s => P[s] ??= { yaw0: 0, last: null, ring: [], spin: [], spinCool: 0, still: null, sw: null, guard: null, guarded: false, ar: [], dodging: false };
 
   /** Feeds one packet; returns the actions it completes as { t, slot, name, detail, ...data }.
    *  Swing adds dir ('down-left' ...) and power 0..1 (stick speed, 1 at 1000°/s); Dodge adds dir and speed (m/s). */
@@ -47,6 +47,25 @@ export function createActions() {
         const turn = S.ring.at(-1).a - S.ring[0].a;
         if (Math.abs(turn) >= 2 * Math.PI) { emit('Charge', turn > 0 ? 'counter-clockwise (from above)' : 'clockwise (from above)'); S.ring = []; }
       } else S.ring = [];
+
+      // Charge, gyro only (the sensor sits in the hand; the stick's pose does not matter): the stick keeps turning in one rotational
+      // direction. Over ~1-2 s it turns 180°+ about a steady axis (circling is steady, waving back and forth cancels out) and never
+      // reaches swing speed.
+      if (gap || w > 300) S.spin = [];
+      else {
+        const dt = Math.min(.1, k.t - (S.spin.at(-1)?.t ?? k.t));
+        S.spin.push({ t: k.t, dt, w: k.gyro, mag: w });
+        while (S.spin[0].t < k.t - 2) S.spin.shift();
+        const span = k.t - S.spin[0].t;
+        if (span >= 1 && k.t > S.spinCool) {
+          let path = 0, net = [0, 0, 0];
+          for (const r of S.spin) { path += r.mag * r.dt; for (let i = 0; i < 3; i++) net[i] += r.w[i] * r.dt; }
+          const coherent = Math.hypot(...net) / Math.max(path, 1e-6);
+          if (path >= 180 && path / span >= 90 && coherent >= .6) {
+            emit('Charge', `gyro: ${Math.round(path)}° in ${span.toFixed(1)} s`); S.spin = []; S.ring = []; S.spinCool = k.t + .5;
+          }
+        }
+      }
 
       // Swing: starts where the stick was last calm, ends when it slows down again
       if (gap) S.sw = null;
