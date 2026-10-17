@@ -119,6 +119,32 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
       : `スキャン不十分：${!need.every(id => m.ids.includes(id)) ? `タグが${m.ids.length}枚しか見えていない` : `誤差 ${m.reprojErrPx.toFixed(1)}px が大きい`}。置き方を直してもう一度`;
     resize();
   }
+  // ---- keeping phone C aligned by itself: the same scan, quietly and again and again, only for the fixed layout ----
+  // The sheets never move, so only phone C's pose (and focal) is refreshed, smoothed a little; a failed or poor scan changes nothing.
+  const qOf = R => W.toQuat(R), blendQ = (a, b, k) => { // normalised lerp of [w,x,y,z]
+    const s = a.reduce((d, v, i) => d + v * b[i], 0) < 0 ? -1 : 1, q = a.map((v, i) => v + k * (s * b[i] - v)), n = Math.hypot(...q); return q.map(v => v / n);
+  };
+  let aligning = false;
+  async function autoAlign() {
+    if (aligning || !W.FIXED_FIELD || !(video.videoWidth || video.__dummy) || document.hidden) return;
+    aligning = true;
+    try {
+      const FM = await import('./fieldmap.js');
+      const m = await FM.scanField(video.__dummy?.canvas ?? video, { fovYGuess: S.tagCam?.fovY ?? GUIDE_CAM.fov, mode: cfg.tagMode, mount: 'floor', tagHeight: cfg.tagHeight, frames: 3, intervalMs: 100 });
+      if (!m || !(m.reprojErrPx < 4)) return;
+      const fit = W.toFixedFrame(m.tags, m.cam.pose); if (!fit) return;
+      const cam = { ...m.cam, pose: fit.pose }, old = S.tagCam;
+      if (!S.scanned) { applyField({ poly: W.FIELD.poly.map(p => [...p]), tags: fit.tags }); saveField(); }
+      const near = old?.pose && Math.hypot(...cam.pose.t.map((v, i) => v - old.pose.t[i])) < .5;
+      if (near) { // a steady picture: follow it gently instead of jumping with every measurement
+        const k = .3, q = blendQ(qOf(old.pose.R), qOf(cam.pose.R), k);
+        cam.pose = { R: W.fromQuat(q), t: old.pose.t.map((v, i) => v + k * (cam.pose.t[i] - v)) };
+        cam.fovY = old.fovY + k * (cam.fovY - old.fovY);
+      }
+      S.tagCam = cam; S.ready = true; try { localStorage.setItem(CAM_KEY, JSON.stringify(cam)); } catch {}
+      if (!old) resize();
+    } catch (e) { console.warn('autoAlign', e); } finally { aligning = false; }
+  }
   function clearScan() { try { localStorage.removeItem(FIELD_KEY); localStorage.removeItem(CAM_KEY); } catch {} location.reload(); }
 
   // live tag check while preparing: which ids phone C sees
@@ -279,7 +305,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
   }
 
   return {
-    el, scene, camera, fx, drone, field, state: S, render, scan, clearScan, tagChecks, seenTags: seen, applyCam,
+    el, scene, camera, fx, drone, field, state: S, render, scan, autoAlign, clearScan, tagChecks, seenTags: seen, applyCam,
     attach(box, mode) { S.box = box; S.mode = mode; if (el.parentNode !== box) box.append(el); resize(); applyCam(); },
     attachMinimap(c) { minimap = createMinimap(c); minimap.canvas = c; },
     resize,

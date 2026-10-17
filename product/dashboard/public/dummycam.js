@@ -69,7 +69,7 @@ export function truthLayout(floorTags = null) {
   for (const [id, t] of Object.entries(floorTags ?? {})) tags[id] = { size: tags[id]?.size ?? t.size ?? .16, ...tags[id], pos: [t.pos[0], 0, t.pos[2]], yaw: t.yaw ?? 0, floor: true, flip: false };
   const sheets = Object.values(tags).filter(t => t.floor && t.pos);
   let poly;
-  if (sheets.length >= 3) {
+  if (sheets.length >= 3 && !W.FIXED_FIELD) { // (the fixed middle square of map4 is not the play area: that stays the ARENA square)
     const mx = sheets.reduce((a, t) => a + t.pos[0], 0) / sheets.length, mz = sheets.reduce((a, t) => a + t.pos[2], 0) / sheets.length;
     poly = sheets.map(t => [t.pos[0], t.pos[2]]).sort((p, q) => Math.atan2(p[1] - mz, p[0] - mx) - Math.atan2(q[1] - mz, q[0] - mx));
   } else { const H = 2; poly = [[-H, -H], [H, -H], [H, H], [-H, H]]; } // the layouts' 4 m square (ARENA.half before any scan)
