@@ -11,9 +11,22 @@ Two Android phones, each with its own WitMotion WT9011DCL IMU over Bluetooth, st
 |---|---|
 | `android/` | Phone app (Kotlin, ARCore + OpenCV + MediaPipe + OkHttp) |
 | `dashboard/server.mjs` | Accepts up to 2 phones (slots A, B), relays to dashboards, answers clock-sync pings |
-| `dashboard/index.html` | Dashboard: video with overlays, IMU charts + orientation, AR state + top-down track, tags, hands, pose, colour, rates and latency |
-| `dashboard/fake-phone.mjs` | Synthetic phones, to try the dashboard without hardware |
-| `dashboard/test.mjs` | Server self-check |
+| `dashboard/index.html` | Dashboard: space map, video with overlays, IMU charts + orientation, AR state + top-down track, tags, hands, pose, colour, rates and latency |
+| `dashboard/map.js` | Space map estimator (shared by the dashboard and the test) |
+| `dashboard/sim.mjs` | Synthetic two-person scene with known geometry |
+| `dashboard/fake-phone.mjs` | Synthetic phones streaming the sim scene, to try the dashboard without hardware |
+| `dashboard/test.mjs`, `test-map.mjs` | Server self-check; space map accuracy against the sim scene |
+
+## Space map
+
+The top card fuses both phones into one room. Setup it expects: A and B wear the phones on the chest, each chest mount carries an AprilTag, the floor corners carry AprilTags, each person swings a stick of known length with a coloured tip, and each phone has the **opponent's** tip colour picked. All tags are the size set on the phones.
+
+- Tags whose face points up are floor tags; any other tag a phone sees is the opponent's chest mount. No tag IDs to configure.
+- B's ARCore world is fitted onto A's (yaw + shift, both gravity-aligned) from chest sightings paired with the other phone's own AR position at the same instant, plus any floor tag both phones have seen. Walk around a little at the start so the fit has spread.
+- Room frame: origin at the centre of the floor tags, floor at height 0, +x from the lowest tag ID towards its nearest tag. It shifts as more floor tags are found.
+- Opponent pose is lifted to 3D from the chest tag's depth plus MediaPipe's relative depth; the stick tip is the point on the viewing ray that lies one stick length from the nearer wrist (ambiguity resolved by the last tip, then the forearm direction).
+- Panel: positions, distance A–B, tip height and its distance to the target's chest, fit residual, and "tag check" (AR position vs. where the other phone sees the chest tag: about the phone-to-tag offset when all is well).
+- Sim accuracy (`npm test`, tag noise ~1 %): people < 1 cm, tips ~2 cm median, worst ~17 cm.
 
 ## PC
 
@@ -50,8 +63,8 @@ The server adds `slot` (`A`/`B`) to everything it relays. Video reaches the dash
 | type | rate | fields |
 |---|---|---|
 | `imu` | 100 Hz | `euler` [roll, pitch, yaw] deg (sensor raw), `acc` m/s², `gyro` deg/s, `q` [w,x,y,z] relative to calibration |
-| `ar` | camera rate (30) | `tracking`, `reason`, `p` [x,y,z] m, `q` [x,y,z,w] (ARCore camera pose, relative to calibration), `planes` |
-| `tags` | as fast as detection runs | `tags[]`: `id`, `c` 4 corners, `p` [x,y,z] m and `r` Rodrigues rotation in the OpenCV camera frame (x right, y down, z forward) |
+| `ar` | camera rate (30) | `tracking`, `reason`, `p` [x,y,z] m, `q` [x,y,z,w] (ARCore camera pose, relative to calibration), `wp`/`wq` same pose in the raw gravity-aligned ARCore world, `planes` |
+| `tags` | as fast as detection runs | `tags[]`: `id`, `c` 4 corners, `p` [x,y,z] m and `r` Rodrigues rotation in the OpenCV camera frame (x right, y down, z forward); `k` intrinsics [fx/W, fy/H, cx/W, cy/H] of the upright image |
 | `hands` | 〃 | `hands[]`: `side`, `score`, `lm` 21 × [x,y,z] |
 | `pose` | 〃 | `found`, `lm` 33 × [x,y,z,visibility] |
 | `color` | 〃 | `target` HSV (OpenCV scale), `found`, `x`,`y` centroid of the largest blob, `area` fraction, `box` [x,y,w,h] |
@@ -64,4 +77,5 @@ Every detector runs on its own thread and always takes the newest frame (busy �
 - Not run on a phone yet: the APK builds, but ARCore, BLE parsing, detectors and the overlay are untested on a device.
 - Assumes the back camera sensor is mounted at 90° (true for nearly all phones). If the picture is sideways, that's the line marked `shortcut:` in `MainActivity.kt`.
 - AprilTag uses OpenCV's aruco detector (tag36h11), not the reference AprilTag library: a bit less robust at small sizes.
+- Space map: only checked against the sim. The WitMotion IMUs are not used in it (their mounting isn't defined). Wall-mounted tags would be mistaken for a chest mount. Hip depth assumes the hips sit 0.4 m below the chest tag.
 - Calibration is a tare (orientation + AR origin). It does not run the WitMotion accelerometer/magnetometer calibration; do that once with WitMotion's app.

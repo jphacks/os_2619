@@ -47,6 +47,9 @@ await wait(() => dash.inbox.some(k => k.type === 'phones' && k.list.length === 1
 const d = await open({ type: 'hello', role: 'phone', id: 'p4', name: 'four' });
 assert.equal((await wait(() => d.inbox.find(k => k.type === 'welcome'))).slot, 'B');
 
+const js = await fetch('http://localhost:18099/map.js');
+assert.equal(js.status, 200); assert.match(js.headers.get('content-type'), /javascript/);
+
 console.log('server ok');
 for (const x of wss.clients) x.terminate();
 server.close(); process.exit(0);
