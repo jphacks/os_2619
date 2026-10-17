@@ -26,7 +26,7 @@ function setup({ rules = {}, matchSec = 60, test = false } = {}) {
     g.ingest({ type: 'truth', slot, chest: [x, 1.3, z], yaw: slot === 'A' ? 0 : Math.PI, base: [x + .2 * s, 1.2, z], dir: [s, 0, 0] });
   };
   put('A', ...pos.A); put('B', ...pos.B);
-  const run = sec => { for (let i = 0; i < Math.round(sec / DT); i++) { t += DT; g.step(DT, DT, null, null); } };
+  const run = sec => { for (let i = 0; i < Math.round(sec / DT); i++) { t += DT; g.step(DT, DT, null); } };
   g.command({ cmd: 'matchSec', value: matchSec });
   const S = {
     g, cfg, run, put,
