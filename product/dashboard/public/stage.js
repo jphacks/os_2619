@@ -289,7 +289,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     // The 3D comes out point-symmetric (turned 180° about the picture's centre) against phone C's picture: turn the whole canvas and the
     // picture texture by 180° once more, so the picture stays as it is and only the 3D turns (the background is its own full-screen
     // plane, the camera does not touch it).
-    const flip = !!cfg.flip3rd && !fpv && !dummy;
+    const flip = !!cfg.rot180 && !fpv && !dummy && video.videoWidth > 0; // only over a live picture (without one the arena is shown from the guide spot)
     canvas.style.transform = flip ? 'rotate(180deg)' : '';
     for (const t of [videoTex, overTex]) if (t) { t.repeat.set(flip ? -1 : 1, flip ? -1 : 1); t.offset.set(flip ? 1 : 0, flip ? 1 : 0); }
     fx.render();
