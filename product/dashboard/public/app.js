@@ -12,6 +12,7 @@ import { createActions } from './actions.js';
 import { createVideoSource } from './video.js';
 import { createStage, DRONE_JA } from './stage.js';
 import { createGame, PHASE_JA, POS_JA, ELEMENT_JA, RULES, TIER_JA } from './game.js';
+import { createSmashStyle } from './fx-smash.js';
 import { createSpace } from './space3d.js';
 import { createConnect } from './connect.js';
 
@@ -23,7 +24,7 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len }, skeleton: false, skelSrc: 'both',
   minimap: true, debug: false, pip: false, fpv: null, drone: 'auto', videoSrc: 'remote', tagMode: 4, tagMount: 'stand', tagHeight: 1.0, knownFov: null,
-  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 2,
+  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 2, fxStyle: 'classic',
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
@@ -64,6 +65,7 @@ async function syncTracker() {
 const stage = createStage({ video, cfg, hub, PA, getTracker: () => tracker, isSetup: () => game.match.phase === 'setup' });
 const hudFlash = { el: null };
 const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el) });
+stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: いつもの / スマブラ風
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
 
 hub.on(k => {
@@ -134,6 +136,10 @@ gameCtrl.innerHTML = `
     <label>溜め失敗になる移動 <input data-rule="moveFail" type="number" min="5" max="300" step="5" data-scale="100"> cm</label>
     <div class="row"><button id="rulesReset">初期値に戻す</button><span class="muted" id="rulesNote"></span></div>
   </div>
+  <h3>エフェクトを試す</h3>
+  <div class="seg" id="fxStyles"><button data-fxstyle="classic">いつもの</button><button data-fxstyle="smash">スマブラ風</button></div>
+  <p class="muted" style="font-size:12px;margin:4px 0">試合中でなくても出る。ダメージは入らない。弾は相手の胸に向けて撃つ。「溜め」は押している間溜まり、離すとその段階の技を撃つ</p>
+  <div class="fxtry">${['A', 'B'].map(s => `<div class="row"><b style="color:var(--${s});width:1.4em">${s}</b>${['s', 'm', 'l'].map(t => `<button data-fxshot="${t}" data-s="${s}">${TIER_JA[t]}</button>`).join('')}<button data-fxcharge data-s="${s}">溜め（押している間）</button></div>`).join('')}</div>
   <h3>カメラ（ドローン視点）<kbd>D</kbd></h3>
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
   <h3>表示</h3>
@@ -159,6 +165,13 @@ for (const i of ruleIns) i.onchange = () => {
   if (cfg.rules.t2 <= cfg.rules.t1) cfg.rules.t2 = +(cfg.rules.t1 + .5).toFixed(2);
   save(); showRules();
 };
+for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.onclick = () => { cfg.fxStyle = b.dataset.fxstyle; save(); stage.fx.setStyle(cfg.fxStyle); };
+for (const b of gameCtrl.querySelectorAll('[data-fxshot]')) b.onclick = () => game.command({ cmd: 'fxShot', slot: b.dataset.s, tier: b.dataset.fxshot });
+for (const b of gameCtrl.querySelectorAll('[data-fxcharge]')) {
+  b.onpointerdown = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: true });
+  b.onpointerup = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: false, fire: true });
+  b.onpointerleave = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: false });
+}
 $('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg } }; save(); showRules(); };
 showRules();
 for (const pc of gameCtrl.querySelectorAll('.pc')) for (const b of pc.querySelectorAll('[data-act]')) {
@@ -293,6 +306,7 @@ function updateSlowUi() {
   gameCtrl.querySelector('[data-cmd=pause]').classList.toggle('on', m.paused);
   for (const b of document.querySelectorAll('[data-tog]')) b.classList.toggle('on', !!cfg[b.dataset.tog]);
   for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.classList.toggle('on', b.dataset.drone === stage.drone.mode);
+  for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.classList.toggle('on', b.dataset.fxstyle === stage.fx.style);
   for (const b of finalBar.querySelectorAll('[data-fpv]')) b.classList.toggle('on', (b.dataset.fpv || null) === cfg.fpv);
   for (const g of drawer.querySelectorAll('[data-seg]')) for (const b of g.querySelectorAll('button')) b.classList.toggle('on', String(cfg[g.dataset.seg]) === b.dataset.v);
   $('#why').textContent = !stage.state.scanned ? '未スキャン：最終映像の位置はずれます（最終映像の画面で「タグでスキャン」）' : !hub.phones.A.online && !hub.phones.B.online ? 'スマホ A・B が未接続：キーかボタンで操作できます' : '';

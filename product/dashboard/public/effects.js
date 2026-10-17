@@ -291,7 +291,8 @@ export function createFx(renderer, scene, camera, opts = {}) {
   const fxScene = new THREE.Scene();
   const common = { uNoise: { value: noise }, uTime: { value: 0 } };
   const addMat = (vs, fs, uniforms = {}) => new THREE.ShaderMaterial({
-    vertexShader: vs, fragmentShader: fs, uniforms: { ...common, ...uniforms }, transparent: true, depthTest: false, depthWrite: false,
+    // DoubleSide: floor sprites (sprFloor) span +x/+z, so seen from above their winding faces away and FrontSide culled them
+    vertexShader: vs, fragmentShader: fs, uniforms: { ...common, ...uniforms }, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
     blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
   });
   function batch(cap, stride, names, corners, vs, fs, uniforms) {
@@ -726,6 +727,27 @@ export function createFx(renderer, scene, camera, opts = {}) {
     return a < 2;
   }
 
+  // ---- effect styles: other sets of moves drawn with the same primitives (fx-smash.js). 'classic' is everything above. ----
+  // A style is make(kit) -> { shot?(s, dt), end?(s, reason), hit?(el, pos, power, opt), charge?(c, dt), aura?(a, dt) };
+  // a missing handler falls back to the classic one. Shots keep the style they were fired with.
+  const classic = { shot: updateShot, end: classicEnd, hit: classicHit, charge: (c, dt) => (c.el === 'fire' ? fireCharge : thunderCharge)(c, dt),
+    aura: (a, dt) => (a.el === 'fire' ? fireAura : thunderAura)(a, dt) };
+  const kit = {
+    THREE, K, S, COL, TAU, Q, R, RS, V, emit, spr, sprFloor, seg, segV, Bolt, gen, drawBolt, runit, u3, take, flick, sc, shake,
+    fireBurst, sparkBurst, trailFire, headFire, add, classic, get time() { return time; },
+  };
+  const styles = { classic }; let style = classic, styleName = 'classic';
+  function classicEnd(s) {
+    const p = s.pos;
+    if (s.el === 'fire') for (let i = 0; i < 25 * Q; i++) { runit(); emit(p.x, p.y, p.z, u3[0] * .6, u3[1] * .6 + .3, u3[2] * .6, .3 + .2 * R(), .08, .14, 3, 1, COL.one, K.FLAME, 1, .2, 0, 0); }
+    else sparkBurst(p, .2, 30, .5);
+  }
+  function classicHit(element, pos, power) {
+    if (element === 'fire') fireBurst(pos, power); else sparkBurst(pos, power, 220 + 260 * power);
+    add({ update: element === 'fire' ? hitFire : hitThunder, el: element, pos: pos.clone(), power, bolts: element === 'fire' ? [] : Array.from({ length: 10 }, () => new Bolt(160)) });
+    shake(.25 + .75 * power);
+  }
+
   // ---- render targets / bloom ----
   const rtOpts = { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, stencilBuffer: false };
   const fxRT = new THREE.WebGLRenderTarget(1, 1, rtOpts);
@@ -785,27 +807,31 @@ export function createFx(renderer, scene, camera, opts = {}) {
 
   return {
     opts,
-    aura(element, base, tip, intensity = 1, key = element) { const st = request(auras, key, element); st.base.copy(base); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, intensity)); },
-    charge(element, tip, level, key = element) { const st = request(charges, key, element); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, level)); },
-    /** big: overall size of the projectile (1 = the usual shot; the game's 小・中・大 tiers pass different sizes). */
-    shot(element, pos, dir, power = .5, big = 1) {
+    /** opt (styles may use it): { charging, level 0..1, tier 's'|'m'|'l'|null, chest: Vector3, feet: Vector3 } */
+    aura(element, base, tip, intensity = 1, key = element, opt = {}) { const st = request(auras, key, element); st.base.copy(base); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, intensity)); st.opt = opt; },
+    /** opt: { tier, chargeT } */
+    charge(element, tip, level, key = element, opt = {}) { const st = request(charges, key, element); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, level)); st.opt = opt; },
+    /** big: overall size of the projectile (1 = the usual shot; the game's 小・中・大 tiers pass different sizes). opt: { tier } */
+    shot(element, pos, dir, power = .5, big = 1, opt = {}) {
       const id = nextId++;
-      shots.set(id, { id, el: element, pos: pos.clone(), prev: pos.clone(), dir: dir.clone().normalize(), power, big, travel: 0, acc: {}, regen: 0, seed: R(), bolts: Array.from({ length: 6 }, () => new Bolt(96)) });
+      shots.set(id, { id, el: element, pos: pos.clone(), prev: pos.clone(), from: pos.clone(), dir: dir.clone().normalize(), power, big, tier: opt.tier ?? null, age: 0, travel: 0, acc: {}, regen: 0, seed: R(),
+        bolts: Array.from({ length: 6 }, () => new Bolt(96)), st: style });
       return id;
     },
     moveShot(id, pos) { shots.get(id)?.pos.copy(pos); },
-    endShot(id) {
+    /** reason: 'hit' | 'floor' | 'timeout' (game.js); a style may leave something behind (a pillar of fire where it landed). */
+    endShot(id, reason = 'timeout') {
       const s = shots.get(id); if (!s) return;
       shots.delete(id);
-      const p = s.pos;
-      if (s.el === 'fire') for (let i = 0; i < 25 * Q; i++) { runit(); emit(p.x, p.y, p.z, u3[0] * .6, u3[1] * .6 + .3, u3[2] * .6, .3 + .2 * R(), .08, .14, 3, 1, COL.one, K.FLAME, 1, .2, 0, 0); }
-      else sparkBurst(p, .2, 30, .5);
+      (s.st.end ?? classicEnd)(s, reason);
     },
-    hit(element, pos, power = .5) {
-      if (element === 'fire') fireBurst(pos, power); else sparkBurst(pos, power, 220 + 260 * power);
-      add({ update: element === 'fire' ? hitFire : hitThunder, el: element, pos: pos.clone(), power, bolts: element === 'fire' ? [] : Array.from({ length: 10 }, () => new Bolt(160)) });
-      shake(.25 + .75 * power);
-    },
+    /** opt: { tier } */
+    hit(element, pos, power = .5, opt = {}) { (style.hit ?? classicHit)(element, pos, power, opt); },
+    /** Adds a style: make(kit) -> handlers (see above). */
+    addStyle(name, make) { styles[name] = { ...make(kit) }; if (name === styleName) style = styles[name]; },
+    setStyle(name) { styleName = name; style = styles[name] ?? classic; },
+    get style() { return styleName; },
+    get styles() { return Object.keys(styles); },
     dodge(element, pos, dir) {
       const d = dir.clone().normalize(), col = element === 'fire' ? COL.ember : COL.spark;
       for (let i = 0; i < 45 * Q; i++) {
@@ -829,10 +855,10 @@ export function createFx(renderer, scene, camera, opts = {}) {
     step(dt) {
       dt = Math.min(Math.max(dt, 0), .1); time += dt;
       nS = 0; nG = 0;
-      for (const [k, a] of auras) { if (time - a.seen > .15) { auras.delete(k); continue; } (a.el === 'fire' ? fireAura : thunderAura)(a, dt); }
+      for (const [k, a] of auras) { if (time - a.seen > .15) { auras.delete(k); continue; } (style.aura ?? classic.aura)(a, dt); }
       for (const [k, g] of guards) { if (time - g.seen > .15) { guards.delete(k); continue; } guardFx(g, dt); }
-      for (const [k, c] of charges) { if (time - c.seen > .15) { charges.delete(k); continue; } if (c.v > 0) (c.el === 'fire' ? fireCharge : thunderCharge)(c, dt); }
-      for (const s of shots.values()) { s.regen ??= 0; updateShot(s, dt); }
+      for (const [k, c] of charges) { if (time - c.seen > .15) { charges.delete(k); continue; } if (c.v > 0) (style.charge ?? classic.charge)(c, dt); }
+      for (const s of shots.values()) { s.regen ??= 0; (s.st.shot ?? updateShot)(s, dt); s.age += dt; }
       for (let i = live.length - 1; i >= 0; i--) {
         const e = live[i]; e.dt = dt;
         if (!e.update(e, dt)) live.splice(i, 1);

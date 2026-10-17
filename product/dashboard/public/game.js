@@ -92,9 +92,14 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
 
   function effects(p) {
     const s = sfx();
-    if (match.phase !== 'setup' && (p.online || p.imu)) { // no effects while setting up
-      fx.aura(p.element, p.base, p.tip, p.charging ? .6 + .4 * p.charge : .5);
-      if (p.charging) fx.charge(p.element, p.tip, p.charge);
+    // try-out charge (fxTest, any phase): the same level / tier the real charge would have after that long
+    const pv = p.preview ? Math.max(0, now() - p.preview) : null;
+    const charging = p.charging || pv !== null, chargeT = pv ?? p.chargeT, level = pv !== null ? Math.min(1, pv / rules().t2) : p.charge;
+    const tier = charging ? (pv !== null ? tierOf(pv) : p.tier) : null;
+    if ((match.phase !== 'setup' && (p.online || p.imu)) || pv !== null) { // no effects while setting up (except the try-out)
+      fx.aura(p.element, p.base, p.tip, charging ? .6 + .4 * level : .5, p.element,
+        { charging, level, tier, chest: p.chest, feet: V(p.chest.x, 0, p.chest.z) });
+      if (charging) fx.charge(p.element, p.tip, level, p.element, { tier, chargeT });
       s?.aura(p.slot, p.element, match.paused ? 0 : p.charging ? .6 + .4 * p.charge : .4, panOf(p.chest));
     } else s?.aura(p.slot, p.element, 0, 0);
   }
@@ -111,7 +116,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
     if (tier === 'l') { s?.special(p.element, panOf(p.tip)); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
     else { s?.shot(p.element, panOf(p.tip), T.power); drone?.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() }); }
-    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big), owner: p, element: p.element, tier, pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now() });
+    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big, { tier }), owner: p, element: p.element, tier, pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now() });
     log(p.slot, tier === 'l' ? 'special' : 'shot', `${TIER_JA[tier]}の攻撃${tier === 's' ? '' : `（溜め ${p.chargeT.toFixed(1)} 秒）`}`);
     return true;
   }
@@ -135,6 +140,12 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     const d = tr[end].p.clone().sub(tr[j].p);
     return d.lengthSq() > 1e-6 ? d.normalize() : null;
   }
+  function fxShot(p, tier) { // try-out: aimed at the other player's chest so it always shows the hit too
+    const T = TIER[tier], foe = other(p), aim = foe.chest.clone().sub(p.tip).normalize();
+    if (tier === 'l') sfx()?.special(p.element, panOf(p.tip)); else sfx()?.shot(p.element, panOf(p.tip), T.power);
+    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big, { tier }), owner: p, element: p.element, tier, test: true, pos: p.tip.clone(), vel: aim.multiplyScalar(T.speed), born: now() });
+    showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
+  }
   function damage(foe, from, tier) {
     const n = Math.round(+rules().dmg[tier] || 0);
     from.hits++; from.dealt += n; log(from.slot, 'hit', `${foe.slot} に${TIER_JA[tier]}が命中 ${n} ダメージ`);
@@ -150,13 +161,14 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       fx.moveShot(s.id, s.pos);
       // hit: distance to the opponent's vertical body segment (capsule radius .3 + the shot's own radius)
       const a = foe.chest.clone().setY(foe.chest.y - 1.05), b = foe.chest.clone().setY(foe.chest.y + .15);
-      const hit = match.phase === 'fight' && new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .3 + T.radius;
+      const hit = (match.phase === 'fight' || s.test) && new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .3 + T.radius;
       if (hit) {
-        fx.hit(s.owner.element, s.pos.clone(), T.hit); sfx()?.hit(s.owner.element, panOf(s.pos), T.hit);
+        fx.hit(s.owner.element, s.pos.clone(), T.hit, { tier: s.tier }); sfx()?.hit(s.owner.element, panOf(s.pos), T.hit);
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
-        damage(foe, s.owner, s.tier);
+        if (!s.test) damage(foe, s.owner, s.tier); // try-out shots only show
       }
-      if (hit || s.pos.y < 0 || now() - s.born > 1.6) { fx.endShot(s.id); shots.splice(i, 1); } // y < 0: into the floor
+      const end = hit ? 'hit' : s.pos.y < 0 ? 'floor' : now() - s.born > 1.6 ? 'timeout' : null; // y < 0: into the floor
+      if (end) { fx.endShot(s.id, end); shots.splice(i, 1); }
     }
   }
   function showAct(p, text) { p.act = { text, at: now() }; }
@@ -208,6 +220,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function reset() {
     for (const p of Object.values(players)) Object.assign(p, { hp: 100, charge: 0, chargeT: 0, charging: false, tier: null, autoRelease: null, act: null, lastShot: -9, shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 });
     for (const s of shots) fx.endShot(s.id); shots.length = 0; winner = null;
+    for (const p of Object.values(players)) p.preview = null;
   }
   function setPhase(ph) {
     if (ph === 'demo') ph = 'setup'; // the demo is gone (10/17)
@@ -241,6 +254,13 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         startCharge(p); p.autoRelease = rules().t2 + .3; return;
       case 'charge': if (!p) return;
         if (c.on) startCharge(p); else release(p);
+        return;
+      // ---- effect try-out (any phase, no damage, no rules): fxShot fires one tier straight at the other player,
+      // fxCharge on / off shows the charge as it grows (and fires the tier it reached when turned off with fire: true)
+      case 'fxShot': if (p) fxShot(p, c.tier ?? 's'); return;
+      case 'fxCharge': if (!p) return;
+        if (c.on) p.preview = now();
+        else if (p.preview) { const t = now() - p.preview; p.preview = null; if (c.fire) fxShot(p, tierOf(t)); }
         return;
     }
   }
