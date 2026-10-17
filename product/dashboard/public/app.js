@@ -1,0 +1,310 @@
+// 棒バトル ダッシュボード: one page, four screens, one match.
+//   1 接続     phones A / B (SensorLink app over /ws) and phone C (cam.html over /cam), everything they send
+//   2 3D空間   phones, swords and AprilTags in the field world (phonealign.js), dark and raw
+//   3 ゲーム   the match in the stylised 3D arena: magic attacks, charge meters, guard / dodge, HP (game.js + stage.js)
+//   4 最終映像 the same 3D state projected onto phone C's live picture (camera pose from the tag scan)
+// Data: hub.js → phonealign.js (positions), map.js (the sensing team's estimate, for comparison), actions.js (moves) → game.js.
+import * as W from './world.js';
+import { createHub } from './hub.js';
+import { createPhoneAlign } from './phonealign.js';
+import { createMap } from './map.js';
+import { createActions } from './actions.js';
+import { createVideoSource } from './video.js';
+import { createStage, DRONE_JA } from './stage.js';
+import { createGame, PHASE_JA, POS_JA, ELEMENT_JA } from './game.js';
+import { createSpace } from './space3d.js';
+import { createConnect } from './connect.js';
+
+const $ = s => document.querySelector(s);
+const nowS = () => Date.now() / 1000;
+const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
+
+// ---- settings (localStorage) ----
+const DEFAULTS = {
+  posSrc: 'auto', hand: 'R', aim: 'stick', stickLen: { A: W.STICK.len, B: W.STICK.len }, skeleton: false, skelSrc: 'both',
+  minimap: true, debug: false, pip: false, fpv: null, drone: 'auto', videoSrc: 'remote', tagMode: 4, tagMount: 'stand', tagHeight: 1.0, knownFov: null,
+  matchSec: 90, test: false, useTruth: false, screen: 'connect',
+};
+const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
+const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
+const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
+const axis = {}; // IMU sensor axis along each stick (sensing: calibrated by holding the stick straight up)
+for (const s of ['A', 'B']) { try { axis[s] = JSON.parse(localStorage.getItem('pd-axis' + s)) ?? [1, 0, 0]; } catch { axis[s] = [1, 0, 0]; } }
+
+// ---- data ----
+const hub = createHub();
+const PA = createPhoneAlign();
+const smap = createMap();
+const detectors = createActions();
+const video = Object.assign(document.createElement('video'), { muted: true, playsInline: true });
+video.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none'; document.body.append(video);
+const vsrc = createVideoSource(video, { onChange: () => { stage?.resize(); syncTracker(); } });
+
+let sfx = null; // sound: loaded lazily so a failing module never stops the picture
+import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const v = JSON.parse(localStorage.getItem('pd-vol')); if (v) for (const [k, x] of Object.entries(v)) sfx.setVolume(k, x); } catch {} }).catch(e => console.warn('audio', e));
+
+// positions from phone C's picture (posetrack.js), loaded only when that source can be used
+let tracker = null, trackerLoading = false, trackerErr = '';
+async function syncTracker() {
+  const want = (cfg.posSrc === 'camera' || cfg.posSrc === 'auto') && video.videoWidth > 0;
+  if (!want) { tracker?.stop(); tracker = null; return; }
+  if (tracker || trackerLoading) return;
+  trackerLoading = true;
+  try {
+    const P = await import('./posetrack.js');
+    tracker = P.createPoseTracker({ video, getCamera: () => stage.state.tagCam });
+    await tracker.start(); trackerErr = '';
+  } catch (e) { trackerErr = '骨格推定を読み込めない（ネット接続が必要）: ' + e.message; tracker = null; } finally { trackerLoading = false; }
+}
+
+const stage = createStage({ video, cfg, hub, PA, getTracker: () => tracker, isSetup: () => game.match.phase === 'setup' });
+const hudFlash = { el: null };
+const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el) });
+game.command({ cmd: 'matchSec', value: cfg.matchSec });
+
+hub.on(k => {
+  PA.ingest(k); smap.ingest(k);
+  if (k.type === 'phones') { game.setOnline(k.list); return; }
+  connect.ingest(k); game.ingest(k);
+  if (k.type === 'truth') vsrc.dummy?.setTruth(k.slot, k); // fake-world.mjs: the dummy room shows the simulated players
+  if (k.type === 'imu' || k.type === 'ar' || k.type === 'calib')
+    for (const ev of detectors.ingest(k, axis[k.slot])) { connect.logAction(ev); game.onSensed(ev); }
+});
+
+// ---- screens ----
+const connect = createConnect({ cards: $('#phoneCards'), side: $('#connectSide'), hub, vsrc, cfg, axis,
+  onAxis: (s, v) => { axis[s] = v; try { localStorage.setItem('pd-axis' + s, JSON.stringify(v)); } catch {} },
+  onStick: (s, v) => { cfg.stickLen[s] = v; save(); },
+  onVideoSrc: v => { cfg.videoSrc = v; save(); vsrc.set(v); } });
+const space = createSpace({ view: $('#spaceView'), legendEl: $('#spaceLegend'), panelEl: $('#spacePanel'), hub, PA, getStage: () => stage, getGame: () => game, getMap: () => smap, cfg });
+
+// HUD lives inside the stage, so it follows the canvas between the game and final screens
+const hud = $('#hudTpl').content.firstElementChild.cloneNode(true);
+stage.el.append(hud);
+stage.attachMinimap(hud.querySelector('.minimap'));
+hudFlash.el = hud.querySelector('.flash');
+function flash(el) {
+  const f = hudFlash.el; f.style.transition = 'none'; f.style.opacity = .5;
+  f.style.background = el === 'fire' ? 'radial-gradient(#ff7a1a, transparent 70%)' : 'radial-gradient(#bfe8ff, transparent 70%)';
+  requestAnimationFrame(() => { f.style.transition = 'opacity .35s'; f.style.opacity = 0; });
+}
+
+let screen = null;
+function show(name) {
+  if (!['connect', 'space', 'game', 'final'].includes(name)) name = 'connect';
+  screen = name; cfg.screen = name; save();
+  for (const s of document.querySelectorAll('.screen')) s.classList.toggle('active', s.id === 'scr-' + name);
+  for (const b of document.querySelectorAll('nav.tabs button')) b.setAttribute('aria-selected', b.dataset.screen === name);
+  if (name === 'game') stage.attach($('#gameBox'), 'game');
+  if (name === 'final') stage.attach($('#finalBox'), 'final');
+  if (name === 'space') space.resize();
+  if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
+}
+for (const b of document.querySelectorAll('nav.tabs button')) b.onclick = () => show(b.dataset.screen);
+addEventListener('hashchange', () => show(location.hash.slice(1)));
+
+// ---- game screen controls ----
+const gameCtrl = $('#gameCtrl');
+gameCtrl.innerHTML = `
+  <h3>試合の進行</h3>
+  <div class="phase">
+    <button data-phase="setup">準備中<kbd>1</kbd></button><button data-phase="demo">デモ<kbd>2</kbd></button>
+    <button data-phase="fight" class="go">試合開始<kbd>3</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
+  </div>
+  <div class="row" style="margin-top:6px"><button data-cmd="reset">やり直し<kbd>R</kbd></button><label class="kv">試合時間 <input id="secIn" type="number" min="10" max="600" step="10" style="width:64px"> 秒</label></div>
+  <p class="why" id="why"></p>
+  <h3>プレイヤー</h3>
+  <div class="players2">${['A', 'B'].map(s => `
+    <div class="pc" data-s="${s}"><div class="row" style="justify-content:space-between"><b style="color:var(--${s})">${s} ${ELEMENT_JA[s === 'A' ? 'fire' : 'thunder']}</b><span class="num hpv"></span></div>
+      <div class="facts"></div>
+      <div class="row" style="margin-top:4px"><button data-act="shoot">発射</button><button data-act="charge">溜め</button><button data-act="special">必殺技</button><button data-act="guard">ガード</button><button data-act="dodge">回避</button></div></div>`).join('')}
+  </div>
+  <h3>カメラ（ドローン視点）<kbd>D</kbd></h3>
+  <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
+  <h3>表示</h3>
+  <div class="row"><button data-tog="skeleton">骨格</button><button data-tog="minimap">ミニマップ<kbd>M</kbd></button><button data-tog="debug">デバッグ<kbd>G</kbd></button></div>
+  <h3>攻撃・防御の記録</h3>
+  <ul class="log" id="gameLog"></ul>`;
+for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.onclick = () => game.command({ cmd: 'phase', phase: b.dataset.phase });
+gameCtrl.querySelector('[data-cmd=pause]').onclick = () => game.command({ cmd: 'pause' });
+gameCtrl.querySelector('[data-cmd=reset]').onclick = () => game.command({ cmd: 'reset' });
+const secIn = $('#secIn'); secIn.value = cfg.matchSec;
+secIn.onchange = () => { cfg.matchSec = Math.max(10, +secIn.value || 90); save(); game.command({ cmd: 'matchSec', value: cfg.matchSec }); };
+for (const pc of gameCtrl.querySelectorAll('.pc')) for (const b of pc.querySelectorAll('[data-act]')) {
+  const slot = pc.dataset.s, a = b.dataset.act;
+  if (a === 'charge') { b.onpointerdown = () => game.command({ cmd: 'charge', slot, on: true }); b.onpointerup = b.onpointerleave = () => game.command({ cmd: 'charge', slot, on: false }); b.title = '押している間溜める'; }
+  else b.onclick = () => game.command({ cmd: a, slot, dir: slot === 'A' ? 'left' : 'right' });
+}
+for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.onclick = () => { stage.drone.setMode(b.dataset.drone); cfg.drone = b.dataset.drone; save(); };
+const toggle = k => { cfg[k] = !cfg[k]; save(); };
+for (const b of document.querySelectorAll('[data-tog]')) b.onclick = () => toggle(b.dataset.tog);
+
+// ---- final screen toolbar ----
+const finalBar = $('#finalBar');
+finalBar.innerHTML = `
+  <button id="scanBtn" class="go">タグでスキャン<kbd>K</kbd></button>
+  <span class="kv" id="tagCheck"></span>
+  <span class="msg" id="finalMsg"></span>
+  <div class="seg" id="fpvs"><button data-fpv="">第三者カメラ</button><button data-fpv="A">A の胸</button><button data-fpv="B">B の胸</button></div>
+  <button data-tog="pip">小窓に 3D</button><button data-tog="skeleton">骨格</button>
+  <button id="fullBtn">全画面<kbd>F</kbd></button>`;
+$('#scanBtn').onclick = () => scan();
+for (const b of finalBar.querySelectorAll('[data-tog]')) b.onclick = () => toggle(b.dataset.tog);
+for (const b of finalBar.querySelectorAll('[data-fpv]')) b.onclick = () => { cfg.fpv = b.dataset.fpv || null; save(); stage.resize(); stage.applyCam(); };
+$('#fullBtn').onclick = () => fullscreen();
+function fullscreen() { const box = $('#finalBox'); document.fullscreenElement ? document.exitFullscreen() : box.requestFullscreen?.().then(() => setTimeout(stage.resize, 100)); }
+document.addEventListener('fullscreenchange', () => setTimeout(stage.resize, 50));
+async function scan() { game.command({ cmd: 'phase', phase: 'setup' }); vsrc.dummy?.showPlayers(false); await stage.scan(); vsrc.dummy?.showPlayers(true); }
+
+// ---- settings drawer ----
+const drawer = $('#settings');
+const seg = (key, opts, after) => `<div class="seg" data-seg="${key}">${Object.entries(opts).map(([k, v]) => `<button data-v="${k}">${v}</button>`).join('')}</div>${after ?? ''}`;
+drawer.innerHTML = `
+  <h2>設定<span class="grow"></span><button id="closeSettings">閉じる<kbd>Esc</kbd></button></h2>
+  <section><h3>プレイヤーの位置</h3>${seg('posSrc', POS_JA)}
+    <p class="note">自動：胸スマホがタグで合っていればそれ、なければスマホ C の映像の骨格、どちらもなければ直前の位置。</p>
+    <h3>棒を持つ手（カメラ映像のとき）</h3><div class="row">${seg('hand', { R: '右手', L: '左手' })}<button id="swapAB">A・B を入れ替える</button></div>
+    <h3>3D に出す骨格</h3>${seg('skelSrc', { camera: 'スマホ C の映像', phones: '胸スマホ', both: '両方' })}</section>
+  <section><h3>タグのスキャン（スマホ C）</h3>${seg('tagMode', { 2: '2枚（ID 0・1）', 4: '4枚（ID 0〜3）' })}
+    <div style="height:6px"></div>${seg('tagMount', { stand: '立てる', floor: '床に置く' })}
+    <label class="f"><span>タグ中心の高さ</span><input type="number" id="tagHeight" min="0.1" max="3" step="0.05"><output>m</output></label>
+    <p class="note" id="fovNote"></p>
+    <div class="row"><button id="forgetFov">覚えた画角を消す</button><button id="clearScan">スキャン結果を消す</button></div>
+    <p class="note">人がいない状態で、フィールドの角に置いたタグがスマホ C の映像に全部入るようにしてからスキャンする。床のタグなら 2 枚のとき左が A 側。</p></section>
+  <section><h3>ゲーム</h3>
+    <label class="f"><span>狙い</span><select id="aimSel"><option value="stick">棒の向き</option><option value="eye">目から棒先へ</option></select><span></span></label>
+    <div class="row"><button data-tog="test">テスト（HP が減らない）</button><button data-tog="useTruth">正解位置（シミュレーター）</button></div></section>
+  <section><h3>音</h3>
+    ${['master:全体', 'bgm:BGM', 'sfx:効果音', 'amb:環境音'].map(x => { const [k, n] = x.split(':'); return `<label class="f"><span>${n}</span><input type="range" min="0" max="1" step="0.01" data-vol="${k}"><output data-volout="${k}"></output></label>`; }).join('')}
+    <div class="row"><button id="mute">消音</button><span class="note" id="audioInfo"></span></div>
+    <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の必殺技'], ['specialThunder', '雷の必殺技']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}</div></section>
+  <section><h3>キー操作</h3><table class="keys">
+    <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
+    <tr><td>Space / Enter</td><td>A / B が発射</td></tr><tr><td>Q / P 長押し</td><td>A / B が溜める（最大で離すと必殺技）</td></tr>
+    <tr><td>Z / ,</td><td>A / B が回避</td></tr><tr><td>X / .</td><td>A / B のガード切り替え</td></tr>
+    <tr><td>K</td><td>タグでスキャン</td></tr><tr><td>D</td><td>ドローン視点の切り替え</td></tr><tr><td>M / G</td><td>ミニマップ / デバッグ表示</td></tr><tr><td>F</td><td>最終映像を全画面</td></tr><tr><td>S</td><td>設定</td></tr></table></section>`;
+$('#openSettings').onclick = () => drawer.classList.toggle('open');
+$('#closeSettings').onclick = () => drawer.classList.remove('open');
+for (const g of drawer.querySelectorAll('[data-seg]')) for (const b of g.querySelectorAll('button')) b.onclick = () => {
+  const k = g.dataset.seg; cfg[k] = k === 'tagMode' ? +b.dataset.v : b.dataset.v; save();
+  if (k === 'posSrc') syncTracker();
+};
+for (const b of drawer.querySelectorAll('[data-tog]')) b.onclick = () => toggle(b.dataset.tog);
+$('#swapAB').onclick = () => tracker?.setSwap?.();
+const tagH = $('#tagHeight'); tagH.value = cfg.tagHeight; tagH.onchange = () => { cfg.tagHeight = Math.max(.1, Math.min(3, +tagH.value || 1)); save(); };
+$('#forgetFov').onclick = () => { cfg.knownFov = null; save(); };
+$('#clearScan').onclick = () => confirm('スキャンしたフィールドとカメラの位置を消しますか？') && stage.clearScan();
+const aimSel = $('#aimSel'); aimSel.value = cfg.aim; aimSel.onchange = () => { cfg.aim = aimSel.value; save(); };
+for (const r of drawer.querySelectorAll('[data-vol]')) r.oninput = () => {
+  sfx?.setVolume(r.dataset.vol, +r.value);
+  try { localStorage.setItem('pd-vol', JSON.stringify(sfx?.volumes ?? {})); } catch {}
+};
+$('#mute').onclick = () => sfx?.setMuted(!sfx.muted);
+for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
+  if (!sfx) return; sfx.unlock?.();
+  ({ shotFire: () => sfx.shot('fire', 0, .6), shotThunder: () => sfx.shot('thunder', 0, .6), hitFire: () => sfx.hit('fire', 0, .7), hitThunder: () => sfx.hit('thunder', 0, .7),
+    specialFire: () => sfx.special('fire', 0), specialThunder: () => sfx.special('thunder', 0) })[b.dataset.sound]?.();
+};
+
+// ---- keys ----
+const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 2: { cmd: 'phase', phase: 'demo' }, 3: { cmd: 'phase', phase: 'fight' }, 4: { cmd: 'pause' }, r: { cmd: 'reset' },
+  ' ': { cmd: 'shoot', slot: 'A' }, Enter: { cmd: 'shoot', slot: 'B' }, z: { cmd: 'dodge', slot: 'A', dir: 'left' }, x: { cmd: 'guard', slot: 'A' },
+  ',': { cmd: 'dodge', slot: 'B', dir: 'right' }, '.': { cmd: 'guard', slot: 'B' } };
+const held = { q: 'A', p: 'B' };
+addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) || e.repeat || e.ctrlKey || e.metaKey) return;
+  if (e.altKey) { const n = { Digit1: 'connect', Digit2: 'space', Digit3: 'game', Digit4: 'final' }[e.code]; if (n) { e.preventDefault(); show(n); } return; }
+  if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (held[k]) return game.command({ cmd: 'charge', slot: held[k], on: true });
+  if (KEYS[k]) return game.command(KEYS[k]);
+  if (k === 'k') scan();
+  else if (k === 'd') { stage.drone.next(); cfg.drone = stage.drone.mode; save(); }
+  else if (k === 'm') toggle('minimap'); else if (k === 'g') toggle('debug');
+  else if (k === 'f' && screen === 'final') fullscreen();
+  else if (k === 's') drawer.classList.toggle('open');
+  else if (k === 'Escape') drawer.classList.remove('open');
+});
+addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k]) game.command({ cmd: 'charge', slot: held[k], on: false }); });
+
+// ---- per-frame UI ----
+function pill(id, state) { const p = $(id); p.classList.toggle('on', state === true); p.classList.toggle('half', state === 'half'); }
+const hudP = Object.fromEntries(['A', 'B'].map(s => { const el = hud.querySelector('.pl.' + s); return [s, { el, hp: el.querySelector('.hp i'), ch: el.querySelector('.ch'), chi: el.querySelector('.ch i'), hpn: el.querySelector('.hpn'), act: el.querySelector('.act'), chips: Object.fromEntries([...el.querySelectorAll('.chips span')].map(c => [c.className.split(' ')[0], c])) }]; }));
+const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
+function updateHud() {
+  const m = game.match;
+  for (const p of Object.values(game.players)) {
+    const h = hudP[p.slot];
+    h.hp.style.width = p.hp + '%'; setText(h.hpn, String(Math.round(p.hp)));
+    h.chi.style.width = (p.charging ? p.charge * 100 : 0) + '%'; h.ch.classList.toggle('full', p.charging && p.charge >= 1);
+    h.chips.off.classList.toggle('on', !p.online && !p.imu);
+    h.chips.charge.classList.toggle('on', p.charging);
+    h.chips.guard.classList.toggle('on', p.guard);
+    h.chips.dodge.classList.toggle('on', game.dodging(p));
+    setText(h.act, p.guard ? '' : game.actText(p));
+  }
+  const showTimer = m.phase === 'fight' || m.phase === 'result';
+  setText(hud.querySelector('.timer'), showTimer ? `${Math.floor(Math.ceil(m.left) / 60)}:${String(Math.ceil(m.left) % 60).padStart(2, '0')}` : '');
+  const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : m.phase === 'demo' ? 'デモ' : '';
+  setText(pp, pt); pp.style.display = pt ? '' : 'none';
+  const bt = game.bannerText(), bn = hud.querySelector('.banner');
+  bn.style.display = bt ? 'grid' : 'none'; setText(bn, bt);
+  setText(hud.querySelector('.status'), cfg.debug ? `位置: A ${POS_JA[game.players.A.src] ?? game.players.A.src} / B ${POS_JA[game.players.B.src] ?? game.players.B.src}　ドローン: ${DRONE_JA[stage.drone.mode]}（${stage.drone.shot}）　${stage.state.msg}` : '');
+}
+const LOG_ICON = { shot: '発射', special: '必殺', hit: '命中', block: '防御', dodge: '回避', guard: 'ガード', charge: '溜め', phase: '進行', win: '勝敗' };
+let logKey = '';
+function updateSlowUi() {
+  const m = game.match, P = game.players;
+  pill('#pillA', hub.phones.A.online); pill('#pillB', hub.phones.B.online);
+  const st = vsrc.state; pill('#pillC', video.videoWidth ? true : st.mode === 'remote' && st.cam ? 'half' : false);
+  $('#pillC span:last-child').textContent = st.mode === 'remote' ? 'カメラ' : st.mode === 'local' ? 'PCカメラ' : 'ダミー';
+  pill('#pillLink', hub.link === 'open');
+  for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.classList.toggle('on', b.dataset.phase === m.phase || (b.dataset.phase === 'fight' && ['countdown', 'fight', 'result'].includes(m.phase)));
+  gameCtrl.querySelector('[data-cmd=pause]').classList.toggle('on', m.paused);
+  for (const b of document.querySelectorAll('[data-tog]')) b.classList.toggle('on', !!cfg[b.dataset.tog]);
+  for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.classList.toggle('on', b.dataset.drone === stage.drone.mode);
+  for (const b of finalBar.querySelectorAll('[data-fpv]')) b.classList.toggle('on', (b.dataset.fpv || null) === cfg.fpv);
+  for (const g of drawer.querySelectorAll('[data-seg]')) for (const b of g.querySelectorAll('button')) b.classList.toggle('on', String(cfg[g.dataset.seg]) === b.dataset.v);
+  $('#why').textContent = !stage.state.scanned ? '未スキャン：最終映像の位置はずれます（最終映像の画面で「タグでスキャン」）' : !hub.phones.A.online && !hub.phones.B.online ? 'スマホ A・B が未接続：キーかボタンで操作できます' : '';
+  for (const pc of gameCtrl.querySelectorAll('.pc')) {
+    const p = P[pc.dataset.s];
+    pc.querySelector('.hpv').textContent = `HP ${Math.round(p.hp)}`;
+    pc.querySelector('.facts').innerHTML = `${p.online ? '接続中' : p.imu ? 'IMU のみ' : '未接続'} · 位置 ${POS_JA[p.src] ?? (p.src === 'hold' ? '保持' : p.src)}${p.charging ? ` · 溜め ${Math.round(p.charge * 100)}%` : ''}${p.guard ? ' · ガード' : ''}${game.dodging(p) ? ' · 回避中' : ''}<br>発射 ${p.shots} · 命中 ${p.hits} · 防御 ${p.blocks} · 回避 ${p.dodges} · 必殺 ${p.specials}`;
+  }
+  const key = game.events.length + ':' + (game.events[0]?.at ?? 0);
+  if (key !== logKey) {
+    logKey = key;
+    $('#gameLog').innerHTML = game.events.slice(0, 80).map(e => `<li><span class="t">${new Date(e.at).toLocaleTimeString('ja-JP', { hour12: false })}</span><b style="color:${e.slot ? `var(--${e.slot})` : 'var(--muted)'}">${e.slot ?? '—'}</b><span><span class="muted">${LOG_ICON[e.kind] ?? ''}</span> ${esc(e.text)}</span></li>`).join('') || '<li class="muted">まだありません</li>';
+  }
+  const checks = stage.tagChecks(), fresh = performance.now() / 1000 - stage.seenTags.at < 3;
+  $('#tagCheck').innerHTML = video.videoWidth && !video.__dummy ? checks.map(c => `<span class="${fresh && c.seen ? (c.px < 14 ? 'warn' : 'ok') : 'bad'}">ID${c.id}${fresh && c.seen ? (c.px < 14 ? ' 小さい' : ' ✓') : ' ×'}</span>`).join(' ') : '';
+  $('#finalMsg').textContent = [!video.videoWidth ? (vsrc.state.msg || '映像なし') : '', stage.state.msg, trackerErr].filter(Boolean).join('　');
+  $('#fovNote').textContent = cfg.knownFov ? `覚えた縦画角 ${cfg.knownFov.toFixed(1)}°（立てたタグのスキャンで使う）` : '画角はまだ覚えていない（床置きか、まっすぐ立てた状態のスキャンで覚える）';
+  for (const r of drawer.querySelectorAll('[data-vol]')) { const v = sfx?.volumes?.[r.dataset.vol]; if (v != null && document.activeElement !== r) r.value = v; drawer.querySelector(`[data-volout=${r.dataset.vol}]`).textContent = v != null ? Math.round(v * 100) : '--'; }
+  $('#mute').textContent = sfx?.muted ? '消音を解除' : '消音';
+  $('#audioInfo').textContent = !sfx ? '読み込み中' : !sfx.unlocked ? 'ページを一度クリックすると音が出ます' : '';
+}
+
+// ---- main loop ----
+let last = performance.now() / 1000, fps = 60, lastSlow = 0, est = PA.estimate(nowS());
+function frame(ts) {
+  requestAnimationFrame(frame);
+  if (ts && ts - (frame.at ?? -1e9) < 1000 / 60 - 2) return; // 120 Hz screens: no visible gain for twice the work
+  frame.at = ts;
+  const t = performance.now() / 1000, raw = t - last, dt = Math.min(.05, raw); last = t;
+  fps = .95 * fps + .05 / Math.max(raw, 1e-3);
+  try { est = PA.estimate(nowS()); } catch (e) { console.warn('phonealign', e); }
+  game.step(dt, raw, est, tracker);
+  if (screen === 'game' || screen === 'final') { stage.render(dt, game, est); updateHud(); }
+  else stage.fx.step(dt); // effects keep their time even when nobody looks
+  if (screen === 'space') space.frame(nowS(), est);
+  if (screen === 'connect') connect.frame();
+  if (t - lastSlow > .2) { lastSlow = t; updateSlowUi(); $('#pillFps').textContent = `${fps.toFixed(0)} fps`; }
+}
+
+stage.drone.setMode(cfg.drone);
+vsrc.set(new URLSearchParams(location.search).has('dummy') ? 'dummy' : cfg.videoSrc);
+video.addEventListener('playing', syncTracker);
+show(location.hash.slice(1) || cfg.screen);
+requestAnimationFrame(frame);
+window.__pd = { game, stage, PA, hub, cfg, vsrc, get est() { return est; }, get tracker() { return tracker; } }; // for the console and tests
