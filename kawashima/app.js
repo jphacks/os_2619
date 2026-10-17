@@ -2,11 +2,12 @@
 // Frames and the arena layout live in world.js. Players are located by localize.js (corner tags + ARCore),
 // the third-person camera by extrinsics.js (corner tags in its own picture) or by hand with the sliders.
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as W from './world.js';
 import { createLocalizer } from './localize.js';
 import { createFx } from './effects.js';
 import { calibrateCamera, toThreeCamera } from './extrinsics.js';
+import { createDrone } from './drone.js';
+import { createField, createMinimap } from './field3d.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
@@ -22,6 +23,8 @@ const DEFAULTS = {
   swingDps: 400,    // provisional swing trigger until the sensor team sends actions
   debug: false,     // grid / tags / capsules in the main view
   view: 'pip',      // 'pip' | 'full3d' | 'off'
+  drone: 'auto',    // drone camera mode for the 3D view (D cycles)
+  minimap: true,    // top-down map in the corner (M)
   useTruth: false,  // fake-world only: place players from the simulator's ground truth
   fpv: null,        // 'A' | 'B': show that chest phone's own camera picture, camera placed by localize.js
   anchors: true,    // in the phone view, a flame on every fixed tag: it sits on the paper when the registration is right
@@ -43,8 +46,12 @@ const camera = new THREE.PerspectiveCamera(cfg.cam.fov, 16 / 9, 0.05, 100);
 camera.rotation.order = 'YXZ';
 const overCam = new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 100);
 overCam.position.set(0, 5.5, 6.5);
-const orbit = new OrbitControls(overCam, canvas);
-orbit.target.set(0, 1, 0); orbit.update();
+const drone = createDrone(overCam, canvas, { mode: cfg.drone });
+const field = createField(scene); // arena + avatars, only shown in the 3D views
+field.group.visible = false;
+const minimapCanvas = Object.assign(document.createElement('canvas'), { id: 'minimap' });
+stage.append(minimapCanvas);
+const minimap = createMinimap(minimapCanvas);
 let aspect = 16 / 9, videoAspect = 16 / 9, W_px = 1, H_px = 1;
 
 function applyCam() {
@@ -65,6 +72,8 @@ function resize() {
   stage.style.width = w + 'px'; stage.style.height = h + 'px';
   renderer.setSize(w, h, false);
   W_px = w; H_px = h;
+  const m = Math.round(Math.min(w, h) * .28 * devicePixelRatio);
+  minimapCanvas.width = minimapCanvas.height = m;
   fx.setSize(w, h);
   applyCam();
 }
@@ -145,11 +154,13 @@ function shoot(p, power = .5) {
   const foe = other(p);
   if (power >= 1) { // full charge: special move straight at the opponent
     fx.special(p.element, p.tip.clone(), foe.chest.clone());
+    drone.event('special', { owner: p.slot, from: p.tip.clone(), to: foe.chest.clone() });
     return damage(foe, p, 35);
   }
   const aim = params.has('demo') ? foe.chest.clone().sub(p.tip).normalize()
     : cfg.aim === 'eye' ? p.tip.clone().sub(p.chest.clone().add(V(0, .35, 0))).normalize() : p.dir.clone();
-  shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), power), owner: p, pos: p.tip.clone(), vel: aim.multiplyScalar(9), power, born: now() });
+  drone.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() });
+  shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), power), owner: p, element: p.element, pos: p.tip.clone(), vel: aim.multiplyScalar(9), power, born: now() });
 }
 const noKO = params.has('demo') || params.has('test'); // setting up / testing: hits show but HP never drops
 function damage(foe, from, n) {
@@ -166,12 +177,16 @@ function stepShots(dt) {
     // hit: distance to the opponent's vertical body segment (capsule radius .3 + shot radius .15)
     const a = foe.chest.clone().setY(foe.chest.y - 1.05), b = foe.chest.clone().setY(foe.chest.y + .15);
     const hit = new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .45;
-    if (hit) { fx.hit(s.owner.element, s.pos.clone(), s.power); damage(foe, s.owner, Math.round(10 + 20 * s.power)); }
+    if (hit) { fx.hit(s.owner.element, s.pos.clone(), s.power); drone.event('hit', { target: foe.slot, pos: s.pos.clone(), power: s.power }); damage(foe, s.owner, Math.round(10 + 20 * s.power)); }
     if (hit || now() - s.born > 1.5) { fx.endShot(s.id); shots.splice(i, 1); }
   }
 }
 function stepCharge(dt) {
-  for (const p of Object.values(players)) if (p.charging) p.charge = Math.min(1, p.charge + dt / 1.5);
+  for (const p of Object.values(players)) if (p.charging) {
+    const full = p.charge < 1;
+    p.charge = Math.min(1, p.charge + dt / 1.5);
+    if (full && p.charge === 1) drone.event('charge', { owner: p.slot, level: 1 });
+  }
 }
 function reset() { for (const p of Object.values(players)) { p.hp = 100; p.charge = 0; p.charging = false; } for (const s of shots) fx.endShot(s.id); shots.length = 0; winner = null; }
 
@@ -327,7 +342,7 @@ function buildPanel() {
     slider('振り判定 deg/s', () => cfg.swingDps, v => cfg.swingDps = v, 100, 1500, 10),
     select('狙い', 'aim', ['stick', 'eye']),
     Object.assign(document.createElement('div'), { className: 'keys', innerHTML:
-      'C パネル / G デバッグ表示 / V 3Dビュー切替 / K タグでカメラ合わせ / T 正解位置(ダミー)<br>F スマホ視点(A→B→切) / H タグ位置の目印<br>Space A発射 / Enter B発射 / Q・P 長押しで溜め(A・B) / R リセット' }));
+      'C パネル / G デバッグ表示 / V 3Dビュー切替 / D ドローン視点の切替 / M ミニマップ / K タグでカメラ合わせ / T 正解位置(ダミー)<br>F スマホ視点(A→B→切) / H タグ位置の目印<br>Space A発射 / Enter B発射 / Q・P 長押しで溜め(A・B) / R リセット' }));
 }
 
 const held = { q: players.A, p: players.B };
@@ -336,6 +351,8 @@ addEventListener('keydown', e => {
   if (held[e.key]) { held[e.key].charging = true; held[e.key].charge = 0; }
   else if (e.key === 'c') panel.classList.toggle('open');
   else if (e.key === 'g') { cfg.debug = !cfg.debug; save(); }
+  else if (e.key === 'd') { drone.next(); cfg.drone = drone.mode; save(); }
+  else if (e.key === 'm') { cfg.minimap = !cfg.minimap; save(); }
   else if (e.key === 'v') { cfg.view = { pip: 'full3d', full3d: 'off', off: 'pip' }[cfg.view]; save(); }
   else if (e.key === 'k') calibrate();
   else if (e.key === 't') { cfg.useTruth = !cfg.useTruth; save(); }
@@ -366,25 +383,34 @@ function frame() {
   }
   if (cfg.fpv) { placePhoneCamera(cfg.fpv); if (cfg.anchors) tagAnchors(); }
   stepCharge(dt); stepShots(dt); fx.step(dt);
+  const yawOf = b => Math.atan2(-b.R[6], b.R[0]); // body x axis = forward
+  drone.update(dt, Object.fromEntries(Object.values(players).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
+  field.update(dt, Object.fromEntries(Object.values(players).map(p => [p.slot,
+    { body: p.body, base: p.base, tip: p.tip, hp: p.hp, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu }])));
+  minimapCanvas.style.display = cfg.minimap ? '' : 'none';
+  if (cfg.minimap) minimap.draw(players, shots);
   banner.style.display = winner ? 'grid' : 'none';
   banner.textContent = winner ? `${winner.slot} WIN!` : '';
-  statusEl.textContent = `server ${host}: ${linkState}  ${locText('A')}  ${locText('B')}  カメラ:${cfg.fpv ? `スマホ${cfg.fpv}視点 fov ${intr[cfg.fpv]?.toFixed(1) ?? '推定待ち'}°` : cfg.camMode}${cfg.useTruth ? '  [正解位置]' : ''}  ${status.extra}`;
+  statusEl.textContent = `${cfg.view !== 'off' ? `ドローン:${drone.mode}(${drone.shot})  ` : ''}server ${host}: ${linkState}  ${locText('A')}  ${locText('B')}  カメラ:${cfg.fpv ? `スマホ${cfg.fpv}視点 fov ${intr[cfg.fpv]?.toFixed(1) ?? '推定待ち'}°` : cfg.camMode}${cfg.useTruth ? '  [正解位置]' : ''}  ${status.extra}`;
   pipLabel.style.display = cfg.view === 'pip' ? '' : 'none';
   const sx = (Math.random() - .5) * 24 * shake, sy = (Math.random() - .5) * 24 * shake;
   stage.style.transform = `translate(calc(-50% + ${sx}px), calc(-50% + ${sy}px))`;
   shake = shake < .01 ? 0 : shake * Math.exp(-8 * dt);
 
   renderer.setScissorTest(false);
-  if (cfg.view === 'full3d') {
-    scene.background = DARK; world3d.visible = true; camHelper.visible = true;
+  if (cfg.view === 'full3d') { // drone view with effects + bloom: fx renders through `camera`, so borrow it for a frame
+    scene.background = field.background; field.group.visible = true; world3d.visible = cfg.debug; camHelper.visible = false;
     overCam.aspect = aspect; overCam.updateProjectionMatrix();
-    renderer.setViewport(0, 0, W_px, H_px); renderer.render(scene, overCam);
+    const keep = { p: camera.position.clone(), q: camera.quaternion.clone(), fov: camera.fov };
+    camera.position.copy(overCam.position); camera.quaternion.copy(overCam.quaternion); camera.fov = overCam.fov; camera.updateProjectionMatrix();
+    renderer.setViewport(0, 0, W_px, H_px); fx.render();
+    camera.position.copy(keep.p); camera.quaternion.copy(keep.q); camera.fov = keep.fov; camera.updateProjectionMatrix();
   } else {
-    scene.background = cfg.fpv ? phoneTex : videoTex; world3d.visible = cfg.debug; camHelper.visible = false;
+    scene.background = cfg.fpv ? phoneTex : videoTex; field.group.visible = false; world3d.visible = cfg.debug; camHelper.visible = false;
     fx.render();
-    if (cfg.view === 'pip') { // 3D view in the bottom-right corner
+    if (cfg.view === 'pip') { // drone view in the bottom-right corner (no bloom)
       const w = W_px * .3, h = H_px * .3;
-      scene.background = DARK; world3d.visible = true; camHelper.visible = true;
+      scene.background = field.background; field.group.visible = true; world3d.visible = cfg.debug; camHelper.visible = cfg.debug;
       overCam.aspect = w / h; overCam.updateProjectionMatrix();
       renderer.setScissorTest(true); renderer.setScissor(W_px - w - 8, 8, w, h); renderer.setViewport(W_px - w - 8, 8, w, h);
       renderer.render(scene, overCam);

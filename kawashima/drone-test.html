@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ドローンカメラ テスト</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0d0f14; color: #eee; font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #hud { position: absolute; left: 12px; top: 10px; text-shadow: 0 0 4px #000; white-space: pre; font-variant-numeric: tabular-nums; }
+  #hud b { font-size: 22px; }
+  #check { position: absolute; right: 12px; top: 10px; background: #000b; padding: 8px 12px; white-space: pre; font: 14px/1.5 ui-monospace, monospace; display: none; }
+</style>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud"></div>
+<div id="check"></div>
+<script type="module">
+// Drone camera demo: synthetic players and events. Keys 1-7 pick a mode, N cycles.
+// ?mode=auto|orbit|chaseA|chaseB|top|side|free  &t=<s>: simulate at dt=1/60 up to t, render once, freeze.
+// ?cycle: press N every 3 s.  ?check: 30 s of auto with events, prints smoothness numbers.
+import * as THREE from 'three';
+import * as W from './world.js';
+import { createDrone } from './drone.js';
+
+const P = new URLSearchParams(location.search);
+const FREEZE = P.has('t') ? +P.get('t') : null, CHECK = P.has('check');
+const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d0f14);
+scene.fog = new THREE.Fog(0x0d0f14, 12, 30);
+const camera = new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 100);
+
+// ---- arena ----
+scene.add(new THREE.HemisphereLight(0xbcd0ff, 0x202018, 1.2));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2); sun.position.set(3, 6, 2); scene.add(sun);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), new THREE.MeshStandardMaterial({ color: 0x1a1d24 }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+const grid = new THREE.GridHelper(20, 40, 0x334, 0x262a33); grid.position.y = 0.002; scene.add(grid);
+const H = W.ARENA.half;
+const sq = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([V(-H, .01, -H), V(H, .01, -H), V(H, .01, H), V(-H, .01, H)]), new THREE.LineBasicMaterial({ color: 0xffcc33 }));
+scene.add(sq);
+const mid = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V(0, .01, -H), V(0, .01, H)]), new THREE.LineBasicMaterial({ color: 0x666666 }));
+scene.add(mid);
+for (const id of W.CORNER_IDS) { // fixed tags as small boards
+  const m = new THREE.Mesh(new THREE.BoxGeometry(.25, .25, .02), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+  m.position.fromArray(W.TAGS[id].pos); m.lookAt(0, m.position.y, 0); scene.add(m);
+}
+
+// ---- players ----
+function makePlayer(color) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(.22, 1.0, 6, 16), mat); body.position.y = .72; g.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.14, 16, 12), mat); head.position.y = 1.62; g.add(head);
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(.12, .06, .06), new THREE.MeshStandardMaterial({ color: 0xffffff })); nose.position.set(.2, 1.3, 0); g.add(nose);
+  scene.add(g);
+  const stick = new THREE.Mesh(new THREE.CylinderGeometry(.02, .02, W.STICK.len, 8), new THREE.MeshStandardMaterial({ color: 0xdddddd, emissive: color, emissiveIntensity: .6 }));
+  scene.add(stick);
+  return { g, stick, chest: V(), tip: V(), base: V(), yaw: 0, fwd: V(), color };
+}
+const pl = { A: makePlayer(0xe0503a), B: makePlayer(0x3a7ce0) };
+const posOf = (k, t) => k === 'A'
+  ? V(-1.2 + .35 * Math.sin(.6 * t) + .4 * Math.sin(.21 * t), 0, .9 * Math.sin(.43 * t))
+  : V(1.2 + .3 * Math.sin(.5 * t + 1) - .4 * Math.sin(.17 * t), 0, .9 * Math.sin(.37 * t + 2));
+function stepPlayers(t) {
+  for (const k of ['A', 'B']) {
+    const p = pl[k], q = posOf(k, t), op = posOf(k === 'A' ? 'B' : 'A', t);
+    p.yaw = Math.atan2(-(op.z - q.z), op.x - q.x) + .15 * Math.sin(.9 * t + (k === 'A' ? 0 : 2));
+    const B = W.bodyPose([q.x, 0, q.z], p.yaw, W.CHEST_H + .03 * Math.sin(8 * t));
+    p.chest.fromArray(B.t);
+    const f = V(B.R[0], B.R[3], B.R[6]), r = V(B.R[2], B.R[5], B.R[8]); p.fwd.copy(f);
+    p.g.position.set(q.x, 0.03 * Math.sin(8 * t), q.z); p.g.rotation.y = p.yaw;
+    const sw = Math.max(0, Math.sin(2.3 * t + (k === 'A' ? 0 : 1.7))) ** 3 * 1.6 - .3; // periodic swing
+    p.base.copy(p.chest).addScaledVector(f, W.STICK.hand.fwd).addScaledVector(r, W.STICK.hand.right).add(V(0, W.STICK.hand.up, 0));
+    const d = f.clone().multiplyScalar(Math.cos(sw)).add(V(0, Math.sin(sw), 0)).normalize();
+    p.tip.copy(p.base).addScaledVector(d, W.STICK.len);
+    p.stick.position.copy(p.base).lerp(p.tip, .5); p.stick.quaternion.setFromUnitVectors(V(0, 1, 0), d);
+  }
+}
+
+// ---- synthetic events + their visuals ----
+const fxs = [];
+const glow = (color, r) => new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), new THREE.MeshBasicMaterial({ color, transparent: true }));
+let shotN = 0, nextShot = 1.0, specialAt = [{ t: 7, k: 'A' }, { t: 19, k: 'B' }, { t: 28, k: 'A' }], lastEvt = '';
+function spawn(kind, data) { fxs.push({ kind, ...data, age: 0 }); }
+function stepEvents(t, dt, drone) {
+  const emit = (type, data) => { drone.event(type, data); lastEvt = `${type} ${data.owner ?? data.target ?? ''} @${t.toFixed(1)}s`; };
+  if (t >= nextShot) { // alternating shots, every 1.1 s (the real demo is faster; the director has a cooldown)
+    const k = shotN++ % 2 ? 'B' : 'A', p = pl[k], foe = pl[k === 'A' ? 'B' : 'A'];
+    const dir = foe.chest.clone().add(V(0, .05 * Math.sin(shotN), .3 * Math.sin(shotN * 1.7))).sub(p.tip).normalize();
+    const power = .3 + .6 * ((shotN * 0.37) % 1);
+    const m = glow(p.color, .08 + .08 * power); m.position.copy(p.tip); scene.add(m);
+    spawn('shot', { m, owner: k, vel: dir.clone().multiplyScalar(9), power });
+    emit('shot', { owner: k, pos: p.tip.clone(), dir });
+    nextShot = t + 1.1;
+  }
+  for (const s of specialAt) {
+    const foeK = s.k === 'A' ? 'B' : 'A';
+    if (!s.c && t >= s.t - 1.5) { s.c = true; const m = glow(pl[s.k].color, .05); scene.add(m); spawn('charge', { m, owner: s.k, t0: t }); }
+    if (!s.f && t >= s.t - .01) { s.f = true; emit('charge', { owner: s.k, level: 1 }); }
+    if (!s.s && t >= s.t + .8) {
+      s.s = true; const from = pl[s.k].tip.clone(), to = pl[foeK].chest.clone();
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(.12, .12, 1, 12, 1, true), new THREE.MeshBasicMaterial({ color: pl[s.k].color, transparent: true, side: THREE.DoubleSide }));
+      beam.position.copy(from).lerp(to, .5); beam.scale.y = from.distanceTo(to); beam.quaternion.setFromUnitVectors(V(0, 1, 0), to.clone().sub(from).normalize());
+      scene.add(beam); spawn('beam', { m: beam });
+      emit('special', { owner: s.k, from, to });
+    }
+    if (!s.h && t >= s.t + 1.4) { s.h = true; const at = pl[foeK].chest.clone(); boom(at, pl[s.k].color, 1); emit('hit', { target: foeK, pos: at, power: 1 }); }
+  }
+  for (let i = fxs.length - 1; i >= 0; i--) {
+    const e = fxs[i]; e.age += dt;
+    if (e.kind === 'shot') {
+      e.m.position.addScaledVector(e.vel, dt);
+      const foeK = e.owner === 'A' ? 'B' : 'A';
+      if (e.m.position.distanceTo(pl[foeK].chest) < .45) { boom(e.m.position.clone(), pl[e.owner].color, e.power); emit('hit', { target: foeK, pos: e.m.position.clone(), power: e.power }); e.age = 99; }
+      else if (Math.abs(e.m.position.x) > 6 || Math.abs(e.m.position.z) > 6) e.age = 99;
+      if (e.age > 2) { scene.remove(e.m); fxs.splice(i, 1); }
+    } else if (e.kind === 'charge') {
+      e.m.position.copy(pl[e.owner].tip); e.m.scale.setScalar(1 + 3 * Math.min(1, e.age / 1.5));
+      if (e.age > 2.3) { scene.remove(e.m); fxs.splice(i, 1); }
+    } else if (e.kind === 'boom') {
+      e.m.scale.setScalar(1 + e.age * 8); e.m.material.opacity = Math.max(0, 1 - e.age / .5);
+      if (e.age > .5) { scene.remove(e.m); fxs.splice(i, 1); }
+    } else if (e.kind === 'beam') {
+      e.m.material.opacity = Math.max(0, 1 - e.age / .8);
+      if (e.age > .8) { scene.remove(e.m); fxs.splice(i, 1); }
+    }
+  }
+}
+function boom(at, color, power) { const m = glow(color, .1 + .1 * power); m.position.copy(at); scene.add(m); spawn('boom', { m }); }
+
+// ---- drone ----
+const drone = createDrone(camera, canvas, { mode: CHECK ? 'auto' : P.get('mode') ?? 'auto' });
+const players = () => ({ A: { chest: pl.A.chest, yaw: pl.A.yaw, tip: pl.A.tip }, B: { chest: pl.B.chest, yaw: pl.B.yaw, tip: pl.B.tip } });
+addEventListener('keydown', e => {
+  const i = '1234567'.indexOf(e.key); if (i >= 0) drone.setMode(drone.modes[i]);
+  if (e.key === 'n' || e.key === 'N') drone.next();
+});
+
+const hud = document.getElementById('hud');
+addEventListener('error', e => { document.body.insertAdjacentHTML('beforeend', `<pre id="err" style="position:absolute;bottom:0;color:#f66">${e.message}</pre>`); });
+const showHud = t => { hud.innerHTML = `<b>${drone.mode} / ${drone.shot}</b>${drone.blending ? '  (blend)' : ''}\nt ${t.toFixed(2)} s   last event: ${lastEvt}\n1-7: ${drone.modes.join(' ')}   N: next`; };
+function resize() { renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+
+let simT = 0;
+const DT = 1 / 60;
+let nextCycle = 3;
+function step(dt) {
+  simT += dt; stepPlayers(simT); stepEvents(simT, dt, drone);
+  if (P.has('cycle') && simT >= nextCycle) { drone.next(); nextCycle += 3; } // ?cycle: N every 3 s
+  drone.update(dt, players());
+}
+
+if (CHECK) {
+  const fr = new THREE.Frustum(), M = new THREE.Matrix4(), f0 = V(), f1 = V(), p0 = V();
+  let maxV = 0, maxW = 0, maxWBase = 0, minD = 1e9, minY = 1e9, inBoth = 0, n = 0, wide = 0, wideIn = 0, first = true;
+  const vs = [], ws = [], log = [];
+  stepPlayers(0);
+  while (simT < 30) {
+    step(DT);
+    camera.updateMatrixWorld();
+    camera.getWorldDirection(f1);
+    if (!first) {
+      const v = camera.position.distanceTo(p0) / DT, w = f0.angleTo(f1) / DT * 180 / Math.PI;
+      maxV = Math.max(maxV, v); maxW = Math.max(maxW, w); vs.push(v); ws.push(w);
+    }
+    first = false; p0.copy(camera.position); f0.copy(f1);
+    for (const k of ['A', 'B']) minD = Math.min(minD, camera.position.distanceTo(pl[k].chest));
+    minY = Math.min(minY, camera.position.y);
+    M.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); fr.setFromProjectionMatrix(M);
+    const both = fr.containsPoint(pl.A.chest) && fr.containsPoint(pl.B.chest);
+    n++; inBoth += both;
+    if (/^(orbit|side|top)/.test(drone.shot) && !drone.blending) { wide++; wideIn += both; }
+    if (P.has('log') && n % 10 === 0) log.push(`${simT.toFixed(2)} ${drone.shot}${drone.blending ? '*' : ''} v${(vs.at(-1) ?? 0).toFixed(1)} w${(ws.at(-1) ?? 0).toFixed(0)} ${both ? 'BOTH' : 'A' + +fr.containsPoint(pl.A.chest) + 'B' + +fr.containsPoint(pl.B.chest)} cam${camera.position.toArray().map(x => x.toFixed(1))}`);
+  }
+  const pct = a => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length * .99)]; };
+  const el = document.getElementById('check'); el.style.display = 'block';
+  el.textContent = `CHECK 30 s auto (dt 1/60, ${n} frames)
+max camera speed     ${maxV.toFixed(2)} m/s   (p99 ${pct(vs).toFixed(2)})
+max angular speed    ${maxW.toFixed(1)} deg/s (p99 ${pct(ws).toFixed(1)}, incl. hit shake)
+min dist to chests   ${minD.toFixed(2)} m
+min camera height    ${minY.toFixed(2)} m
+both chests in frame ${(100 * inBoth / n).toFixed(1)} % of frames (settled wide shots ${(100 * wideIn / Math.max(1, wide)).toFixed(1)} % of ${wide})` + (log.length ? '\n' + log.join('\n') : '');
+  document.title = 'CHECK ' + el.textContent.replace(/\s+/g, ' ');
+  showHud(simT);
+  (function still() { renderer.render(scene, camera); requestAnimationFrame(still); })();
+} else if (FREEZE != null) {
+  stepPlayers(0);
+  while (simT < FREEZE - 1e-9) step(DT);
+  showHud(simT);
+  (function still() { renderer.render(scene, camera); requestAnimationFrame(still); })(); // frozen; keep presenting for screenshots
+} else {
+  stepPlayers(0);
+  let last = performance.now();
+  (function loop() {
+    const now = performance.now(), dt = Math.min(.05, (now - last) / 1000); last = now;
+    step(dt); showHud(simT); renderer.render(scene, camera);
+    requestAnimationFrame(loop);
+  })();
+}
+</script>
+</body>
+</html>
