@@ -116,7 +116,7 @@ export function createPhoneAlign(opts = {}) {
     for (const id of W.CORNER_IDS) {
       const P = W.worldTagPose(id), R = P.R, hx = Math.hypot(R[0], R[6]), hy = Math.hypot(R[1], R[7]);
       const ax = hx >= hy ? 'x' : 'y', col = ax === 'x' ? [R[0], R[3], R[6]] : [R[1], R[4], R[7]];
-      tagW[id] = { c: P.t, ax, axis: add(P.t, mul(col, AXIS_M)) };
+      tagW[id] = { c: P.t, ax, axis: add(P.t, mul(col, AXIS_M)), known: !!W.TAGS[id].yawKnown };
     }
     return tagW;
   }
@@ -126,11 +126,16 @@ export function createPhoneAlign(opts = {}) {
   /** Fit from the phone's own sightings of field tags (known world poses): the accurate way. */
   function fitField(s) {
     const st = S[s]; if (!st.sight.length) return null;
-    const tw = tagWorld(), pairs = [];
+    // The sheets' positions are fixed, but how each paper was turned is only known after a scan: until then only the centres count
+    // (they need two different sheets to pin the turn), and a sheet's printed axes join in only once its turn is known.
+    const tw = tagWorld(), pairs = [], ids = new Set();
     for (const g of st.sight) {
       const tg = tw[g.id]; if (!tg) continue;
-      pairs.push({ a: tg.c, b: g.b, w: g.w }, { a: tg.axis, b: add(g.b, mul(tg.ax === 'x' ? g.bx : g.by, AXIS_M)), w: g.w * 0.5 });
+      ids.add(g.id);
+      pairs.push({ a: tg.c, b: g.b, w: g.w });
+      if (tg.known) pairs.push({ a: tg.axis, b: add(g.b, mul(tg.ax === 'x' ? g.bx : g.by, AXIS_M)), w: g.w * 0.5 });
     }
+    if (ids.size < 2 && ![...ids].some(id => tw[id].known)) return null; // one centre cannot give the turn
     const T = robustFit(pairs);
     if (T) T.n = st.sight.length; // n = tag sightings (fit4 counted pairs)
     return T;

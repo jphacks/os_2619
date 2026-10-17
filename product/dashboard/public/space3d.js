@@ -232,7 +232,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
         d.tag.visible = on.tags && g.yaw != null;
         if (d.tag.visible) toMat(W.compose(W.chestTagPose(W.bodyPose(g.chest, g.yaw, g.chest[1] - .12)), W.pose(W.I3, [0, 0, .01])), d.tag.matrix);
         d.seen.visible = !!g.seenBy; if (g.seenBy) d.seen.position.set(...g.seenBy.p);
-        for (const sg of g.sightings ?? []) if (sg.R && !W.isChestTag(sg.id) && !(getStage()?.state.scanned && W.TAGS[sg.id]?.pos)) showDetected(sg.id, sg.R, sg.p, sg.d);
+        for (const sg of g.sightings ?? []) if (sg.R && !W.isChestTag(sg.id) && !W.TAGS[sg.id]?.pos) showDetected(sg.id, sg.R, sg.p, sg.d);
         if (on.rays && g.sightings) for (const sg of g.sightings) {
           if (nRays >= RAY_N) break;
           const isField = W.TAGS[sg.id]?.pos, m = seenPool[nRays];
@@ -256,10 +256,10 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
       const d = src[s], ok = on.mapjs && roomToWorld && ghostEst;
       const p = ok && ghostEst.people[s]; d.ghost.visible = !!p; if (p) d.ghost.position.set(...roomToWorld(p.p));
     }
-    grid.visible = axes.visible = on.grid; tagsGrp.visible = on.tags && !!getStage()?.state.scanned; detGrp.visible = on.tags; // the layout's tag spots only once measured
+    grid.visible = axes.visible = on.grid; tagsGrp.visible = on.tags && (W.FIXED_FIELD || !!getStage()?.state.scanned); detGrp.visible = on.tags; // fixed sheets are drawn where they are; other tags where they were first seen
     placeC();
     const st = getStage()?.state;
-    note.textContent = !st?.scanned ? 'フィールド未スキャン：タグは見えた場所に表示（スキャンするとフィールドの形も出る）' : on.mapjs && !roomToWorld ? 'map.js：床のタグ 2 枚以上を両スマホが見るまで照合できない' : '';
+    note.textContent = W.FIXED_FIELD ? `タグ 0〜3 は一辺 ${W.FIELD_SIDE} m の正方形に固定（床。0→1→2→3 の順）。2 枚以上見えた間に位置が決まる${st?.scanned ? '' : '。スキャンはスマホ C の位置用'}` : !st?.scanned ? 'フィールド未スキャン：タグは見えた場所に表示（スキャンするとフィールドの形も出る）' : on.mapjs && !roomToWorld ? 'map.js：床のタグ 2 枚以上を両スマホが見るまで照合できない' : '';
   }
 
   // ---- right panel: raw numbers, DOM touched only when the text changes ----

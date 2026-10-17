@@ -99,3 +99,18 @@ import { PLAYER_TAG, STICK } from './public/world.js';
   assert.ok(worst < 0.15, `worst chest-only error ${worst.toFixed(3)} m`);
   console.log(`phonealign chest tags ok: worst error ${(worst * 100).toFixed(1)} cm over ${n} estimates`);
 }
+
+// scan -> fixed square: the sheets measured in some other frame (turned and shifted), phone C along with them
+{
+  const W = await import('./public/world.js');
+  const th = 0.8, c = Math.cos(th), s = Math.sin(th), rot = p => [c * p[0] + s * p[2] + 0.7, 0, -s * p[0] + c * p[2] - 0.4];
+  const tags = Object.fromEntries([0, 1, 2, 3].map(id => [id, { pos: rot(W.TAGS[id].pos), yaw: 0.2 }]));
+  const camPose = { R: [c, 0, s, 0, 1, 0, -s, 0, c], t: [rot([0.3, 0, 2.5])[0], 3, rot([0.3, 0, 2.5])[2]] }; // sits over (0.3, 3, 2.5) of the fixed frame, as seen from the scan frame
+  const fit = W.toFixedFrame(tags, camPose);
+  assert.ok(fit.rms < 1e-9, `rms ${fit.rms}`);
+  for (const id of [0, 1, 2, 3]) assert.ok(fit.tags[id].pos.every((v, i) => Math.abs(v - W.TAGS[id].pos[i]) < 1e-9));
+  assert.ok(Math.abs(fit.tags[0].yaw - (0.2 - th)) < 1e-9, `yaw ${fit.tags[0].yaw}`); // the paper's turn follows the frame back
+  assert.ok([0.3, 3, 2.5].every((v, i) => Math.abs(fit.pose.t[i] - v) < 1e-9), `cam ${fit.pose.t}`);
+  assert.equal(W.toFixedFrame({ 0: tags[0] }, camPose), null);
+  console.log('toFixedFrame ok: sheets back on the 1.66 m square, rms', fit.rms.toExponential(1));
+}

@@ -34,6 +34,11 @@ export const STICK = { len: 0.8, axis: [0, 1, 0], up: [0, 0, 1], hand: { fwd: 0.
 // flip: printed in the official apriltag-imgs orientation, which OpenCV reads rotated 180° about the tag normal
 //       (our print/make_tags.py PDFs are in OpenCV's orientation and need no flip). Mount sheets upright as printed.
 const H = ARENA.half;
+// map4 = four floor sheets, ids 0-3, at the corners of a square (0 -> 1 -> 2 -> 3 around it) centred on the origin. The positions are
+// fixed, not measured: SIDE is the distance between neighbouring sheet centres (?side=1.66 or env SIDE overrides it).
+const SIDE = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('side')) || (typeof process !== 'undefined' && +process.env?.SIDE) || 1.66;
+export const FIELD_SIDE = SIDE;
+const HS = SIDE / 2;
 const LAYOUTS = {
   full: {
     0: { size: 0.2, pos: [-H, CHEST_H, -H] },
@@ -52,10 +57,10 @@ const LAYOUTS = {
     11: { size: 0.05, player: 'B' },
   },
   map4: {
-    0: { size: 0.2, pos: [1.5, 0, 1.5], floor: true, yaw: 0 },
-    1: { size: 0.2, pos: [-1.5, 0, 1.5], floor: true, yaw: 0 },
-    2: { size: 0.2, pos: [-1.5, 0, -1.5], floor: true, yaw: 0 },
-    3: { size: 0.2, pos: [1.5, 0, -1.5], floor: true, yaw: 0 },
+    0: { size: 0.2, pos: [HS, 0, HS], floor: true, yaw: 0 },
+    1: { size: 0.2, pos: [-HS, 0, HS], floor: true, yaw: 0 },
+    2: { size: 0.2, pos: [-HS, 0, -HS], floor: true, yaw: 0 },
+    3: { size: 0.2, pos: [HS, 0, -HS], floor: true, yaw: 0 },
     10: { size: 0.05, player: 'A' },
     11: { size: 0.05, player: 'B' },
   },
@@ -70,6 +75,7 @@ const pick = (typeof location !== 'undefined' && new URLSearchParams(location.se
   || (typeof process !== 'undefined' && process.env?.LAYOUT) || 'map4';
 export const LAYOUT = LAYOUTS[pick] ? pick : 'map4';
 export const TAGS = LAYOUTS[LAYOUT];
+export const FIXED_FIELD = LAYOUT === 'map4'; // sheet positions are fixed (a scan only places phone C and the sheets' turns)
 export const CORNER_IDS = Object.keys(TAGS).map(Number).filter(id => TAGS[id].pos); // every fixed tag (name kept for the modules that use it)
 export const PLAYER_TAG = { A: 10, B: 11 }; // the ids drawn / simulated on A and B
 // Tags 8-11 are worn on the phones (chest mounts) and move with their wearer; every other id is fixed in the room.
@@ -102,7 +108,7 @@ export const onFieldChange = cb => { fieldListeners.add(cb); return () => fieldL
  */
 export function setField({ poly, tags = {} }) {
   for (const [id, t] of Object.entries(tags)) if (TAGS[id] && !isChestTag(+id)) // a measured sheet: lying (floor) or upright (stand: true, spin)
-    Object.assign(TAGS[id], { pos: [...t.pos], yaw: t.yaw ?? 0, floor: !t.stand, stand: !!t.stand, spin: t.spin ?? 0, R: t.R ? [...t.R] : undefined, flip: false });
+    Object.assign(TAGS[id], { yawKnown: true, pos: [...t.pos], yaw: t.yaw ?? 0, floor: !t.stand, stand: !!t.stand, spin: t.spin ?? 0, R: t.R ? [...t.R] : undefined, flip: false });
   FIELD.poly = poly.map(p => [...p]);
   const xs = poly.map(p => p[0]), zs = poly.map(p => p[1]);
   const minX = Math.min(...xs), maxX = Math.max(...xs);
@@ -110,6 +116,22 @@ export function setField({ poly, tags = {} }) {
   const inset = Math.min(.9, (maxX - minX) * .22); // start marks a little in from the A / B ends
   START.A.pos = [minX + inset, 0, 0]; START.B.pos = [maxX - inset, 0, 0];
   for (const cb of fieldListeners) cb(FIELD);
+}
+if (FIXED_FIELD) setField({ poly: FIELD.poly }); // START / ARENA from the fixed square, without calling it scanned
+/** A scan measures the sheets (and phone C) in its own frame; the sheets really sit at the fixed square, so move everything into
+ *  that frame: a turn + shift on the floor fitted to the sheets that were seen (>= 2 needed). tags: scan result { id: { pos, yaw } },
+ *  camPose: world_T_cam. Returns { rms (m, how far the sheets are from the square), pose, tags } or null. */
+export function toFixedFrame(tags, camPose) {
+  const ids = Object.keys(tags).filter(id => TAGS[id]?.floor);
+  if (ids.length < 2) return null;
+  const M = ids.map(id => tags[id].pos), F = ids.map(id => TAGS[id].pos), n = ids.length;
+  const mean = (P, i) => P.reduce((a, p) => a + p[i], 0) / n, mm = [mean(M, 0), mean(M, 2)], fm = [mean(F, 0), mean(F, 2)];
+  let sc = 0, ss = 0;
+  for (let i = 0; i < n; i++) { const a = [M[i][0] - mm[0], M[i][2] - mm[1]], b = [F[i][0] - fm[0], F[i][2] - fm[1]]; sc += b[0] * a[0] + b[1] * a[1]; ss += b[0] * a[1] - b[1] * a[0]; }
+  const th = Math.atan2(ss, sc), c = Math.cos(th), s = Math.sin(th), R = [c, 0, s, 0, 1, 0, -s, 0, c];
+  const t = [fm[0] - (c * mm[0] + s * mm[1]), 0, fm[1] - (-s * mm[0] + c * mm[1])];
+  const rms = Math.sqrt(ids.reduce((a, id, i) => { const p = M[i], q = [c * p[0] + s * p[2] + t[0], -s * p[0] + c * p[2] + t[2]]; return a + (q[0] - F[i][0]) ** 2 + (q[1] - F[i][2]) ** 2; }, 0) / n);
+  return { rms, pose: compose({ R, t }, camPose), tags: Object.fromEntries(ids.map(id => [id, { ...tags[id], pos: [...TAGS[id].pos], yaw: (tags[id].yaw ?? 0) + th }])) };
 }
 /** Is the floor point (x, z) inside the field outline? */
 export function inField(x, z) {
