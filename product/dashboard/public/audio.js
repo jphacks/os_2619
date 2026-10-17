@@ -22,6 +22,7 @@ const EL = { fire: { shot: 'fire1', hit: 'fire2', bed: 'fire3' }, thunder: { sho
 const LOOPS = { fire3: [1.5, 9.5, .8], lightning3: [1, 14, .8], charge: [.2, 4.4, .35] };
 const BGM_LOOP = [.09, 82]; // music starts at .14 s and ends in a tail at ~81.3 s; both ends are below -45 dBFS
 // mix in dB relative to REF (hit at full power = 0 dB anchor)
+const CHARGE_PITCH = { s: .85, m: 1.1, l: 1.45 }; // playback rate (pitch) per charge tier
 const MIX = { shot: -5, shotSpan: 4, hit: 0, hitSpan: 6, special: 3, charge: -10, chargeSpan: 5, bed: -17, bgm: -8 };
 const DUCK = { hit: [-3, .12, .35], special: [-10, 1.0, .5] }; // [dB, hold s, release s]; attack is DUCK_ATK
 const DUCK_ATK = .04;
@@ -164,16 +165,16 @@ export function createAudio({ base = 'audio/' } = {}) {
     else { release(music, .6); music = null; } // ~2 s to silence
   }
   const chg = { A: null, B: null };
-  function charge(slot, on, level = 0, pan = 0) {
+  function charge(slot, on, level = 0, pan = 0, tier = 's') {
     let v = chg[slot];
     if (!on) { if (v) { release(v, .05); chg[slot] = null; } return; }
     if (!buf.charge || ctx.state !== 'running' || muted) return;
-    if (!v) { v = chg[slot] = loopVoice('charge', bus.sfx); v.lvl = -1; v.pan = 9; }
+    if (!v) { v = chg[slot] = loopVoice('charge', bus.sfx); v.lvl = -1; v.pan = 9; v.tier = null; }
     const t = ctx.currentTime, l = clamp(level, 0, 1);
-    if (Math.abs(l - v.lvl) < .01 && Math.abs(pan - v.pan) < .02) return; // per-frame calls: skip unchanged
-    v.lvl = l; v.pan = pan;
+    if (Math.abs(l - v.lvl) < .01 && Math.abs(pan - v.pan) < .02 && tier === v.tier) return; // per-frame calls: skip unchanged
+    v.lvl = l; v.pan = pan; v.tier = tier;
     v.g.gain.setTargetAtTime(db(MIX.charge + MIX.chargeSpan * l) * norm.charge, t, .03);
-    v.src.playbackRate.setTargetAtTime(.85 + .3 * l, t, .05); // a riser: the pitch climbs with the charge
+    v.src.playbackRate.setTargetAtTime(CHARGE_PITCH[tier] ?? CHARGE_PITCH.s, t, .03); // a riser in steps: each tier is higher, the same tier keeps one pitch
     v.p.pan.setTargetAtTime(clamp(pan, -1, 1) * PAN_MAX, t, .05);
   }
   // beds: called every frame. Only touches AudioParams when the value moved, allocates nothing on the steady path.
