@@ -58,7 +58,8 @@
   .wide { grid-column: 1 / -1; }
   .mapcols { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; }
   @media (max-width: 900px) { .mapcols { grid-template-columns: 1fr; } }
-  canvas.plan { aspect-ratio: 4 / 3; }
+  canvas.plan, canvas.view3d { aspect-ratio: 4 / 3; }
+  canvas.view3d { cursor: grab; touch-action: none; }
   canvas.elev { aspect-ratio: 2 / 1; }
   .sticks label { margin-right: 12px; }
   .sticks input { width: 70px; font: inherit; color: var(--text-primary); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; }
@@ -70,7 +71,7 @@
   <section class="card wide map">
     <header><h2>Space map</h2><span class="name">best guess from both phones, room coordinates</span><span class="badge off mapstate">no data</span></header>
     <div class="mapcols">
-      <div><h3>Top view (1 m grid)</h3><canvas class="plan" aria-label="top-down map: floor tags, people, sticks"></canvas></div>
+      <div><h3>3D view (1 m grid · drag to rotate, wheel to zoom, double-click to reset)</h3><canvas class="view3d" aria-label="3D map: floor tags, people, sticks"></canvas></div>
       <div>
         <h3>Side view (height above floor)</h3><canvas class="elev" aria-label="side view: heights above the floor"></canvas>
         <h3>Stick length (m)</h3>
@@ -149,7 +150,7 @@ function connect() {
     map.ingest(k);
     count(s, k.type, k.t);
     k.rx = now();
-    s.last[k.type] = k;
+    s.last[k.type === 'color' && k.side === 'opp' ? 'colorOpp' : k.type] = k;
     if (k.type === 'imu') { s.imu.push(k); while (s.imu.length && s.imu[0].t < k.t - WINDOW) s.imu.shift(); }
     if (k.type === 'ar' && k.tracking === 'TRACKING') { s.traj.push(k.p); if (s.traj.length > 600) s.traj.shift(); }
     if (k.type === 'calib') s.traj.length = 0;
@@ -269,10 +270,10 @@ function videoView(s) {
     for (const p of lm) { g.beginPath(); g.arc(p[0] * w, p[1] * h, lw * 1.5, 0, 7); g.fill(); }
   };
   if (fresh(s.last.pose) && s.last.pose.found) skel(s.last.pose.lm, POSE, '#f0f');
-  if (fresh(s.last.hands)) for (const hd of s.last.hands.hands) skel(hd.lm, HAND, '#0ff');
-  const co = s.last.color;
-  if (fresh(co) && co.found) {
-    g.strokeStyle = '#ff0'; g.strokeRect(co.box[0] * w, co.box[1] * h, co.box[2] * w, co.box[3] * h);
+  if (fresh(s.last.hands)) for (const hd of s.last.hands.hands) skel(hd.lm, HAND, hd.owner === 'me' ? '#0ff' : hd.owner === 'opp' ? '#f80' : '#bbb');
+  for (const [co, col] of [[s.last.color, '#ff0'], [s.last.colorOpp, '#f33']]) {
+    if (!fresh(co) || !co.found) continue;
+    g.strokeStyle = col; g.strokeRect(co.box[0] * w, co.box[1] * h, co.box[2] * w, co.box[3] * h);
     const x = co.x * w, y = co.y * h; g.beginPath(); g.moveTo(x - 20, y); g.lineTo(x + 20, y); g.moveTo(x, y - 20); g.lineTo(x, y + 20); g.stroke();
   }
 }
@@ -298,12 +299,14 @@ function panels(s) {
     ? `<tr><td>${esc(t.id)}</td>${t.p.map(v => `<td>${v.toFixed(2)}</td>`).join('')}<td>${Math.hypot(...t.p).toFixed(2)}</td></tr>`
     : `<tr><td>${esc(t.id)}</td><td colspan=4>no pose</td></tr>`).join('') || '<tr><td colspan=5 class=kv>none in view</td></tr>';
 
-  const h = s.last.hands, p = s.last.pose, c = s.last.color;
+  const h = s.last.hands, p = s.last.pose;
+  const colourLine = (label, c) => `colour ${label}: ${c ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;background:${hsvCss(c.target)}"></span> ` +
+    (c.found ? `at (${c.x.toFixed(2)}, ${c.y.toFixed(2)}), area ${(c.area * 100).toFixed(1)}%` : 'not found') : 'no target picked'}`;
   s.q('.vision').innerHTML = [
-    `hands: ${h ? (h.hands.map(x => `${esc(x.side)} ${(x.score * 100).toFixed(0)}%`).join(', ') || 'none') : 'no data'}`,
+    `hands: ${h ? (h.hands.map(x => `${esc(x.owner ?? '?')}/${esc(x.side)} ${(x.score * 100).toFixed(0)}%`).join(', ') || 'none') : 'no data'}`,
     `opponent pose: ${p ? (p.found ? `found, ${p.lm.filter(l => l[3] > 0.5).length}/33 visible` : 'none') : 'no data'}`,
-    `colour: ${c ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;background:${hsvCss(c.target)}"></span> ` +
-      (c.found ? `at (${c.x.toFixed(2)}, ${c.y.toFixed(2)}), area ${(c.area * 100).toFixed(1)}%` : 'not found') : 'no target picked'}`,
+    colourLine('me', s.last.color),
+    colourLine('opp', s.last.colorOpp),
   ].join('<br>');
 }
 
@@ -370,6 +373,93 @@ function plan(c, e, top) { // top: x right, z down; side: x right, y up
   }
 }
 
+// 3D view: plain-canvas perspective projection. World: x right, y up (height above floor), z toward the viewer at yaw 0.
+const cam3 = { yaw: 0.6, pitch: 0.55, zoom: 1 };
+const cam3Home = { ...cam3 };
+{
+  const c = document.querySelector('.map .view3d'); let drag = null;
+  c.onpointerdown = ev => { drag = [ev.clientX, ev.clientY]; c.setPointerCapture(ev.pointerId); c.style.cursor = 'grabbing'; };
+  c.onpointerup = c.onpointercancel = () => { drag = null; c.style.cursor = 'grab'; };
+  c.onpointermove = ev => {
+    if (!drag) return;
+    cam3.yaw += (ev.clientX - drag[0]) * 0.008;
+    cam3.pitch = Math.max(0.05, Math.min(1.5, cam3.pitch + (ev.clientY - drag[1]) * 0.008));
+    drag = [ev.clientX, ev.clientY];
+  };
+  c.onwheel = ev => { ev.preventDefault(); cam3.zoom = Math.max(0.3, Math.min(5, cam3.zoom * Math.exp(-ev.deltaY * 0.001))); };
+  c.ondblclick = () => Object.assign(cam3, cam3Home);
+}
+
+function view3d(c, e) {
+  const [g, w, h] = fit(c);
+  g.clearRect(0, 0, w, h);
+  const pts = e.corners.map(c => c.p);
+  for (const p of Object.values(e.people)) pts.push(p.p, ...p.trail);
+  for (const t of Object.values(e.tips)) pts.push(t.p);
+  if (!pts.length) { g.fillStyle = css('--text-muted'); g.font = '13px system-ui'; g.fillText('waiting for AR tracking', 12, 20); return; }
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, y1 = 1.5;
+  for (const p of pts) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[2]); z1 = Math.max(z1, p[2]); y1 = Math.max(y1, p[1]); }
+  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, cy = y1 / 2;
+  const R = Math.max(x1 - x0, z1 - z0, y1, 2) / 2 + 0.5; // scene radius, m
+  const D = R * 3 / cam3.zoom, f = 0.45 * Math.min(w, h) * D / R; // R fills ~45% of the short side at distance D
+  const cyaw = Math.cos(cam3.yaw), syaw = Math.sin(cam3.yaw), cp = Math.cos(cam3.pitch), sp = Math.sin(cam3.pitch);
+  const P = p => {
+    const x = p[0] - cx, y = p[1] - cy, z = p[2] - cz;
+    const a = x * cyaw + z * syaw, d = x * syaw - z * cyaw; // d: farther = larger
+    const yy = y * cp + d * sp, dd = d * cp - y * sp;
+    const s = f / Math.max(0.2, D + dd);
+    return [w / 2 + a * s, h / 2 - yy * s, s];
+  };
+  g.font = '11px system-ui'; g.lineCap = g.lineJoin = 'round';
+  const line = (a, b) => { g.moveTo(...P(a).slice(0, 2)); g.lineTo(...P(b).slice(0, 2)); };
+
+  // floor grid, 1 m
+  g.strokeStyle = css('--grid'); g.lineWidth = 1; g.beginPath();
+  const gx0 = Math.floor(cx - R), gx1 = Math.ceil(cx + R), gz0 = Math.floor(cz - R), gz1 = Math.ceil(cz + R);
+  for (let x = gx0; x <= gx1; x++) line([x, 0, gz0], [x, 0, gz1]);
+  for (let z = gz0; z <= gz1; z++) line([gx0, 0, z], [gx1, 0, z]);
+  g.stroke();
+  // world axes at the origin: x red-ish, y up, z
+  g.lineWidth = 2;
+  for (const [d, col, name] of [[[1, 0, 0], '--series-1', 'x'], [[0, 1, 0], '--text-secondary', 'y'], [[0, 0, 1], '--series-2', 'z']]) {
+    g.strokeStyle = g.fillStyle = css(col); g.beginPath(); line([0, 0, 0], d); g.stroke(); g.fillText(name, ...P(d).slice(0, 2));
+  }
+
+  // floor tags
+  g.strokeStyle = g.fillStyle = css('--text-muted'); g.lineWidth = 1.5;
+  if (e.corners.length > 1) {
+    const ring = [...e.corners].sort((a, b) => Math.atan2(a.p[2], a.p[0]) - Math.atan2(b.p[2], b.p[0]));
+    g.beginPath(); ring.forEach((c, i) => i ? g.lineTo(...P(c.p).slice(0, 2)) : g.moveTo(...P(c.p).slice(0, 2))); g.closePath(); g.stroke();
+  }
+  for (const c of e.corners) { const [x, y] = P(c.p); g.fillRect(x - 4, y - 4, 8, 8); g.fillText(`tag ${c.id}`, x + 6, y - 6); }
+
+  // everything with a height gets a drop line and a shadow dot so it can be read against the floor
+  const drop = (p, col) => {
+    const q = [p[0], 0, p[2]]; g.save(); g.globalAlpha = 0.35; g.strokeStyle = g.fillStyle = col; g.lineWidth = 1;
+    g.beginPath(); line(p, q); g.stroke(); const [x, y] = P(q); g.beginPath(); g.ellipse(x, y, 5, 2.5, 0, 0, 7); g.fill(); g.restore();
+  };
+  for (const [s, p] of Object.entries(e.people)) {
+    const col = css(who[s]);
+    g.strokeStyle = g.fillStyle = col;
+    g.globalAlpha = 0.35; g.lineWidth = 1.5; g.beginPath(); p.trail.forEach((q, i) => i ? g.lineTo(...P(q).slice(0, 2)) : g.moveTo(...P(q).slice(0, 2))); g.stroke(); g.globalAlpha = 1;
+    const b = e.bodies[s];
+    if (b) { g.lineWidth = 1.5; g.beginPath(); for (let i = 0; i < POSE.length; i += 2) { const a = b[POSE[i]], d = b[POSE[i + 1]]; if (a && d) line(a, d); } g.stroke(); }
+    drop(p.p, col);
+    const [x, y, sc] = P(p.p);
+    if (p.fwd) { g.lineWidth = 2.5; g.beginPath(); line(p.p, [p.p[0] + p.fwd[0] * 0.5, p.p[1], p.p[2] + p.fwd[2] * 0.5]); g.stroke(); }
+    if (p.tag && p.src === 'AR') { const [tx, ty] = P(p.tag); g.lineWidth = 1; g.strokeRect(tx - 4, ty - 4, 8, 8); }
+    g.beginPath(); g.arc(x, y, Math.max(4, Math.min(10, 0.1 * sc)), 0, 7); g.fill();
+    g.fillStyle = css('--text-primary'); g.font = '600 12px system-ui'; g.fillText(s, x + 9, y + 4); g.font = '11px system-ui';
+  }
+  for (const [s, t] of Object.entries(e.tips)) {
+    drop(t.p, css(who[s]));
+    const [x, y] = P(t.p);
+    if (t.wrist) { g.strokeStyle = css(who[s]); g.lineWidth = 3; g.beginPath(); line(t.wrist, t.p); g.stroke(); }
+    g.fillStyle = hsvCss(t.target); g.strokeStyle = css('--text-primary'); g.lineWidth = 1.5;
+    g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill(); g.stroke();
+  }
+}
+
 function mapPanel(e) {
   const m = v => v.toFixed(2), cm = v => (v * 100).toFixed(0) + ' cm', P = e.people;
   const st = document.querySelector('.mapstate'), n = Object.keys(P).length;
@@ -401,7 +491,7 @@ function frame() {
   const slow = now() - lastSlow > 0.1; // tables and text 10x a second, canvases every frame
   if (slow) lastSlow = now();
   const est = map.estimate({ now: now(), L: sticks });
-  plan(document.querySelector('.map .plan'), est, true); plan(document.querySelector('.map .elev'), est, false);
+  view3d(document.querySelector('.map .view3d'), est); plan(document.querySelector('.map .elev'), est, false);
   if (slow) mapPanel(est);
   for (const s of Object.values(slots)) {
     videoView(s); chart(s, 'euler', 180); chart(s, 'gyro'); chart(s, 'acc'); orient(s); traj(s);

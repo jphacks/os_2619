@@ -67,7 +67,7 @@ The server adds `slot` (`A`/`B`) to everything it relays. Video reaches the dash
 | `tags` | as fast as detection runs | `tags[]`: `id`, `c` 4 corners, `p` [x,y,z] m and `r` Rodrigues rotation in the OpenCV camera frame (x right, y down, z forward); `k` intrinsics [fx/W, fy/H, cx/W, cy/H] of the upright image |
 | `hands` | 〃 | `hands[]`: `side`, `score`, `lm` 21 × [x,y,z] |
 | `pose` | 〃 | `found`, `lm` 33 × [x,y,z,visibility] |
-| `color` | 〃 | `target` HSV (OpenCV scale), `found`, `x`,`y` centroid of the largest blob, `area` fraction, `box` [x,y,w,h] |
+| `color` | 〃 | `side` (`me` / `opp`; two targets, picked with the Pick button + tap), `target` HSV (OpenCV scale), `found`, `x`,`y` centroid of the largest blob, `area` fraction, `box` [x,y,w,h] |
 | `calib` | on button | — |
 
 Every detector runs on its own thread and always takes the newest frame (busy → frame skipped), so a slow one never delays the others. Video is ~15 fps JPEG and is dropped when the socket is backed up.

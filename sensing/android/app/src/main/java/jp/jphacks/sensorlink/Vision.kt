@@ -78,7 +78,7 @@ class ColorDetector {
     private val labels = Mat(); private val stats = Mat(); private val cents = Mat()
     private val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, Size(5.0, 5.0))
 
-    fun detect(f: Frame, h: Double, s: Double, v: Double, hueTol: Double = 12.0): JSONObject {
+    fun detect(f: Frame, side: String, h: Double, s: Double, v: Double, hueTol: Double = 12.0): JSONObject {
         Utils.bitmapToMat(f.bmp, rgba)
         Imgproc.resize(rgba, small, Size(rgba.cols() / 2.0, rgba.rows() / 2.0), 0.0, 0.0, Imgproc.INTER_AREA)
         Imgproc.cvtColor(small, hsv, Imgproc.COLOR_RGB2HSV) // RGB2HSV accepts 4-channel input, alpha ignored
@@ -95,7 +95,7 @@ class ColorDetector {
         val n = Imgproc.connectedComponentsWithStats(mask, labels, stats, cents)
         var best = -1; var bestArea = 30.0 // ignore specks
         for (i in 1 until n) { val a = stats.get(i, Imgproc.CC_STAT_AREA)[0]; if (a > bestArea) { bestArea = a; best = i } }
-        val o = JSONObject().put("type", "color").put("t", f.t).put("target", JSONArray().put(h).put(s).put(v))
+        val o = JSONObject().put("type", "color").put("side", side).put("t", f.t).put("target", JSONArray().put(h).put(s).put(v))
         if (best < 0) return o.put("found", false)
         val w = mask.cols().toDouble(); val hh = mask.rows().toDouble()
         return o.put("found", true)
@@ -134,13 +134,23 @@ class Pose(ctx: Context) {
     private val lm = gpuOrCpu { d ->
         PoseLandmarker.createFromOptions(ctx, PoseLandmarker.PoseLandmarkerOptions.builder()
             .setBaseOptions(BaseOptions.builder().setModelAssetPath("pose_landmarker_lite.task").setDelegate(d).build())
-            .setRunningMode(RunningMode.VIDEO).setNumPoses(1).build())
+            .setRunningMode(RunningMode.VIDEO).setNumPoses(1)
+            .setMinPoseDetectionConfidence(0.6f).setMinPosePresenceConfidence(0.6f).setMinTrackingConfidence(0.6f).build())
+    }
+
+    /** A close-up hand can pass as a pose; a real body has visible shoulders and hips (11,12,23,24) and some shoulder width. */
+    private fun looksLikeBody(pts: List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark>): Boolean {
+        if (pts.size < 25) return false
+        val torso = intArrayOf(11, 12, 23, 24).map { pts[it] }
+        if (torso.map { it.visibility().orElse(0f) }.average() < 0.5) return false
+        val sw = kotlin.math.hypot((pts[11].x() - pts[12].x()).toDouble(), (pts[11].y() - pts[12].y()).toDouble())
+        return sw > 0.05
     }
 
     fun detect(f: Frame): JSONObject {
         val r = lm.detectForVideo(BitmapImageBuilder(f.bmp).build(), clock.next(f))
         val o = JSONObject().put("type", "pose").put("t", f.t)
-        val pts = r.landmarks().firstOrNull() ?: return o.put("found", false)
+        val pts = r.landmarks().firstOrNull()?.takeIf { looksLikeBody(it) } ?: return o.put("found", false)
         return o.put("found", true).put("lm", JSONArray().apply {
             pts.forEach { put(JSONArray().put(r4(it.x())).put(r4(it.y())).put(r4(it.z())).put(r4(it.visibility().orElse(0f)))) }
         })
