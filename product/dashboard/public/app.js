@@ -25,14 +25,14 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len }, skeleton: false, skelSrc: 'both',
   minimap: true, debug: false, pip: false, fpv: null, drone: 'auto', videoSrc: 'remote', tagMode: 4, tagMount: 'stand', tagHeight: 1.0, knownFov: null,
-  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 3, fxStyle: 'textured',
+  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 4, fxStyle: 'smash',
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
 if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
 if ((saved.rulesVer ?? 0) < 2) cfg.aim = 'motion'; // ...and the aim from the tip's motion
-if ((saved.rulesVer ?? 0) < 3) cfg.fxStyle = 'textured'; // takumi's textured set became the default
-cfg.rulesVer = 3;
+if ((saved.rulesVer ?? 0) < 4) cfg.fxStyle = 'smash'; // the program-drawn set is the one used in the show (10/18)
+cfg.rulesVer = 4;
 cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg } };
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
 const axis = {}; // IMU sensor axis along each stick (sensing: calibrated by holding the stick straight up)
@@ -67,7 +67,7 @@ async function syncTracker() {
 const stage = createStage({ video, cfg, hub, PA, getTracker: () => tracker, isSetup: () => game.match.phase === 'setup' });
 const hudFlash = { el: null };
 const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), getDummyFrame: () => vsrc.dummy?.frame });
-stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: 画像素材版 (textured, default) / プログラム版 (smash) / いつもの (classic)
+stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: プログラム版 (smash, default) / 画像素材版 (textured) / いつもの (classic)
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
 
 hub.on(k => {
@@ -139,7 +139,7 @@ gameCtrl.innerHTML = `
     <div class="row"><button id="rulesReset">初期値に戻す</button><span class="muted" id="rulesNote"></span></div>
   </div>
   <h3>エフェクトを試す</h3>
-  <div class="seg" id="fxStyles"><button data-fxstyle="textured">画像素材版</button><button data-fxstyle="smash">プログラム版</button><button data-fxstyle="classic">いつもの</button></div>
+  <div class="seg" id="fxStyles"><button data-fxstyle="smash">プログラム版</button><button data-fxstyle="textured">画像素材版</button><button data-fxstyle="classic">いつもの</button></div>
   <p class="muted" style="font-size:12px;margin:4px 0">試合中でなくても出る。ダメージは入らない。弾は相手の胸に向けて撃つ。「溜め」は押している間溜まり、離すとその段階の技を撃つ</p>
   <div class="fxtry">${['A', 'B'].map(s => `<div class="row"><b style="color:var(--${s});width:1.4em">${s}</b>${['s', 'm', 'l'].map(t => `<button data-fxshot="${t}" data-s="${s}">${TIER_JA[t]}</button>`).join('')}<button data-fxcharge data-s="${s}">溜め（押している間）</button></div>`).join('')}</div>
   <h3>カメラ（ドローン視点）<kbd>D</kbd></h3>
