@@ -14,12 +14,14 @@
 const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3'];
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
-const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -13.9, lightning1: -5.1, lightning2: -12.8, lightning3: -6.9 };
+const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.5 }; // fire3 / lightning3: their first 3 s (BED)
 const REF_LUFS = -16;
 // what plays what: 1 = shot, 2 = hit / special burst, 3 = aura bed
 const EL = { fire: { shot: 'fire1', hit: 'fire2', bed: 'fire3' }, thunder: { shot: 'lightning1', hit: 'lightning2', bed: 'lightning3' } };
 // loop regions [start, end, crossfade] s: the beds ramp in for ~1 s and decay for 10+ s, so only the steady middle loops
-const LOOPS = { fire3: [1.5, 9.5, .8], lightning3: [1, 14, .8], charge: [.2, 4.4, .35] };
+const LOOPS = { charge: [.2, 4.4, .35] };
+// the beds (fire3 / lightning3) play once from the top: full until fadeAt, down to silence at end (s), no loop (10/18)
+const BED = { fadeAt: 2, end: 3 };
 const BGM_LOOP = [.09, 82]; // music starts at .14 s and ends in a tail at ~81.3 s; both ends are below -45 dBFS
 // mix in dB relative to REF (hit at full power = 0 dB anchor)
 const CHARGE_PITCH = { s: .85, m: 1.1, l: 1.45 }; // playback rate (pitch) per charge tier
@@ -177,6 +179,17 @@ export function createAudio({ base = 'audio/' } = {}) {
     v.src.playbackRate.setTargetAtTime(CHARGE_PITCH[tier] ?? CHARGE_PITCH.s, t, .03); // a riser in steps: each tier is higher, the same tier keeps one pitch
     v.p.pan.setTargetAtTime(clamp(pan, -1, 1) * PAN_MAX, t, .05);
   }
+  /** One 3 s pass of a bed: plays from 0, full until BED.fadeAt, linearly down to silence at BED.end, then stops. The level
+   *  (g, set by aura()) and this fade (f) are separate gains, so level changes never undo the fade. The voice stays in
+   *  beds[slot] after it ends, so a continuing aura does not restart it; it plays again once the aura has gone quiet. */
+  function bedVoice(name) {
+    const src = ctx.createBufferSource(), f = ctx.createGain(), g = node(0), p = ctx.createStereoPanner(), t = ctx.currentTime;
+    src.buffer = buf[name]; src.connect(f).connect(g).connect(p).connect(bus.amb);
+    f.gain.setValueAtTime(1, t); f.gain.setValueAtTime(1, t + BED.fadeAt); f.gain.linearRampToValueAtTime(0, t + BED.end);
+    src.start(t, 0); src.stop(t + BED.end + .02);
+    src.onended = () => { src.disconnect(); f.disconnect(); };
+    return { src, g, p, name, t0: t };
+  }
   // beds: called every frame. Only touches AudioParams when the value moved, allocates nothing on the steady path.
   const beds = { A: { v: null, el: '', lvl: -1, pan: 9, zero: 0, seen: 0 }, B: { v: null, el: '', lvl: -1, pan: 9, zero: 0, seen: 0 } };
   function aura(slot, element, level = 0, pan = 0) {
@@ -187,8 +200,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     if (s.v && s.el !== element) { release(s.v, .15); s.v = null; }
     if (!s.v) {
       if (l <= 0 || !buf[name]) return;
-      s.v = loopVoice(name, bus.amb, { start: Math.random() * buf[name].duration }); // random offset: A and B never phase
-      s.el = element; s.lvl = -1; s.pan = 9;
+      s.v = bedVoice(name); s.el = element; s.lvl = -1; s.pan = 9;
     }
     if (l > 0) s.zero = 0; else if (!s.zero) s.zero = t;
     if (Math.abs(l - s.lvl) > .01) { s.v.g.gain.setTargetAtTime(db(MIX.bed) * norm[name] * l, t, .15); s.lvl = l; }
