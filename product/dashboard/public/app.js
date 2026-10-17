@@ -127,7 +127,7 @@ gameCtrl.innerHTML = `
   <div class="players2">${['A', 'B'].map(s => `
     <div class="pc" data-s="${s}"><div class="row" style="justify-content:space-between"><b style="color:var(--${s})">${s} ${ELEMENT_JA[s === 'A' ? 'fire' : 'thunder']}</b><span class="num hpv"></span></div>
       <div class="facts"></div>
-      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
+      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button><button data-act="guard" title="押している間ガード（小は跳ね返し、中・大は貫通）">押してガード</button></div></div>`).join('')}
   </div>
   <h3>プレイヤーの動き（ダミー映像）</h3>
   <div id="playGame"></div>
@@ -186,7 +186,8 @@ $('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg }
 showRules();
 for (const pc of gameCtrl.querySelectorAll('.pc')) for (const b of pc.querySelectorAll('[data-act]')) {
   const slot = pc.dataset.s, a = b.dataset.act;
-  if (a === 'charge') { b.onpointerdown = () => game.command({ cmd: 'charge', slot, on: true }); b.onpointerup = b.onpointerleave = () => game.command({ cmd: 'charge', slot, on: false }); b.title = '押している間溜める'; }
+  if (a === 'guard') { b.onpointerdown = () => game.command({ cmd: 'guard', slot, on: true }); b.onpointerup = b.onpointerleave = () => game.command({ cmd: 'guard', slot, on: false }); }
+  else if (a === 'charge') { b.onpointerdown = () => game.command({ cmd: 'charge', slot, on: true }); b.onpointerup = b.onpointerleave = () => game.command({ cmd: 'charge', slot, on: false }); b.title = '押している間溜める'; }
   else b.onclick = () => game.command({ cmd: a, slot });
 }
 for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.onclick = () => { stage.drone.setMode(b.dataset.drone); cfg.drone = b.dataset.drone; save(); };
@@ -294,7 +295,7 @@ function updateHud() {
   bn.style.display = bt ? 'grid' : 'none'; setText(bn, bt);
   setText(hud.querySelector('.status'), cfg.debug ? `位置: A ${POS_JA[game.players.A.src] ?? game.players.A.src} / B ${POS_JA[game.players.B.src] ?? game.players.B.src}　ドローン: ${DRONE_JA[stage.drone.mode]}（${stage.drone.shot}）　${stage.state.msg}` : '');
 }
-const LOG_ICON = { shot: '発射', special: '大', hit: '命中', charge: '溜め', phase: '進行', win: '勝敗' };
+const LOG_ICON = { shot: '発射', special: '大', hit: '命中', charge: '溜め', guard: 'ガード', phase: '進行', win: '勝敗' };
 let logKey = '';
 let autoScanAt = null; const t0 = () => performance.now() / 1000;
 function updateSlowUi() {

@@ -13,13 +13,16 @@ register('data:text/javascript,' + encodeURIComponent(`
 const { createGame, RULES } = await import('./public/game.js');
 
 const DT = 1 / 60;
-function setup({ rules = {}, matchSec = 60, test = false } = {}) {
+function setup({ rules = {}, matchSec = 60, test = false, dummy = false } = {}) {
   let t = 1000, ids = 1;
-  const fx = { aura() {}, charge() {}, shot: () => ids++, moveShot() {}, endShot() {}, hit() {} };
+  const fx = { aura() {}, charge() {}, shot: () => ids++, moveShot() {}, endShot() {}, hit() {}, guard() {}, block() {} };
   const cfg = { posSrc: 'start', aim: 'motion', hand: 'R', stickLen: { A: .8, B: .8 }, useTruth: true, test,
     rules: { ...RULES, chargeHold: 0, ...rules, dmg: { ...RULES.dmg, ...rules.dmg }, size: { ...RULES.size, ...rules.size } } };
-  const g = createGame({ fx, drone: null, cfg, clock: () => t });
   const pos = { A: [-1.2, 0], B: [1.2, 0] };
+  // dummy: the dummy room's frame (app.js getDummyFrame), players where the script puts them, as the dummy room draws them
+  const frame = () => ({ players: Object.fromEntries(['A', 'B'].map(sl => { const [x, z] = pos[sl], sg = sl === 'A' ? 1 : -1;
+    return [sl, { chest: [x, 1.3, z], yaw: sl === 'A' ? 0 : Math.PI, base: [x + .2 * sg, 1.2, z], tip: [x + 1 * sg, 1.2, z], dir: [sg, 0, 0] }]; })) });
+  const g = createGame({ fx, drone: null, cfg, clock: () => t, ...(dummy && { getDummyFrame: frame }) });
   const put = (slot, x, z) => { // chest 1.3 m up, stick held at the chest pointing straight at the other start mark
     pos[slot] = [x, z];
     const s = slot === 'A' ? 1 : -1;
@@ -215,11 +218,35 @@ scenario('棒が水平より下で回しても溜まらず、上なら溜まる�
   aim(-.3); for (let i = 0; i < 4; i++) { S.charge('A'); S.run(.5); }
   eq(S.A.charging, false, '溜め中に下向きで回し続けたあと');
 });
-scenario('ガードと回避のセンサー判定は、ゲームでは何も起きない', () => {
+scenario('回避とガードのセンサー判定だけでは何も起きない（ガードは棒の姿勢で決まる）', () => {
   const S = setup(); S.fight();
   S.g.onSensed({ slot: 'B', name: 'Guard' }); S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'left', speed: 1.5 });
   S.swing('A'); S.run(1);
-  eq(S.B.hp, 95, 'B の HP（ガードも無敵もなし）');
+  eq(S.B.hp, 95, 'B の HP（無敵なし）');
+});
+// B holds the stick level across the body (真一文字): pointing along z, square to the facing (-x)
+const guardB = S => S.g.ingest({ type: 'truth', slot: 'B', chest: [1.2, 1.3, 0], yaw: Math.PI, base: [1, 1.2, -.4], dir: [0, 0, 1] });
+scenario('真一文字に構えると、小は跳ね返って撃った A に当たる', () => {
+  const S = setup(); S.fight(); guardB(S); S.run(.4);
+  eq(S.B.guarding, true, 'B のガード');
+  S.swing('A'); S.run(1.5);
+  eq(S.B.hp, 100, 'B の HP'); eq(S.A.hp, 95, '跳ね返った小を受けた A の HP');
+});
+scenario('構えてすぐ（0.3 秒未満）はまだガードにならない', () => {
+  const S = setup(); S.fight(); guardB(S); S.run(.1);
+  eq(S.B.guarding, false, 'B のガード');
+});
+scenario('中と大はガードを貫通する', () => {
+  const S = setup(); S.fight(); guardB(S);
+  S.chargeShot('A', 2.5); eq(S.B.hp, 80, '中のあとの B の HP');
+  S.chargeShot('A', 5.5); eq(S.B.hp, 20, '大のあとの B の HP'); eq(S.A.hp, 100, 'A の HP');
+});
+scenario('ガードボタンを押している間はガード、離すと小が当たる', () => {
+  const S = setup(); S.fight();
+  S.g.command({ cmd: 'guard', slot: 'B', on: true }); S.run(DT); S.swing('A'); S.run(1.5);
+  eq(S.A.hp, 95, '跳ね返りを受けた A の HP');
+  S.g.command({ cmd: 'guard', slot: 'B', on: false }); S.run(.3); S.swing('A'); S.run(1.5);
+  eq(S.B.hp, 95, 'B の HP');
 });
 
 // ---- デモ試合（ホーミング） ----
@@ -249,6 +276,19 @@ scenario('デモ試合でやり直すと、デモ試合のまま3秒数える', 
   const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(4); S.g.command({ cmd: 'reset' });
   eq(S.g.match.phase, 'countdown', '状態'); eq(S.g.match.mode, 'demo', 'モード');
   S.g.command({ cmd: 'phase', phase: 'fight' }); eq(S.g.match.mode, 'normal', '試合開始で戻るモード');
+});
+
+scenario('ダミーの部屋でも、デモ試合の大は撃った直後に素早く動けば避けられる（追いかけない）', () => {
+  const S = setup({ dummy: true }); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
+  S.g.command({ cmd: 'special', slot: 'A' }); // the 大 button: charges, then swings just past the 大 line
+  for (let i = 0; i < 800 && !S.A.shots; i++) S.run(1 / 60);
+  eq(S.A.shots, 1, '発射数'); S.walk('B', 0, 1.2, .15); S.run(1.8);
+  eq(S.B.hp, 100, 'B の HP');
+});
+scenario('ダミーの部屋でも、デモ試合で動かなければ大は当たる', () => {
+  const S = setup({ dummy: true }); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
+  S.g.command({ cmd: 'special', slot: 'A' }); S.run(7);
+  eq(S.B.hp, 40, 'B の HP');
 });
 
 // ---- 玉の大きさ ----

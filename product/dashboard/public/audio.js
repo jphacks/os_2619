@@ -245,6 +245,22 @@ export function createAudio({ base = 'audio/' } = {}) {
     const L = FIRE_BIG.launchTo;
     voice(key('special', element), EL.fire[3], { pan, gain: db(MIX.shot + LUFS.fire3 - FIRE_BIG.launchLufs), vary: false, fade: [L - .04, L] }); // 40 ms fade at the cut: no click
   }
+  // guard sounds have no file: made here once (peak ~.5, played through voice() like the rest)
+  // up = a short rising ring, reflect = a bright metal ping (inharmonic partials), break = a crunch with a low thud
+  const synth = (dur, f) => { const b = ctx.createBuffer(1, Math.round(dur * ctx.sampleRate), ctx.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = f(i / ctx.sampleRate); return b; };
+  const sin = (f, t) => Math.sin(2 * Math.PI * f * t), ping = (f0, t, k) => [1, 2.76, 5.4].reduce((a, m, i) => a + sin(f0 * m, t) * Math.exp(-t * k * (1 + i)) / (1 + i), 0);
+  const GUARD = {
+    guardUp: synth(.3, t => .35 * Math.sin(2 * Math.PI * (600 * t + 2500 * t * t)) * Math.exp(-t * 14) + .12 * ping(2400, t, 12)),
+    guardReflect: synth(.6, t => .35 * ping(1500, t, 7) + (t < .006 ? rnd(.4) : 0)),
+    guardBreak: synth(.5, t => rnd(.45) * Math.exp(-t * 22) + .4 * sin(110, t) * Math.exp(-t * 12) + .15 * ping(700, t, 18)),
+  };
+  for (const [n, b] of Object.entries(GUARD)) { buf[n] = b; norm[n] = 1; }
+  /** kind 'up' (guard raised) | 'reflect' (小 bounced back) | 'break' (中 / 大 went through). */
+  function guard(kind, pan = 0) {
+    const name = { up: 'guardUp', reflect: 'guardReflect', break: 'guardBreak' }[kind]; if (!name) return;
+    voice(key('guard', kind), name, { pan, gain: db(kind === 'up' ? MIX.shot - 4 : MIX.hit - 2) });
+    if (kind === 'break') duck(DUCK.hit);
+  }
   function play(name, { gain = 1, pan = 0, rate = 1 } = {}) { return !!voice(key('play', name), name, { gain, pan, rate, vary: false }); }
 
   function setVolume(b, v) {
@@ -275,7 +291,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     load, unlock,
     get unlocked() { return ctx.state === 'running'; }, get loaded() { return loaded; },
     setVolume, get volumes() { return { ...vol }; }, setMuted, get muted() { return muted; },
-    bgm, shot, hit, special, charge, aura, play, stopAll, dispose,
+    bgm, shot, hit, special, charge, aura, guard, play, stopAll, dispose,
     peak, // output peak (linear) over the last ~43 ms, for meters / tests
     ctx,
   };

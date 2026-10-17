@@ -68,7 +68,13 @@ const send = (ws, k) => ws.readyState === 1 && ws.send(JSON.stringify(k));
 
 // ---- /ws: phones A and B + dashboards (sensing/dashboard/server.mjs, unchanged protocol) ----
 const SLOTS = ['A', 'B'];
-const phones = new Map(); // phone id -> { slot, name, ws, seen, addr }
+const phones = new Map(); // phone id -> { slot, name, ws, seen, addr, since, n: { msg, video, bytes } (since the last stats line), gap }
+// A phone is dropped after SILENCE ms with nothing from it on either socket (data or video). 5 s was too short on a
+// two-hop link (phone -> hotspot -> this PC as another hotspot client): a burst of video could hold the pings back that long.
+const SILENCE = 10e3;
+const hms = () => new Date().toLocaleTimeString('ja-JP', { hour12: false });
+const log = (...a) => console.log(hms(), ...a);
+const alive = p => { const t = Date.now(); p.gap = Math.max(p.gap ?? 0, t - p.seen); p.seen = t; };
 const dashboards = new Set();
 const toDashboards = (data, video) => {
   for (const d of dashboards) if (d.readyState === 1 && !(video && d.bufferedAmount > 2e6)) d.send(data); // slow dashboard: skip frames, never sensor data
@@ -82,13 +88,13 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (data, isBinary) => {
     const p = id && phones.get(id);
     if (isBinary) {
-      if (role === 'video' && p) toDashboards(Buffer.concat([Buffer.from(p.slot), data]), true); // first byte = slot
+      if (role === 'video' && p) { alive(p); p.n.video++; p.n.bytes += data.length; toDashboards(Buffer.concat([Buffer.from(p.slot), data]), true); } // first byte = slot
       return;
     }
     let k;
     try { k = JSON.parse(data); } catch { return; }
     if (k.type === 'ping') {
-      if (p && p.ws === ws) p.seen = Date.now();
+      if (p && p.ws === ws) alive(p);
       return send(ws, { type: 'pong', t0: k.t0, ts: Date.now() / 1000 });
     }
     if (k.type === 'hello') {
@@ -99,21 +105,33 @@ wss.on('connection', (ws, req) => {
       const slot = old?.slot ?? SLOTS.find(s => ![...phones.values()].some(q => q.slot === s));
       if (!slot) { send(ws, { type: 'full' }); return ws.close(); }
       old?.ws.terminate();
-      phones.set(id, { slot, name: String(k.name).slice(0, 40), ws, seen: Date.now(), addr: req.socket.remoteAddress?.replace(/^::ffff:/, '') });
-      console.log(`phone ${slot} (${k.name}) connected from ${req.socket.remoteAddress}`);
+      phones.set(id, { slot, name: String(k.name).slice(0, 40), ws, seen: Date.now(), since: Date.now(), gap: 0, n: { msg: 0, video: 0, bytes: 0 }, addr: req.socket.remoteAddress?.replace(/^::ffff:/, '') });
+      log(`phone ${slot} (${k.name}) connected from ${req.socket.remoteAddress}`);
       send(ws, { type: 'welcome', slot });
       return status();
     }
-    if (role === 'phone' && p && p.ws === ws) { p.seen = Date.now(); k.slot = p.slot; toDashboards(JSON.stringify(k)); }
+    if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; k.slot = p.slot; toDashboards(JSON.stringify(k)); }
   });
-  ws.on('close', () => {
+  ws.on('close', (code, reason) => {
     dashboards.delete(ws);
     const p = phones.get(id);
-    if (role === 'phone' && p?.ws === ws) { phones.delete(id); console.log(`phone ${p.slot} disconnected`); status(); }
+    if (role === 'phone' && p?.ws === ws) {
+      phones.delete(id);
+      log(`phone ${p.slot} disconnected after ${((Date.now() - p.since) / 1000).toFixed(1)} s (${p.dropped ? `nothing for ${(p.dropped / 1000).toFixed(1)} s` : `close ${code}${reason?.length ? ' ' + reason : ''}`})`);
+      status();
+    } else if (role === 'video' && p) log(`phone ${p.slot} video socket closed (close ${code})`);
   });
 });
-// a phone that drops off WiFi never sends a close; free its slot after 5 s of silence
-setInterval(() => { for (const p of phones.values()) if (Date.now() - p.seen > 5000) p.ws.terminate(); }, 1000).unref();
+// a phone that drops off WiFi never sends a close; free its slot after SILENCE of nothing on either socket
+setInterval(() => { for (const p of phones.values()) { const q = Date.now() - p.seen; if (q > SILENCE && !p.dropped) { p.dropped = q; p.ws.terminate(); } } }, 1000).unref();
+// every 10 s per phone: sensor messages / s, video frames / s and KB / s, the longest silence (this tells a link that is
+// saturated by video, with pings stuck behind it, from one that is quiet or gone)
+setInterval(() => {
+  for (const p of phones.values()) {
+    log(`phone ${p.slot}: ${(p.n.msg / 10).toFixed(0)} msg/s, video ${(p.n.video / 10).toFixed(1)} fps ${(p.n.bytes / 10240).toFixed(0)} KB/s, longest gap ${((p.gap ?? 0) / 1000).toFixed(1)} s`);
+    p.n = { msg: 0, video: 0, bytes: 0 }; p.gap = 0;
+  }
+}, 10e3).unref();
 
 // ---- /cam: phone C (third-person camera) ↔ display pages (kawashima/server.mjs protocol) ----
 //  hello {role:'cam'|'display', id, name}   one cam only, the newest wins and the old one gets {type:'replaced'}
