@@ -18,7 +18,7 @@ const now = () => performance.now() / 1000;
 const toMat = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
 // where phone C should go: 3.5 m in front of the centre, 1.7 m up or higher, tilted down a little (camera before a scan)
 export const GUIDE_CAM = { x: 0, y: 1.7, z: 3.5, yaw: 0, pitch: -16, roll: 0, fov: 45 };
-export const DRONE_JA = { auto: '自動演出', orbit: '周回', chaseA: 'A の肩越し', chaseB: 'B の肩越し', top: '真上', side: '真横', free: '自由操作' };
+export const DRONE_JA = { fixed: '定点（最終映像と同じ）', auto: '自動演出', orbit: '周回', chaseA: 'A の肩越し', chaseB: 'B の肩越し', top: '真上', side: '真横', free: '自由操作' };
 
 const FIELD_KEY = 'pd-field-fixed-' + W.LAYOUT, CAM_KEY = 'pd-tagcam-fixed'; // v2: the sheets' positions are fixed (world.js), a saved scan only holds their turns and phone C
 
@@ -184,7 +184,10 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true }) {
     if (!S.box) return;
     const bw = S.box.clientWidth, bh = S.box.clientHeight; if (!bw || !bh) return;
     const fpv = S.mode === 'final' && cfg.fpv && phoneCanvas.width;
-    S.aspect = S.mode === 'game' ? bw / bh : fpv ? phoneCanvas.width / phoneCanvas.height : (video.videoWidth ? video.videoWidth / video.videoHeight : 16 / 9);
+    // game screen with the fixed camera: phone C's picture shape, so the framing is the final render's
+    S.fixed = S.mode === 'game' && drone.mode === 'fixed';
+    const picture = video.videoWidth ? video.videoWidth / video.videoHeight : 16 / 9;
+    S.aspect = S.mode === 'game' && !S.fixed ? bw / bh : S.fixed ? picture : fpv ? phoneCanvas.width / phoneCanvas.height : (video.videoWidth ? video.videoWidth / video.videoHeight : 16 / 9);
     const w = Math.min(bw, bh * S.aspect), h = w / S.aspect;
     el.style.width = w + 'px'; el.style.height = h + 'px';
     const srcW = S.mode === 'final' ? (fpv ? phoneCanvas.width : video.videoWidth || 1920) : w * devicePixelRatio;
@@ -220,6 +223,11 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true }) {
     if (S.mode === 'game') {
       drawGuide2d(false);
       scene.background = field.background; field.group.visible = true; camHelper.visible = cfg.debug; guide.visible = false;
+      if (S.fixed !== (drone.mode === 'fixed')) resize();
+      if (S.fixed) { // where phone C is, as on screen 4 (the dummy room's exact pose, else the scan, else the guide camera)
+        applyCam(); if (video.__dummy) { toThreeCamera(video.__dummy.truePose, camera); camera.aspect = S.aspect; camera.updateProjectionMatrix(); }
+        renderer.setViewport(0, 0, S.w, S.h); fx.render(); return;
+      }
       overCam.aspect = S.aspect; overCam.updateProjectionMatrix();
       const keep = { p: camera.position.clone(), q: camera.quaternion.clone(), fov: camera.fov };
       camera.position.copy(overCam.position); camera.quaternion.copy(overCam.quaternion); camera.fov = overCam.fov; camera.aspect = S.aspect; camera.updateProjectionMatrix();
