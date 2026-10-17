@@ -404,12 +404,14 @@ async function pollInfo() {
   const u = info?.urls ?? {};
   setHtml('#connInfo', info ? `このMacのIP: <b>${(info.ips ?? []).map(esc).join(' / ')}</b>　センサーアプリに入れる値: <b>${esc(u.sensorApp ?? '')}</b>　中継: ${info.relayAlive ? '動作中' : '<span class="ng">止まっている</span>'}　カメラ用スマホ: ${(info.cams ?? []).length ? (info.cams.map(c => esc(c.name || c.id)).join(', ') + ' 接続中') : '未接続'}`
     : `サーバー（server.mjs, :8002）につながらない。<code>node kawashima/server.mjs</code> で起動してから、この管理画面を <code>http://localhost:8002/admin.html</code> で開き直す`);
+  const noTls = info && info.https === false; // Windows without openssl: no https, so no camera page (phones need https for the camera)
   setHtml('#connUrls', info ? [
+    ...(noTls ? [`<span class="ng">https が動いていないので、カメラ用スマホはつなげない。</span>PC に openssl がない（Windows なら Git for Windows を入れる）。センサーアプリと画面は使える`] : [
     `カメラ用ページ: <a href="${esc(u.camera)}" target="_blank" rel="noopener">${esc(u.camera)}</a>`,
-    `証明書の入れ方（初回だけ）: <a href="${esc(u.trust)}" target="_blank" rel="noopener">${esc(u.trust)}</a>`,
+    `証明書の入れ方（初回だけ）: <a href="${esc(u.trust)}" target="_blank" rel="noopener">${esc(u.trust)}</a>`]),
     `生の3D表示: <a href="space.html" target="_blank" rel="noopener">space.html</a>`,
   ].map(x => `<div>${x}</div>`).join('') : '');
-  drawQr(u.camera ?? '');
+  drawQr(noTls ? '' : u.camera ?? '');
 }
 pollInfo(); setInterval(pollInfo, 5000);
 $('#camMode').onchange = e => send({ cmd: 'camMode', value: e.target.value });

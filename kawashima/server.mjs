@@ -4,7 +4,8 @@
 //                  phone may enter 8000 or 8002, and our https pages can use wss://IP:8443/ws without mixed-content errors
 //  /cam on both  — our signalling + fallback relay for the third-person camera phone (see "cam" below)
 //  /ca.crt /ca.pem /trust.html — the local CA the phones must trust once;  /info — JSON for the admin page
-// Env: PORT (8002), TLS_PORT (8443), RELAY_PORT (8000).  Certificates are made with the openssl CLI into cert/ (gitignored).
+// Env: PORT (8002), TLS_PORT (8443), RELAY_PORT (8000), OPENSSL (path to openssl).  Certificates are made with the openssl CLI
+// into cert/ (gitignored). Without openssl (plain Windows) only http :8002 runs: everything works except the camera phone page.
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
@@ -26,7 +27,13 @@ const ips = () => Object.values(os.networkInterfaces()).flat().filter(i => i.fam
 
 // ---- certificates: one CA per machine (phones trust it once), a server cert re-issued whenever this Mac's IPs change ----
 const certDir = join(root, 'cert'), cf = n => join(certDir, n);
-const openssl = (...a) => execFileSync('openssl', a, { stdio: ['ignore', 'ignore', 'pipe'] });
+// openssl: PATH first, then where Git for Windows keeps it (Windows has none of its own)
+const OPENSSL = [process.env.OPENSSL, 'openssl', ...(process.platform === 'win32' ? [
+  join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'usr', 'bin', 'openssl.exe'),
+  join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Git', 'usr', 'bin', 'openssl.exe'),
+  join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Git', 'usr', 'bin', 'openssl.exe'),
+] : [])].filter(Boolean).find(b => { try { execFileSync(b, ['version'], { stdio: 'ignore' }); return true; } catch { return false; } });
+const openssl = (...a) => execFileSync(OPENSSL, a, { stdio: ['ignore', 'ignore', 'pipe'] });
 const wantSans = () => ['DNS:localhost', 'IP:127.0.0.1', ...ips().map(ip => 'IP:' + ip)];
 function ensureCerts() {
   mkdirSync(certDir, { recursive: true });
@@ -51,7 +58,10 @@ function ensureCerts() {
   }
   return { key: readFileSync(cf('server.key')), cert: readFileSync(cf('server.pem')), ca: readFileSync(cf('ca.pem')), fingerprint: ca.fingerprint256, sans: want.join() };
 }
-let tls = ensureCerts();
+let tls = null;
+try { tls = OPENSSL ? ensureCerts() : null; } catch (e) { console.warn('cert:', e.message); }
+if (!tls) console.warn(`cert: ${OPENSSL ? 'could not make certificates' : 'openssl not found'} → https :${TLS_PORT} is off. Everything else works;
+      the camera phone page needs https. Fix: install Git for Windows (it ships openssl) or set OPENSSL=path\\to\\openssl.exe`);
 
 // ---- sensing relay (:8000): use the one already running, otherwise run theirs as a child and keep it alive ----
 let child = null, relayAlive = false, relaySpawned = false, quitting = false;
@@ -140,8 +150,8 @@ async function info() {
   relayAlive = await probe(RELAY_PORT); // live, not the 3 s poll: the admin page asks right after we spawned it
   const phones = relayAlive ? await relayPhones() : undefined;
   return {
-    ips: list, port: PORT, tlsPort: TLS_PORT, relayPort: RELAY_PORT, relayAlive, relaySpawned, cams: camList().list, ...(phones && { phones }),
-    certFingerprint: tls.fingerprint,
+    ips: list, port: PORT, tlsPort: tls ? TLS_PORT : null, https: !!tls, relayPort: RELAY_PORT, relayAlive, relaySpawned, cams: camList().list, ...(phones && { phones }),
+    certFingerprint: tls?.fingerprint ?? null,
     urls: { // trust/ca over plain http: before the CA is installed every https URL shows a warning on the phone
       display: `http://${ip}:${PORT}/`, admin: `http://${ip}:${PORT}/admin.html`, camera: `https://${ip}:${TLS_PORT}/cam.html`,
       trust: `http://${ip}:${PORT}/trust.html`, ca: `http://${ip}:${PORT}/ca.crt`, sensorApp: `${ip}:${RELAY_PORT}`, ws: `wss://${ip}:${TLS_PORT}/ws`, cam: `wss://${ip}:${TLS_PORT}/cam`,
@@ -151,7 +161,7 @@ async function info() {
 async function onRequest(req, res) {
   try {
     const path = new URL(req.url, 'http://x').pathname;
-    if (path === '/ca.pem' || path === '/ca.crt') return res.writeHead(200, { 'content-type': path.endsWith('.pem') ? 'application/x-pem-file' : 'application/x-x509-ca-cert', 'cache-control': 'no-store' }).end(tls.ca);
+    if ((path === '/ca.pem' || path === '/ca.crt') && tls) return res.writeHead(200, { 'content-type': path.endsWith('.pem') ? 'application/x-pem-file' : 'application/x-x509-ca-cert', 'cache-control': 'no-store' }).end(tls.ca);
     if (path === '/info') return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }).end(JSON.stringify(await info()));
     await serveStatic(req, res);
   } catch (e) { console.warn(e.message); if (!res.headersSent) res.writeHead(500).end(); }
@@ -163,27 +173,28 @@ function onUpgrade(req, socket, head) {
   socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
 }
 const plain = http.createServer(onRequest).on('upgrade', onUpgrade);
-const secure = https.createServer({ key: tls.key, cert: tls.cert }, onRequest).on('upgrade', onUpgrade);
-for (const [s, p] of [[plain, PORT], [secure, TLS_PORT]]) s.on('error', e => { console.error(`cannot listen on :${p}: ${e.code} (set PORT / TLS_PORT, or stop the other process)`); process.exit(1); });
+const secure = tls && https.createServer({ key: tls.key, cert: tls.cert }, onRequest).on('upgrade', onUpgrade);
+const servers = [[plain, PORT], ...(secure ? [[secure, TLS_PORT]] : [])];
+for (const [s, p] of servers) s.on('error', e => { console.error(`cannot listen on :${p}: ${e.code} (set PORT / TLS_PORT, or stop the other process)`); process.exit(1); });
 
 // Wi-Fi changed → new IP → re-issue the leaf and swap it in without restarting (new connections get the new cert)
 setInterval(() => {
-  if (wantSans().join() === tls.sans) return;
+  if (!tls || wantSans().join() === tls.sans) return;
   try { tls = ensureCerts(); secure.setSecureContext({ key: tls.key, cert: tls.cert }); console.log('cert: IPs changed, now', ips().join(' ')); } catch (e) { console.warn('cert:', e.message); }
 }, 10e3).unref();
 
 await ensureRelay();
 setInterval(ensureRelay, 3000).unref();
-await Promise.all([new Promise(r => plain.listen(PORT, r)), new Promise(r => secure.listen(TLS_PORT, r))]);
+await Promise.all(servers.map(([s, p]) => new Promise(r => s.listen(p, r))));
 {
   const list = ips(), ip = list[0] ?? 'localhost';
   console.log([
     `bou-battle server   IPs: ${list.join(', ') || '(none: no network)'}`,
     `  display    http://${ip}:${PORT}/           admin  http://${ip}:${PORT}/admin.html`,
-    `  camera     https://${ip}:${TLS_PORT}/cam.html   (phone: install the CA from the trust page first)`,
-    `  trust/CA   http://${ip}:${PORT}/trust.html    http://${ip}:${PORT}/ca.crt    sha256 ${tls.fingerprint}`,
-    `  sensor app ${ip}:${RELAY_PORT}  (relay ${relaySpawned ? 'spawned by us' : relayAlive ? 'already running, using it' : 'NOT running'}; also via ws://${ip}:${PORT}/ws and wss://${ip}:${TLS_PORT}/ws)`,
-    `  cam socket ws://${ip}:${PORT}/cam   wss://${ip}:${TLS_PORT}/cam      info http://${ip}:${PORT}/info`,
+    tls ? `  camera     https://${ip}:${TLS_PORT}/cam.html   (phone: install the CA from the trust page first)` : `  camera     (off: no https without openssl)`,
+    ...(tls ? [`  trust/CA   http://${ip}:${PORT}/trust.html    http://${ip}:${PORT}/ca.crt    sha256 ${tls.fingerprint}`] : []),
+    `  sensor app ${ip}:${RELAY_PORT}  (relay ${relaySpawned ? 'spawned by us' : relayAlive ? 'already running, using it' : 'NOT running'}; also via ws://${ip}:${PORT}/ws${tls ? ` and wss://${ip}:${TLS_PORT}/ws` : ''})`,
+    `  cam socket ws://${ip}:${PORT}/cam${tls ? `   wss://${ip}:${TLS_PORT}/cam` : ''}      info http://${ip}:${PORT}/info`,
   ].join('\n'));
 }
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { quitting = true; child?.kill(); process.exit(0); });
