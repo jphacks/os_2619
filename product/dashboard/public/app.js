@@ -280,6 +280,7 @@ function updateHud() {
 }
 const LOG_ICON = { shot: '発射', special: '大', hit: '命中', charge: '溜め', phase: '進行', win: '勝敗' };
 let logKey = '';
+let autoScanAt = null; const t0 = () => performance.now() / 1000;
 function updateSlowUi() {
   const m = game.match, P = game.players;
   pill('#pillA', hub.phones.A.online); pill('#pillB', hub.phones.B.online);
@@ -306,6 +307,9 @@ function updateSlowUi() {
     $('#gameLog').innerHTML = game.events.slice(0, 80).map(e => `<li><span class="t">${new Date(e.at).toLocaleTimeString('ja-JP', { hour12: false })}</span><b style="color:${e.slot ? `var(--${e.slot})` : 'var(--muted)'}">${e.slot ?? '—'}</b><span><span class="muted">${LOG_ICON[e.kind] ?? ''}</span> ${esc(e.text)}</span></li>`).join('') || '<li class="muted">まだありません</li>';
   }
   const checks = stage.tagChecks(), fresh = performance.now() / 1000 - stage.seenTags.at < 3;
+  // no scan yet (none saved, or an old one dropped): the camera would sit at the guide spot, possibly on the far side of the
+  // centre square and so point-mirrored. Scan by itself once every tag is in sight; at most every 15 s if it keeps failing.
+  if (screen === 'final' && !stage.state.scanned && !video.__dummy && m.phase === 'setup' && fresh && checks.every(c => c.seen) && t0() - (autoScanAt ?? -99) > 15) { autoScanAt = t0(); scan(); }
   $('#tagCheck').innerHTML = video.videoWidth && !video.__dummy ? checks.map(c => `<span class="${fresh && c.seen ? (c.px < 14 ? 'warn' : 'ok') : 'bad'}">ID${c.id}${fresh && c.seen ? (c.px < 14 ? ' 小さい' : ' ✓') : ' ×'}</span>`).join(' ') : '';
   $('#finalMsg').textContent = [!video.videoWidth ? (vsrc.state.msg || '映像なし') : '', stage.state.msg].filter(Boolean).join('　');
   $('#fovNote').textContent = cfg.knownFov ? `覚えた縦画角 ${cfg.knownFov.toFixed(1)}°（立てたタグのスキャンで使う）` : '画角はまだ覚えていない（床置きか、まっすぐ立てた状態のスキャンで覚える）';
