@@ -4,7 +4,7 @@
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import {
-  START, STICK, TAGS, CORNER_IDS, PLAYER_TAG, tagScale, mul3, tr3, app3, pose, compose, invert, apply,
+  START, STICK, TAGS, CORNER_IDS, tagScale, mul3, tr3, app3, pose, compose, invert, apply,
   fromCols, fromQuat, toQuat, fromRodrigues, toRodrigues, bodyPose, worldTagPose, phoneArcamPose, arcam_T_cv,
 } from './public/world.js';
 
@@ -149,7 +149,7 @@ export function createSim({ seed = 1, drift = 0, noise = 1 } = {}) {
   function tags(slot) {
     const p = players[slot], o = players[p.opp];
     const cv_T_world = invert(compose(phoneArcamPose(p.body, TILT), arcam_T_cv)), list = [];
-    for (const id of [...CORNER_IDS, PLAYER_TAG[o.slot]]) {
+    for (const id of CORNER_IDS) {
       const cT = compose(cv_T_world, worldTagPose(id, o.body)), c = cT.t, dist = Math.hypot(...c);
       if (c[2] < 0.2 || dist > 6) continue;
       const [u, v] = project(c);

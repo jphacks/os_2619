@@ -3,7 +3,7 @@
 // re-measured every time the phone sees a corner tag (removes ARCore drift). Before the first sighting it is guessed from
 // the start mark (the user calibrates standing there). Plain JS, browser + node.
 import {
-  START, TAGS, CORNER_IDS, PLAYER_TAG, isChestTag, tagScale, app3, pose, compose, invert, apply, fromQuat, toQuat, fromRodrigues,
+  START, TAGS, CORNER_IDS, tagScale, app3, pose, compose, invert, apply, fromQuat, toQuat, fromRodrigues,
   cv_T_arcam, arcam_T_cv, worldTagPose, bodyPose, phoneArcamPose,
 } from './world.js';
 
@@ -87,10 +87,6 @@ export function createLocalizer(opts = {}) {
       if (CORNER_IDS.includes(g.id)) {
         const d = Math.max(Math.hypot(...cv_T_tag.t), 0.3), r = d * 0.2 / TAGS[g.id].size; // error grows with distance / tag size
         seen.push({ id: g.id, cv_T_tag, d, r, w: 1 / (r * r) });
-      } else if (isChestTag(g.id)) { // worn tags 8-11: always the other player's
-        const pos = apply(cvOf(s, calib), cv_T_tag.t);
-        s.opponent = { pos, t: k.t, anchored: s.anchored };
-        if (o.useOpponentObs && s.anchored) correctFromObs(S[OTHER[slot]], pos, k.t);
       }
     }
     if (seen.length) fix(s, seen, calib, k.t);

@@ -4,7 +4,7 @@
 import { add, sub, mul, dot, cross, norm, rotY } from './public/map.js';
 
 export const TAG = 0.15, K = [1.04, 0.78, 0.5, 0.5], L = { A: 1.0, B: 0.8 };
-export const CORNERS = { 0: [0, 0, 0], 1: [4, 0, 0], 2: [4, 0, 2.6], 3: [0, 0, 2.6] }, CHEST = { A: 10, B: 11 };
+export const CORNERS = { 0: [0, 0, 0], 1: [4, 0, 0], 2: [4, 0, 2.6], 3: [0, 0, 2.6] };
 const TARGET = { A: [0, 220, 220], B: [115, 220, 200] }; // tip colour of each person's stick (OpenCV HSV)
 const WORLD = { A: { psi: 0.7, tau: [0.3, -1.2, -0.5] }, B: { psi: -2.1, tau: [2, -1.1, 1] } }; // room = rotY(psi, w) + tau
 const UP = [0, 1, 0], other = s => s === 'A' ? 'B' : 'A';
@@ -50,7 +50,6 @@ export function packets(s, t, vision = true) {
     if (c.every(inImg)) tags.push({ id, sz: TAG, c, p: inCam(P).map(v => v * 1.40), r: rodrigues(quat(dirCam(x), dirCam(y), dirCam(z))) });
   };
   for (const [id, P] of Object.entries(CORNERS)) tag(+id, P, [1, 0, 0], [0, 0, -1], UP);
-  tag(CHEST[other(s)], o.tag, cross(UP, o.fwd), UP, o.fwd);
   out.push({ type: 'tags', t, k: K, tags });
 
   const tp = proj(o.tip), target = TARGET[other(s)];

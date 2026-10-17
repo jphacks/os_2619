@@ -148,19 +148,17 @@ function woodFloor() {
 }
 
 // ---- players ----
-function makePlayer(color, tagId, tags) {
+function makePlayer(color) {
   const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
   const mat = new THREE.MeshStandardMaterial({ color, roughness: .8 }), skin = new THREE.MeshStandardMaterial({ color: 0xe0b08a, roughness: .7 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x2a2d36, roughness: .9 });
-  // body frame of world.bodyPose: x forward, y up, z right; origin at the chest tag
+  // body frame of world.bodyPose: x forward, y up, z right; origin at the chest
   const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.17, .5, 6, 16), mat); torso.position.set(-.18, -.12, 0); body.add(torso);
   const head = new THREE.Mesh(new THREE.SphereGeometry(.12, 20, 14), skin); head.position.set(-.16, .38, 0); body.add(head);
   for (const s of [-1, 1]) {
     const leg = new THREE.Mesh(new THREE.CapsuleGeometry(.07, .75, 4, 10), dark); leg.position.set(-.18, -.85, .09 * s); body.add(leg);
   }
   const offArm = new THREE.Mesh(new THREE.CapsuleGeometry(.05, .5, 4, 10), mat); offArm.position.set(-.18, -.15, -.24); body.add(offArm);
-  const tagMat = new THREE.MeshBasicMaterial({ map: tagTex(tagId) }), sz = tags[tagId].size * 10 / 8;
-  const tag = new THREE.Mesh(new THREE.PlaneGeometry(sz, sz), tagMat); tag.matrixAutoUpdate = false; g.add(tag);
   const arm = new THREE.Mesh(new THREE.CylinderGeometry(.045, .045, 1, 10), mat), stick = new THREE.Mesh(new THREE.CylinderGeometry(.018, .018, 1, 10), new THREE.MeshStandardMaterial({ color: 0xd8c08a, roughness: .5 }));
   const hand = new THREE.Mesh(new THREE.SphereGeometry(.05, 12, 8), skin);
   g.add(arm, stick, hand);
@@ -175,8 +173,6 @@ function makePlayer(color, tagId, tags) {
     set(t) {
       const bp = W.bodyPose(t.chest, t.yaw, t.chest[1]);
       body.matrix.copy(m4(bp));
-      const tp = W.chestTagPose(bp); tp.t = W.apply(tp, [0, 0, .005]); // just proud of the chest
-      tag.matrix.copy(m4(tp));
       const shoulder = v3(W.apply(bp, [-.15, .15, .22])), base = v3(t.base), tip = v3(t.tip);
       between(arm, shoulder, base); between(stick, base.clone().addScaledVector(new THREE.Vector3().subVectors(base, tip).normalize(), .1), tip);
       hand.position.copy(base);
@@ -283,7 +279,7 @@ export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = n
     g.add(face); gu.add(board, pole, foot);
   }
 
-  const players = { A: makePlayer(0xd2532a, W.PLAYER_TAG.A, T), B: makePlayer(0x2f7fd0, W.PLAYER_TAG.B, T) };
+  const players = { A: makePlayer(0xd2532a), B: makePlayer(0x2f7fd0) };
   for (const p of Object.values(players)) { p.group.traverse(o => { if (o.isMesh) o.castShadow = true; }); p.group.visible = showPlayers; scene.add(p.group); }
   const truth = { A: null, B: null }, last = { A: -1e9, B: -1e9 };
   const setTruth = (slot, k) => { if (!truth.hasOwnProperty(slot)) return; truth[slot] = k; last[slot] = performance.now(); };

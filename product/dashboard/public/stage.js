@@ -121,12 +121,11 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true }) {
 
   // live tag check while preparing: which ids phone C sees
   const seen = { list: [], at: 0, busy: false, ms: 0 };
-  const PLAYER_IDS = W.CHEST_IDS;
   async function checkTags(setup) {
     if (seen.busy || !setup || video.__dummy || !video.videoWidth || document.hidden) return;
     seen.busy = true; const t0 = performance.now();
     try {
-      const d = await detectTags(video, setup ? null : PLAYER_IDS, { passes: [[1, 2], [1, 6]] }); // off the main thread (tagworker.js)
+      const d = await detectTags(video, null, { passes: [[1, 2], [1, 6]] }); // off the main thread (tagworker.js)
       seen.list = d.map(o => ({ id: o.id, corners: o.corners, w: d.width, h: d.height })); seen.at = now();
     } catch {} finally { seen.busy = false; seen.ms = performance.now() - t0; }
   }

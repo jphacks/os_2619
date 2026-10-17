@@ -23,9 +23,8 @@ class Frame(val bmp: Bitmap, val t: Double, val fx: Double, val fy: Double, val 
 fun r4(x: Double) = round(x * 1e4) / 1e4
 fun r4(x: Float) = r4(x.toDouble())
 
-/** Black-square sizes (m). The printed paper is 50 mm (chest tags worn on the phones, ids 8-11) or 200 mm (every other tag, fixed in the room)
- *  square, with a white margin of a tenth of that on each side, so the black square is 0.8 of the paper. */
-fun tagSizeOf(id: Int) = 0.8 * (if (id in 8..11) 0.05 else 0.2)
+/** Black-square size (m) of every tag. The printed paper is 200 mm square with a white margin of a tenth on each side, so the black square is 160 mm. */
+fun tagSizeOf(id: Int) = 0.16
 
 /** AprilTag tag36h11 via OpenCV's aruco module, pose by solvePnP. Positions in the OpenCV camera frame (x right, y down, z forward), metres. */
 class TagDetector {

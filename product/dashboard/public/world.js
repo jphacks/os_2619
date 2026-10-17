@@ -7,7 +7,7 @@
 // - tag:   x right, y up (as you look at the printed tag), z out of the face toward the viewer. Matches the
 //          solvePnP object points in sensing Vision.kt: corners (-h,h), (h,h), (h,-h), (-h,-h).
 // - cv:    the phone's upright portrait image, OpenCV convention: x right, y down, z forward. `tags[].p` / `r` give
-//          cv_T_tag (Rodrigues r). p is metric when the tag carries `sz` (printed size: 50 mm chest tags 8-11, 200 mm fixed tags); an old app used one size for all: see tagScale.
+//          cv_T_tag (Rodrigues r). p is metric when the tag carries `sz` (its black-square size, 160 mm); an old app used one size for all: see tagScale.
 // - arcam: ARCore camera pose frame (sensor native landscape, back camera at 90°): x, y, -z forward.
 //          The portrait image is the sensor image rotated 90° clockwise, so x_cv = y_ar, y_cv = x_ar, z_cv = -z_ar.
 //          `ar.p` / `ar.q` ([x,y,z,w]) give calib_T_arcam: the current camera pose in the camera frame at calibration.
@@ -25,7 +25,7 @@ export const STICK = { len: 0.8, axis: [0, 1, 0], up: [0, 0, 1], hand: { fwd: 0.
 //          Their real positions and turns are measured by the scan (fieldmap.js -> setField); the values here are only a
 //          placeholder 3 m square until then. Nothing in the room is measured by hand.
 // - full:  fixed tags on poles at chest height facing the arena centre: corners 0-3, plus 4 / 5 in the middle of the
-//          sides behind B / A so each player sees one straight ahead from the start mark. Chest tags 10 (A), 11 (B).
+//          sides behind B / A so each player sees one straight ahead from the start mark. 
 // - today: what was printed on 10/17 (AprilTag Print Studio, 200 mm black square): only ids 0 and 1, behind B / A.
 // - floor: the same two sheets lying face up on the floor (standing them up was impractical), in front of the start
 //          marks on the camera side so the third-person camera sees them less obliquely. Only needed while scanning.
@@ -51,28 +51,20 @@ const LAYOUTS = {
     3: { size: 0.16, pos: [-H, CHEST_H, H] },
     4: { size: 0.16, pos: [H, CHEST_H, 0] },
     5: { size: 0.16, pos: [-H, CHEST_H, 0] },
-    10: { size: 0.04, player: 'A' },
-    11: { size: 0.04, player: 'B' },
   },
   today: {
     0: { size: 0.16, pos: [H, CHEST_H, 0], flip: true },
     1: { size: 0.16, pos: [-H, CHEST_H, 0], flip: true },
-    10: { size: 0.04, player: 'A' }, // not printed yet: kept so the dummy room and the simulator still use them
-    11: { size: 0.04, player: 'B' },
   },
   map4: {
     0: { size: 0.16, pos: [-HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
     1: { size: 0.16, pos: [HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
     2: { size: 0.16, pos: [HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
     3: { size: 0.16, pos: [-HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
-    10: { size: 0.04, player: 'A' },
-    11: { size: 0.04, player: 'B' },
   },
   floor: {
     0: { size: 0.16, pos: [1.5, 0, 1], floor: true, flip: true },
     1: { size: 0.16, pos: [-1.5, 0, 1], floor: true, flip: true },
-    10: { size: 0.04, player: 'A' },
-    11: { size: 0.04, player: 'B' },
   },
 };
 const pick = (typeof location !== 'undefined' && new URLSearchParams(location.search).get('layout'))
@@ -81,12 +73,6 @@ export const LAYOUT = LAYOUTS[pick] ? pick : 'map4';
 export const TAGS = LAYOUTS[LAYOUT];
 export const FIXED_FIELD = LAYOUT === 'map4'; // sheet positions and turns are fixed (a scan only places phone C)
 export const CORNER_IDS = Object.keys(TAGS).map(Number).filter(id => TAGS[id].pos); // every fixed tag (name kept for the modules that use it)
-export const PLAYER_TAG = { A: 10, B: 11 }; // the ids drawn / simulated on A and B
-// Tags 8-11 are worn on the phones (chest mounts) and move with their wearer; every other id is fixed in the room.
-// A phone never sees its own, so a chest tag in view is always the opponent's.
-export const CHEST_IDS = [8, 9, 10, 11];
-export const isChestTag = id => id >= 8 && id <= 11;
-for (const id of CHEST_IDS) if (!TAGS[id]) TAGS[id] = { size: 0.04, chest: true }; // size for tagScale; never a pos, never a field tag
 // floor layout: the scan measures how far apart the two sheets really are (app.js) and keeps it, so the
 // sheets only need to lie level and face the same way, not sit exactly 3 m apart
 export const FLOOR_IDS = CORNER_IDS.filter(id => TAGS[id].floor);
@@ -111,7 +97,7 @@ export const onFieldChange = cb => { fieldListeners.add(cb); return () => fieldL
  * third-person picture) to B's side (right), so A starts at -x facing +x as before.
  */
 export function setField({ poly, tags = {} }) {
-  for (const [id, t] of Object.entries(tags)) if (TAGS[id] && !isChestTag(+id)) // a measured sheet: lying (floor) or upright (stand: true, spin)
+  for (const [id, t] of Object.entries(tags)) if (TAGS[id]) // a measured sheet: lying (floor) or upright (stand: true, spin)
     Object.assign(TAGS[id], { yawKnown: true, pos: [...t.pos], yaw: t.yaw ?? 0, floor: !t.stand, stand: !!t.stand, spin: t.spin ?? 0, R: t.R ? [...t.R] : undefined, flip: false });
   FIELD.poly = poly.map(p => [...p]);
   const xs = poly.map(p => p[0]), zs = poly.map(p => p[1]);
@@ -191,10 +177,10 @@ export const CV_FROM_AR = [0, 1, 0, 1, 0, 0, 0, 0, -1];   // v_cv = CV_FROM_AR v
 export const cv_T_arcam = pose(CV_FROM_AR);
 export const arcam_T_cv = pose(CV_FROM_AR);
 
-/** World pose of a corner tag (faces the arena centre), or of a chest tag given the wearer's bodyPose. */
+/** World pose of a fixed tag (null for an id the layout does not list). */
 export function worldTagPose(id, body) {
   const tag = TAGS[id];
-  if (!tag.pos) return chestTagPose(body);
+  if (!tag.pos) return null;
   if (tag.stand) { // taped upright (fieldmap stand scan): normal horizontal, facing `yaw` (0: facing +z, toward the
     // third-person camera's side); base axes x = [cos, 0, -sin], y = up, z = [sin, 0, cos], then the tag frame turned
     // spin·90° about its normal so the OpenCV tag axes match the print as mounted (Print Studio sheets upright: spin 2).
@@ -213,15 +199,10 @@ export function worldTagPose(id, body) {
   return tag.flip ? pose(fromCols(x.map(v => -v), [0, -1, 0], z), tag.pos) : pose(fromCols(x, y, z), tag.pos);
 }
 
-/** Body frame of a standing player: x forward, y up, z right. A chest tag faces forward: tag z = body forward. */
+/** Body frame of a standing player: x forward, y up, z right. */
 export function bodyPose(pos, yaw, h = CHEST_H) {
   const f = [Math.cos(yaw), 0, -Math.sin(yaw)], u = [0, 1, 0], r = [-f[2], 0, f[0]]; // r = f x u
   return pose(fromCols(f, u, r), [pos[0], h, pos[2]]);
-}
-/** Chest tag in world: tag x = player's right... seen from the front the tag's x is the viewer's right = player's left. */
-export function chestTagPose(body) {
-  const [f, u, r] = [0, 1, 2].map(c => [body.R[c], body.R[3 + c], body.R[6 + c]]);
-  return pose(fromCols(r.map(v => -v), u, f), body.t);
 }
 /** Chest phone camera (arcam) in world for a body pose: portrait, looking forward, image up = world up. */
 export function phoneArcamPose(body, tilt = 0) { // tilt (rad): the phone leans forward, its camera looks that far below the horizon

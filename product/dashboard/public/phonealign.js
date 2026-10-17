@@ -6,19 +6,16 @@
 // standing) gives two point pairs: the tag centre, and the point 0.5 m along the tag's most horizontal printed axis
 // (a single tag then already pins θ). Pairs over a sliding window are fitted by weighted least squares with median
 // outlier rejection (as sensing/dashboard/map.js robustFit). Unlike map.js we know the tag ids and poses, so standing
-// field tags are never mistaken for chest mounts, and no shared room frame is needed: each phone is placed alone.
+// no shared room frame is needed: each phone is placed alone.
 // A phone that sends no wp/wq (old app) falls back to localize.js (calibration-relative p/q): src 'localize'.
 import * as W from './world.js';
 import { createLocalizer } from './localize.js';
 import { eulerRot } from './actions.js';
 
-const OTHER = { A: 'B', B: 'A' };
 const KEEP = 20;          // s of AR history and tag sightings kept for the fit
 const TRAIL = 15;         // s of trail
 const AXIS_M = 0.5;       // m along the tag axis for the yaw-pinning point
 const MIN_ALIGN = 3;      // sightings before `aligned`
-const MIN_CHEST = 8;      // chest-tag sightings before they may place a phone
-const MIN_SPREAD = 0.5;   // m, how far apart those sightings must be (they pin the turn)
 
 // ---- vector helpers (allocating; only used off the per-message hot path or on small inputs) ----
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -77,8 +74,8 @@ function robustFit(c) {
 /**
  * createPhoneAlign({ keep = 20, minAlign = 3, localizer, axis }) -> { ingest(k), get(slot), estimate(now), onFieldChange() }
  * - ingest(k): every relayed message (k.slot A/B; types ar, tags, imu, color, calib, phones).
- * - get(slot): { how: 'field'|'chest'|null (what placed this phone), src: 'ar'|'localize'|'tag'|null, aligned, theta, t, rms, n, used, lastFix, world_T_ar, chest, fwd, yaw, cam (world_T_arcam),
- *   trail, check (cm, this phone's own position vs where the other phone saw its chest tag), checkT, seenBy (that sighting, world),
+ * - get(slot): { src: 'ar'|'localize'|null, aligned, theta, t, rms, n, used, lastFix, world_T_ar, chest, fwd, yaw, cam (world_T_arcam),
+ *   trail,
  *   sightings (last tags message: [{ id, p (world), R (tag axes in world, 3x3 row-major), d }]), k, online, calibAt, hz, lastT }.
  * - estimate(now): { slots: { A, B }, stick: { A: { dir, base, src } }, warn }; stick[s] is s's own IMU stick.
  * - onFieldChange(): the field tags moved (setField): refit from the stored sightings. Also subscribed to world.onFieldChange.
@@ -88,8 +85,8 @@ export function createPhoneAlign(opts = {}) {
   const loc = o.localizer ?? createLocalizer();
   const S = {};
   for (const s of ['A', 'B']) S[s] = {
-    ar: [], trail: [], sight: [], T: null, Tf: null, how: null, dirty: false, fDirty: false, fixes: 0, lastFix: null, oldApp: false, online: false,
-    k: null, imu: null, color: null, seen: [], lastTags: null, calibAt: null, calibPose: null, yaw0: 0,
+    ar: [], trail: [], sight: [], T: null, Tf: null, dirty: false, fDirty: false, fixes: 0, lastFix: null, oldApp: false, online: false,
+    k: null, imu: null, color: null, lastTags: null, calibAt: null, calibPose: null, yaw0: 0,
     rate: { ar: 0, tags: 0, imu: 0, color: 0 }, cnt: { ar: 0, tags: 0, imu: 0, color: 0 }, cntAt: 0, lastT: 0,
   };
 
@@ -142,30 +139,8 @@ export function createPhoneAlign(opts = {}) {
   }
   const fieldT = s => { const st = S[s]; if (st.fDirty) { st.fDirty = false; st.Tf = fitField(s); } return st.Tf; };
 
-  /** Fit from the OTHER phone's sightings of this phone's chest tag: the other phone is placed by the field tags, so each
-   *  sighting says where this phone was (a), and its own AR pose at that instant says where it was in its own world (b).
-   *  Needs the sightings to be spread out (one point cannot give the turn); null until they are. */
-  function fitChest(s) {
-    const ob = OTHER[s], To = fieldT(ob); if (!To || To.n < o.minAlign) return null;
-    const pairs = [];
-    for (const v of S[ob].seen) {
-      const at = poseAt(s, v.t); if (!at) continue;
-      pairs.push({ a: apply(To, v.b), b: at.p, w: 0.5 / Math.max(0.5, v.d) ** 2 });
-    }
-    if (pairs.length < MIN_CHEST) return null;
-    const m = [0, 1, 2].map(i => pairs.reduce((x, e) => x + e.a[i] / pairs.length, 0));
-    if (Math.max(...pairs.map(e => Math.hypot(e.a[0] - m[0], e.a[2] - m[2]))) < MIN_SPREAD) return null;
-    const T = robustFit(pairs);
-    if (T) T.n = pairs.length;
-    return T;
-  }
-
-  /** Field tags decide; the chest-tag fit only stands in while the field fit is missing or too thin. */
-  function refit(s) {
-    const st = S[s]; st.dirty = false;
-    const Tf = fieldT(s); st.T = Tf; st.how = Tf ? 'field' : null;
-    if (!Tf || Tf.n < o.minAlign) { const C = fitChest(s); if (C) { st.T = C; st.how = 'chest'; } }
-  }
+  /** The fit is the phone's own field-tag fit. */
+  function refit(s) { const st = S[s]; st.dirty = false; st.T = fieldT(s); }
   const T = s => { if (S[s].dirty) refit(s); return S[s].T; }; // lazy: one fit per batch of sightings, however often get() runs
 
   function ingest(k) {
@@ -203,11 +178,9 @@ export function createPhoneAlign(opts = {}) {
           if (W.TAGS[g.id]?.pos) { // a field tag: two pairs for the fit (centre; axes kept so the field can change later)
             const w = 1 / Math.max(0.5, d) ** 2;
             st.sight.push({ t: k.t, id: g.id, b, bx: camDir(pose, rodr(g.r, [1, 0, 0])), by: camDir(pose, rodr(g.r, [0, 1, 0])), w, d });
-            st.fixes++; st.lastFix = k.t; st.fDirty = st.dirty = true; S[OTHER[s]].dirty = true;
-          } else if (W.isChestTag(g.id)) { // a chest tag (8-11) is worn by the other player: a phone cannot see its own
-            st.seen.push({ t: k.t, b, d }); S[OTHER[s]].dirty = true;
-            while (st.seen[0].t < k.t - o.keep) st.seen.shift();
+            st.fixes++; st.lastFix = k.t; st.fDirty = st.dirty = true;
           }
+
         }
         while (st.sight.length && st.sight[0].t < k.t - o.keep) st.sight.shift();
         if (st.sight.length > 1500) st.sight.splice(0, st.sight.length - 1500); // hot phone at 30 Hz x 4 tags: bound the fit cost
@@ -222,18 +195,11 @@ export function createPhoneAlign(opts = {}) {
     }
   }
 
-  /** World position of the other phone's latest chest-tag sighting of slot s (seen by OTHER[s]), or null. */
-  function seenBy(s, maxAge = 0.5, now = Infinity) {
-    const ob = OTHER[s], v = S[ob].seen[S[ob].seen.length - 1], To = T(ob);
-    if (!v || !To || now - v.t > maxAge) return null;
-    return { t: v.t, p: apply(To, v.b), d: v.d };
-  }
-
   function get(slot, now = Date.now() / 1000) { // now: PC seconds (the k.t clock), for freshness
     const st = S[slot];
     const out = { src: null, aligned: false, theta: null, t: null, rms: null, n: 0, used: 0, fixes: st.fixes, lastFix: st.lastFix, world_T_ar: null,
-      chest: null, fwd: null, yaw: null, cam: null, trail: [], check: null, checkT: null, seenBy: null, sightings: [], k: st.k, online: st.online,
-      calibAt: st.calibAt, how: st.how, hz: st.rate, lastT: st.lastT, oldApp: st.oldApp };
+      chest: null, fwd: null, yaw: null, cam: null, trail: [], sightings: [], k: st.k, online: st.online,
+      calibAt: st.calibAt, hz: st.rate, lastT: st.lastT, oldApp: st.oldApp };
     if (st.oldApp) { // old app: calibration-relative p/q only -> localize.js
       const L = loc.get(slot);
       out.src = 'localize'; out.aligned = L.anchored; out.fixes = L.fixes; out.lastFix = L.lastFix; out.rms = L.err;
@@ -243,9 +209,6 @@ export function createPhoneAlign(opts = {}) {
       return out;
     }
     const Ts = T(slot), a = latest(slot);
-    out.how = st.how; // 'field' | 'chest' (placed by the other phone's sightings of the chest tag) | null
-    const sb = seenBy(slot, 0.5, now);
-    out.seenBy = sb;
     if (Ts) {
       out.theta = Ts.th; out.t = Ts.t; out.rms = Ts.rms; out.n = Ts.n; out.used = Ts.used;
       out.aligned = Ts.n >= o.minAlign;
@@ -264,11 +227,6 @@ export function createPhoneAlign(opts = {}) {
       out.yaw = Math.atan2(-out.fwd[2], out.fwd[0]);
       const Rq = W.fromQuat([a.q[3], a.q[0], a.q[1], a.q[2]]);
       out.cam = { R: W.mul3(out.world_T_ar.R, Rq), t: out.chest };
-      // cross-check: my AR position at the instant the other phone saw my chest tag, vs where it saw the tag
-      const ob = OTHER[slot], v = S[ob].seen[S[ob].seen.length - 1], To = T(ob), at = v && poseAt(slot, v.t);
-      if (at && To) { out.check = dist(apply(Ts, at.p), apply(To, v.b)) * 100; out.checkT = v.t; }
-    } else if (sb) { // not placed by own AR: where the other phone sees the chest tag
-      out.src = 'tag'; out.chest = sb.p;
     }
     return out;
   }

@@ -2,7 +2,7 @@
 //  - phones A / B: a phone-sized rectangle at the chest camera's pose, its view pyramid, AR trail and facing arrow
 //  - phone C: a landscape rectangle where the tag scan put the third-person camera, with its view pyramid
 //  - swords: base → tip as the game places them (hand + IMU direction × stick length), tip marked
-//  - AprilTags: squares with their real pattern — field sheets at their scanned pose, chest tags 8-11 on the players,
+//  - AprilTags: squares with their real pattern — the floor sheets at their fixed spots,
 //    and the live sightings (a ray from the phone to every tag it sees right now)
 //  - optional: the sensing team's own estimate (map.js) as a dashed ghost
 // Ported from kawashima/space.js. Own renderer; geometry allocated once, buffers rewritten in place, estimate drawn at 15 Hz.
@@ -128,11 +128,9 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
     const phone = phoneMesh(color);
     const frustum = segs(8, lineMat(color, { opacity: .7 }));
     const arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), .5, color, .1, .06);
-    const tag = tagSquare(W.PLAYER_TAG[s], W.TAGS[W.PLAYER_TAG[s]].size, COL.chest); tag.matrixAutoUpdate = false;
     const name = label(`${s} スマホ`, s === 'A' ? '#ffb070' : '#a8dcff', .13);
-    const seen = new THREE.Mesh(new THREE.OctahedronGeometry(.05), new THREE.MeshBasicMaterial({ color: COL.chest, wireframe: true }));
     const drop = segs(1, lineMat(color, { opacity: .25 }));
-    const grp = new THREE.Group(); grp.add(trail, phone, frustum.obj, arrow, tag, name, seen, drop.obj); scene.add(grp);
+    const grp = new THREE.Group(); grp.add(trail, phone, frustum.obj, arrow, name, drop.obj); scene.add(grp);
     // the sword: a glowing blade from the hand to the tip, plus a soft tip marker
     const blade = new THREE.Mesh(new THREE.CylinderGeometry(.012, .018, 1, 10, 1, true), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .95 }));
     const glow = new THREE.Mesh(new THREE.CylinderGeometry(.035, .045, 1, 12, 1, true), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .18, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -143,7 +141,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
     const swordLabel = label(`${s} の剣`, s === 'A' ? '#ffb070' : '#a8dcff', .1);
     const sword = new THREE.Group(); sword.add(blade, glow, tip, tipGlow, hand, tipShadow.obj, swordLabel); scene.add(sword);
     const ghost = new THREE.Mesh(new THREE.SphereGeometry(.09, 10, 6), new THREE.MeshBasicMaterial({ color: COL.ghost, wireframe: true, transparent: true, opacity: .6 })); scene.add(ghost);
-    src[s] = { grp, trail, trailPos, tg, phone, frustum, arrow, tag, name, seen, drop, sword, blade, glow, tip, tipGlow, hand, tipShadow, swordLabel, ghost };
+    src[s] = { grp, trail, trailPos, tg, phone, frustum, arrow, name, drop, sword, blade, glow, tip, tipGlow, hand, tipShadow, swordLabel, ghost };
   }
   const rays = segs(RAY_N, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .7, depthTest: false }), true); scene.add(rays.obj);
   // fixed tags as detected: each id where a phone first saw it (not where the layout says it should be), with its real turn.
@@ -169,7 +167,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
   // ---- legend / toggles ----
   const TOGGLES = [
     ['phones', 'スマホ A・B（長方形・視野・軌跡）', 'linear-gradient(90deg,#ff8a3d 50%,#4cc3ff 50%)'], ['phoneC', 'スマホ C（第三者視点カメラ）', '#ffd23d'],
-    ['swords', '剣の推定位置', '#fff'], ['tags', 'AprilTag（フィールド・胸）', '#3ddc84'], ['rays', 'いま見えているタグ', '#3ddc84'],
+    ['swords', '剣の推定位置', '#fff'], ['tags', 'AprilTag（床のタグ）', '#3ddc84'], ['rays', 'いま見えているタグ', '#3ddc84'],
     ['mapjs', 'センサー班 map.js の推定（点線）', 'repeating-linear-gradient(90deg,#c9c9c9 0 3px,transparent 3px 5px)'], ['grid', 'グリッド・軸', '#5a6378'],
   ];
   const on = Object.fromEntries(TOGGLES.map(([k]) => [k, k !== 'mapjs']));
@@ -229,10 +227,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
         d.drop.write(0, g.chest, [g.chest[0], 0, g.chest[2]]); d.drop.draw(1);
         d.arrow.visible = !!g.fwd;
         if (g.fwd) { d.arrow.position.set(g.chest[0], g.chest[1] - .12, g.chest[2]); d.arrow.setDirection(tmpV.set(...g.fwd)); }
-        d.tag.visible = on.tags && g.yaw != null;
-        if (d.tag.visible) toMat(W.compose(W.chestTagPose(W.bodyPose(g.chest, g.yaw, g.chest[1] - .12)), W.pose(W.I3, [0, 0, .01])), d.tag.matrix);
-        d.seen.visible = !!g.seenBy; if (g.seenBy) d.seen.position.set(...g.seenBy.p);
-        for (const sg of g.sightings ?? []) if (sg.R && !W.isChestTag(sg.id) && !W.TAGS[sg.id]?.pos) showDetected(sg.id, sg.R, sg.p, sg.d);
+        for (const sg of g.sightings ?? []) if (sg.R && !W.TAGS[sg.id]?.pos) showDetected(sg.id, sg.R, sg.p, sg.d);
         if (on.rays && g.sightings) for (const sg of g.sightings) {
           if (nRays >= RAY_N) break;
           const isField = W.TAGS[sg.id]?.pos, m = seenPool[nRays];
@@ -278,7 +273,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
   const vec = (v, d = 2) => v ? '[' + Array.from(v, x => x.toFixed(d)).join(', ') + ']' : '-';
   const ms = v => v == null ? '-' : (v * 1000).toFixed(0) + ' ms';
   for (const s of SLOTS) section(`スマホ ${s}`, [
-    [s + 'name', '接続'], [s + 'src', '位置の元'], [s + 'chest', '位置 [x,y,z] m'], [s + 'yaw', '向き'], [s + 'fit', '合わせの残差'], [s + 'check', '胸タグ照合'],
+    [s + 'name', '接続'], [s + 'src', '位置の元'], [s + 'chest', '位置 [x,y,z] m'], [s + 'yaw', '向き'], [s + 'fit', '合わせの残差'],
     [s + 'sword', '剣 根元→先端'], [s + 'swsrc', '剣の向きの元'], [s + 'tags', '見えているタグ'], [s + 'hz', '受信 Hz'], [s + 'lat', '遅延'],
   ]);
   section('スマホ C・フィールド', [['camT', 'カメラ位置'], ['camFov', '縦画角 / 解像度'], ['camErr', 'スキャン誤差'], ['field', 'フィールド'], ['ftags', 'タグ配置'], ['warn', '注意']]);
@@ -289,11 +284,10 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
     for (const s of SLOTS) {
       const g = est.slots[s], ph = hub.phones[s], p = game?.players[s];
       put(s + 'name', ph.online ? `${ph.name}${ph.addr ? ' · ' + ph.addr : ''}` : '未接続');
-      put(s + 'src', g.src === 'ar' ? `ARCore をタグで合わせた${g.aligned ? '' : '（観測 3 未満）'}` : g.src === 'localize' ? '旧アプリ（キャリブ基準）' : g.src === 'tag' ? '相手が見た胸タグ' : '-');
+      put(s + 'src', g.src === 'ar' ? `ARCore をタグで合わせた${g.aligned ? '' : '（観測 3 未満）'}` : g.src === 'localize' ? '旧アプリ（キャリブ基準）': '-');
       put(s + 'chest', vec(g.chest));
       put(s + 'yaw', g.yaw == null ? '-' : `${(g.yaw / DEG).toFixed(1)}°`);
       put(s + 'fit', g.rms == null ? '-' : `${f1(g.rms * 100)} cm / ${g.n} 回${g.lastFix ? `　最終 ${f1(t - g.lastFix)} 秒前` : ''}`);
-      put(s + 'check', g.check == null ? '-' : `${g.check.toFixed(1)} cm`);
       put(s + 'sword', p ? `${vec(p.base.toArray())} → ${vec(p.tip.toArray())}` : '-');
       put(s + 'swsrc', p?.stickSrc ?? '-');
       put(s + 'tags', g.sightings?.length ? g.sightings.map(q => `${q.id}:${q.d.toFixed(2)}m`).join(' ') : '-');
