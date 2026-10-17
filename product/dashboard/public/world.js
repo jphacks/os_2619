@@ -34,11 +34,13 @@ export const STICK = { len: 0.8, axis: [0, 1, 0], up: [0, 0, 1], hand: { fwd: 0.
 // flip: printed in the official apriltag-imgs orientation, which OpenCV reads rotated 180° about the tag normal
 //       (our print/make_tags.py PDFs are in OpenCV's orientation and need no flip). Mount sheets upright as printed.
 const H = ARENA.half;
-// map4 = four floor sheets, ids 0-3, at the corners of a square (0 -> 1 -> 2 -> 3 around it) centred on the origin. The positions are
-// fixed, not measured: SIDE is the distance between neighbouring sheet centres (?side=1.66 or env SIDE overrides it).
-const SIDE = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('side')) || (typeof process !== 'undefined' && +process.env?.SIDE) || 1.66;
-export const FIELD_SIDE = SIDE;
-const HS = SIDE / 2;
+// map4 = four floor sheets, ids 0-3, laid edge to edge as one big square in the middle of the room, clockwise seen from above:
+// 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left, every sheet upright (its top edge towards -z). The origin is the middle of
+// the big square. The positions are fixed, not measured: PITCH is the distance between the centres of neighbouring sheets
+// (the paper size when the sheets touch; ?pitch=0.25 or env PITCH overrides it).
+const PITCH = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('pitch')) || (typeof process !== 'undefined' && +process.env?.PITCH) || 0.25;
+export const TAG_PITCH = PITCH;
+const HP = PITCH / 2;
 const LAYOUTS = {
   full: {
     0: { size: 0.2, pos: [-H, CHEST_H, -H] },
@@ -57,10 +59,10 @@ const LAYOUTS = {
     11: { size: 0.05, player: 'B' },
   },
   map4: {
-    0: { size: 0.2, pos: [HS, 0, HS], floor: true, yaw: 0 },
-    1: { size: 0.2, pos: [-HS, 0, HS], floor: true, yaw: 0 },
-    2: { size: 0.2, pos: [-HS, 0, -HS], floor: true, yaw: 0 },
-    3: { size: 0.2, pos: [HS, 0, -HS], floor: true, yaw: 0 },
+    0: { size: 0.2, pos: [-HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
+    1: { size: 0.2, pos: [HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
+    2: { size: 0.2, pos: [HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
+    3: { size: 0.2, pos: [-HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
     10: { size: 0.05, player: 'A' },
     11: { size: 0.05, player: 'B' },
   },
@@ -75,7 +77,7 @@ const pick = (typeof location !== 'undefined' && new URLSearchParams(location.se
   || (typeof process !== 'undefined' && process.env?.LAYOUT) || 'map4';
 export const LAYOUT = LAYOUTS[pick] ? pick : 'map4';
 export const TAGS = LAYOUTS[LAYOUT];
-export const FIXED_FIELD = LAYOUT === 'map4'; // sheet positions are fixed (a scan only places phone C and the sheets' turns)
+export const FIXED_FIELD = LAYOUT === 'map4'; // sheet positions and turns are fixed (a scan only places phone C)
 export const CORNER_IDS = Object.keys(TAGS).map(Number).filter(id => TAGS[id].pos); // every fixed tag (name kept for the modules that use it)
 export const PLAYER_TAG = { A: 10, B: 11 }; // the ids drawn / simulated on A and B
 // Tags 8-11 are worn on the phones (chest mounts) and move with their wearer; every other id is fixed in the room.
@@ -96,7 +98,7 @@ if (typeof location !== 'undefined' && LAYOUT === 'floor') { // the two-sheet la
 // map4 sheets replaces it (setField). START, ARENA.half (largest extent, for the old square-minded code) follow it.
 // Listeners (onFieldChange) rebuild whatever they drew from the old outline.
 export const FIELD = { // until a scan: map4's placeholder sheets, else the ARENA square
-  poly: LAYOUT === 'map4' ? FLOOR_IDS.map(id => [TAGS[id].pos[0], TAGS[id].pos[2]]).sort((a, b) => Math.atan2(a[1], a[0]) - Math.atan2(b[1], b[0])) : [[-H, -H], [H, -H], [H, H], [-H, H]],
+  poly: [[-H, -H], [H, -H], [H, H], [-H, H]], // map4: the sheets sit in the middle, the play area is the ARENA square around them
 };
 const fieldListeners = new Set();
 export const onFieldChange = cb => { fieldListeners.add(cb); return () => fieldListeners.delete(cb); };
@@ -118,20 +120,21 @@ export function setField({ poly, tags = {} }) {
   for (const cb of fieldListeners) cb(FIELD);
 }
 if (FIXED_FIELD) setField({ poly: FIELD.poly }); // START / ARENA from the fixed square, without calling it scanned
-/** A scan measures the sheets (and phone C) in its own frame; the sheets really sit at the fixed square, so move everything into
- *  that frame: a turn + shift on the floor fitted to the sheets that were seen (>= 2 needed). tags: scan result { id: { pos, yaw } },
- *  camPose: world_T_cam. Returns { rms (m, how far the sheets are from the square), pose, tags } or null. */
+/** A scan measures the sheets (and phone C) in its own frame; the sheets really lie in the fixed layout, so move everything into
+ *  that frame. The turn comes from how the sheets are turned (the sheets are tiny next to the room, their positions say little about
+ *  it), the shift from their centres. tags: scan result { id: { pos, yaw } }, camPose: world_T_cam.
+ *  Returns { rms (m, how far the measured centres are from the layout afterwards), pose, tags } or null. */
 export function toFixedFrame(tags, camPose) {
   const ids = Object.keys(tags).filter(id => TAGS[id]?.floor);
-  if (ids.length < 2) return null;
-  const M = ids.map(id => tags[id].pos), F = ids.map(id => TAGS[id].pos), n = ids.length;
-  const mean = (P, i) => P.reduce((a, p) => a + p[i], 0) / n, mm = [mean(M, 0), mean(M, 2)], fm = [mean(F, 0), mean(F, 2)];
-  let sc = 0, ss = 0;
-  for (let i = 0; i < n; i++) { const a = [M[i][0] - mm[0], M[i][2] - mm[1]], b = [F[i][0] - fm[0], F[i][2] - fm[1]]; sc += b[0] * a[0] + b[1] * a[1]; ss += b[0] * a[1] - b[1] * a[0]; }
-  const th = Math.atan2(ss, sc), c = Math.cos(th), s = Math.sin(th), R = [c, 0, s, 0, 1, 0, -s, 0, c];
+  if (!ids.length) return null;
+  const n = ids.length, M = ids.map(id => tags[id].pos), F = ids.map(id => TAGS[id].pos);
+  const turns = ids.map(id => (TAGS[id].yaw ?? 0) - (tags[id].yaw ?? 0)); // measured frame -> fixed frame, per sheet
+  const th = Math.atan2(turns.reduce((a, v) => a + Math.sin(v), 0), turns.reduce((a, v) => a + Math.cos(v), 0)), c = Math.cos(th), s = Math.sin(th);
+  const R = [c, 0, s, 0, 1, 0, -s, 0, c], mean = (P, i) => P.reduce((a, p) => a + p[i], 0) / n;
+  const mm = [mean(M, 0), mean(M, 2)], fm = [mean(F, 0), mean(F, 2)];
   const t = [fm[0] - (c * mm[0] + s * mm[1]), 0, fm[1] - (-s * mm[0] + c * mm[1])];
-  const rms = Math.sqrt(ids.reduce((a, id, i) => { const p = M[i], q = [c * p[0] + s * p[2] + t[0], -s * p[0] + c * p[2] + t[2]]; return a + (q[0] - F[i][0]) ** 2 + (q[1] - F[i][2]) ** 2; }, 0) / n);
-  return { rms, pose: compose({ R, t }, camPose), tags: Object.fromEntries(ids.map(id => [id, { ...tags[id], pos: [...TAGS[id].pos], yaw: (tags[id].yaw ?? 0) + th }])) };
+  const rms = Math.sqrt(M.reduce((a, p, i) => { const q = [c * p[0] + s * p[2] + t[0], -s * p[0] + c * p[2] + t[2]]; return a + (q[0] - F[i][0]) ** 2 + (q[1] - F[i][2]) ** 2; }, 0) / n);
+  return { rms, pose: compose({ R, t }, camPose), tags: Object.fromEntries(ids.map(id => [id, { ...tags[id], pos: [...TAGS[id].pos], yaw: TAGS[id].yaw ?? 0 }])) };
 }
 /** Is the floor point (x, z) inside the field outline? */
 export function inField(x, z) {
@@ -219,8 +222,9 @@ export function chestTagPose(body) {
   return pose(fromCols(r.map(v => -v), u, f), body.t);
 }
 /** Chest phone camera (arcam) in world for a body pose: portrait, looking forward, image up = world up. */
-export function phoneArcamPose(body) {
-  const [f, u, r] = [0, 1, 2].map(c => [body.R[c], body.R[3 + c], body.R[6 + c]]);
+export function phoneArcamPose(body, tilt = 0) { // tilt (rad): the phone leans forward, its camera looks that far below the horizon
+  let [f, u, r] = [0, 1, 2].map(c => [body.R[c], body.R[3 + c], body.R[6 + c]]);
+  if (tilt) { const c = Math.cos(tilt), s = Math.sin(tilt); [f, u] = [f.map((v, i) => c * v - s * u[i]), u.map((v, i) => c * v + s * f[i])]; }
   // cv axes in world: x = right, y = -up, z = forward; arcam = cv * CV_FROM_AR
   const world_T_cv = pose(fromCols(r, u.map(v => -v), f), body.t);
   return compose(world_T_cv, cv_T_arcam);

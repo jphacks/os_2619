@@ -104,7 +104,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true }) {
     const m = await FM.scanField(src, { fovYGuess: S.tagCam?.fovY ?? GUIDE_CAM.fov, fovY, mode: cfg.tagMode, mount: cfg.tagMount, tagHeight: cfg.tagHeight });
     if (!m) { S.msg = `スキャン失敗：タグ（ID ${need.join('・')}）が${cfg.tagMode === 2 ? '2枚' : '3枚以上'}見えていない。カメラを高くするか、遠いタグを近づける`; return; }
     const fit = W.FIXED_FIELD && cfg.tagMount !== 'stand' ? W.toFixedFrame(m.tags, m.cam.pose) : null;
-    if (fit && fit.rms > .15) S.msg = `注意：置いたタグの間隔が ${W.FIELD_SIDE} m の正方形と ${(fit.rms * 100).toFixed(0)} cm ずれている。置き方か一辺の長さ（?side=）を見直して`;
+    if (fit && fit.rms > .05) S.msg = `注意：置いたタグの位置が固定の配置と ${(fit.rms * 100).toFixed(0)} cm ずれている。置き方か、隣の中心までの距離（?pitch=）を見直して`;
     if (fit) { m.cam = { ...m.cam, pose: fit.pose }; m.tags = fit.tags; m.poly = W.FIELD.poly.map(p => [...p]); }
     applyField({ poly: m.poly, tags: m.tags }); saveField();
     const firm = m.cam.focalFitted && !(m.warnings ?? []).some(w => /loosely|fovYGuess|focal/i.test(w)) && Object.values(m.tags).every(t => !(t.tilt > 2));

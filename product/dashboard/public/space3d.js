@@ -259,7 +259,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
     grid.visible = axes.visible = on.grid; tagsGrp.visible = on.tags && (W.FIXED_FIELD || !!getStage()?.state.scanned); detGrp.visible = on.tags; // fixed sheets are drawn where they are; other tags where they were first seen
     placeC();
     const st = getStage()?.state;
-    note.textContent = W.FIXED_FIELD ? `タグ 0〜3 は一辺 ${W.FIELD_SIDE} m の正方形に固定（床。0→1→2→3 の順）。2 枚以上見えた間に位置が決まる${st?.scanned ? '' : '。スキャンはスマホ C の位置用'}` : !st?.scanned ? 'フィールド未スキャン：タグは見えた場所に表示（スキャンするとフィールドの形も出る）' : on.mapjs && !roomToWorld ? 'map.js：床のタグ 2 枚以上を両スマホが見るまで照合できない' : '';
+    note.textContent = W.FIXED_FIELD ? `タグ 0〜3 は中心に接して大きな正方形（床。時計回りに 0→1→2→3、隣の中心まで ${W.TAG_PITCH} m）に固定${st?.scanned ? '' : '。スキャンはスマホ C の位置用'}` : !st?.scanned ? 'フィールド未スキャン：タグは見えた場所に表示（スキャンするとフィールドの形も出る）' : on.mapjs && !roomToWorld ? 'map.js：床のタグ 2 枚以上を両スマホが見るまで照合できない' : '';
   }
 
   // ---- right panel: raw numbers, DOM touched only when the text changes ----

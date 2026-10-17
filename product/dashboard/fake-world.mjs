@@ -11,6 +11,7 @@ import {
 export const DT = 0.01;            // sim tick, s (100 Hz)
 export const CAM = { w: 480, h: 640, fx: 500, fy: 500, cx: 240, cy: 320 }; // portrait chest camera
 const HOLD = 2, RAMP = 3;          // stand still at START (calibration), then blend motion in
+const TILT = 0.45;              // the chest phone leans forward 26° so the floor tags in the middle of the room are in view
 const LIM = 1.7, G = 9.81, D2R = Math.PI / 180;
 // raw ARCore world of each phone = rotY(psi) + shift away from the field world (phonealign.js has to find these)
 const rawFrom = (psi, t) => { const c = Math.cos(psi), s = Math.sin(psi), R = [c, 0, s, 0, 1, 0, -s, 0, c]; return { R, t: app3(R, t).map(v => -v) }; };
@@ -51,7 +52,7 @@ export function createSim({ seed = 1, drift = 0, noise = 1 } = {}) {
   const F = { c: [ph(), ph(), ph(), ph()], d: [ph(), ph()], th: [ph(), ph(), ph()] }; // shared motion phases
   const players = {};
   for (const slot of ['A', 'B']) {
-    const origin = phoneArcamPose(bodyPose(START[slot].pos, START[slot].yaw));
+    const origin = phoneArcamPose(bodyPose(START[slot].pos, START[slot].yaw), TILT);
     const upCal = app3(tr3(origin.R), [0, 1, 0]), dh = U(0, 2 * Math.PI);
     players[slot] = {
       slot, opp: slot === 'A' ? 'B' : 'A', origin, W0: calibImu(slot),
@@ -134,7 +135,7 @@ export function createSim({ seed = 1, drift = 0, noise = 1 } = {}) {
   }
   function ar(slot) {
     const p = players[slot];
-    let est = compose(invert(p.origin), phoneArcamPose(p.body)); // calib_T_arcam
+    let est = compose(invert(p.origin), phoneArcamPose(p.body, TILT)); // calib_T_arcam
     if (drift) {
       const D = pose(fromRodrigues(p.drift.up.map(v => v * drift * 0.5 * D2R * t)), p.drift.v.map(v => v * drift * 0.01 * t));
       est = compose(D, est);
@@ -147,7 +148,7 @@ export function createSim({ seed = 1, drift = 0, noise = 1 } = {}) {
   const project = c => [(CAM.fx * c[0] / c[2] + CAM.cx) / CAM.w, (CAM.fy * c[1] / c[2] + CAM.cy) / CAM.h];
   function tags(slot) {
     const p = players[slot], o = players[p.opp];
-    const cv_T_world = invert(compose(phoneArcamPose(p.body), arcam_T_cv)), list = [];
+    const cv_T_world = invert(compose(phoneArcamPose(p.body, TILT), arcam_T_cv)), list = [];
     for (const id of [...CORNER_IDS, PLAYER_TAG[o.slot]]) {
       const cT = compose(cv_T_world, worldTagPose(id, o.body)), c = cT.t, dist = Math.hypot(...c);
       if (c[2] < 0.2 || dist > 6) continue;
