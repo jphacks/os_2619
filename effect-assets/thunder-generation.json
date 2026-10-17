@@ -1,0 +1,19 @@
+{
+  "tool": "Codex built-in image_gen",
+  "transparent_background": true,
+  "processing": "Original generated RGBA PNGs copied without image modification.",
+  "assets": [
+    {
+      "file": "electric-arc-v2.png",
+      "source": "exec-b140029d-955b-46a3-93e8-d3e7f517533b.png",
+      "references": ["reference/サンダー.png", "reference/エルサンダー.png", "textures/electric-filament.png"],
+      "prompt": "Use case: stylized-concept. Asset type: reusable transparent grayscale VFX texture for a Three.js 3D fighting-game projectile. Images 1 and 2 are gameplay references only for the sharp forward motion and compact yellow-white electrical character; Image 3 shows the existing soft filament detail, but the new asset must be much sharper and less smoky. Generate one short horizontal connected electrical arc fragment for the main body and wake of small and medium magic projectiles: a bright angular central lightning stroke traveling left to right, with two or three short hard-bent forks, dense white core, restrained pale-gray glow tight to the stroke, tapered spear-like leading tip and broken trailing branches. Crisp polished real-time action-game VFX density texture; grayscale only for shader tinting. One connected arc centered horizontally in a square RGBA canvas, about 65 percent of the width and no more than 32 percent of the height, with generous transparent padding. Genuine transparent background, readable at 48 pixels. Avoid smoky cloud, broad fog, flame silhouette, rounded ribbon, full orb, complete projectile, radial burst, closed ring, black outline, colored pixels, scene, character, checkerboard, border, text and watermark."
+    },
+    {
+      "file": "electric-burst-v2.png",
+      "source": "exec-a8c5592d-2184-4bf9-b8d7-827ce73cf076.png",
+      "references": ["reference/エルサンダー.png", "reference/かみなり.png", "textures/electric-spike.png"],
+      "prompt": "Use case: stylized-concept. Asset type: reusable transparent grayscale impact-particle texture for a Three.js 3D fighting game. Image 1 shows the compact yellow-white Elthunder hit; Image 2 shows the intense base flash of a vertical Thunder strike; Image 3 is an existing fork texture whose broad flame-like haze must be replaced by sharper electrical geometry. Generate one compact radial electrical discharge fragment for projectile impacts and the base of a large lightning strike: one connected star-like cluster with six to eight uneven angular lightning prongs radiating from a small dense white center, alternating long and short hard-bent spikes, narrow white cores with tight pale-gray glow, and open transparent gaps. Crisp polished action-game electrical VFX density map, grayscale only for runtime yellow-white tinting. Centered compact burst occupying the middle 60 percent of a square RGBA canvas. Genuine transparent background, readable at 48 pixels. Avoid round glowing ball, filled star icon, flame petals, smoky cloud, broad fog halo, complete explosion, ring, black outline, colored pixels, character, environment, checkerboard, border, text and watermark."
+    }
+  ]
+}

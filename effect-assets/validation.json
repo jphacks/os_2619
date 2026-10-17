@@ -1,0 +1,145 @@
+{
+  "note": "Original generated pixels preserved. Native alpha checked; edge specks reported.",
+  "assets": [
+    {
+      "file": "textures/electric-arc-v2.png",
+      "width": 1254,
+      "height": 1254,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 1326330,
+      "semitransparentPixels": 246186,
+      "maximumOuterEdgeAlpha": 0
+    },
+    {
+      "file": "textures/electric-burst-v2.png",
+      "width": 1254,
+      "height": 1254,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 1029805,
+      "semitransparentPixels": 542711,
+      "maximumOuterEdgeAlpha": 1
+    },
+    {
+      "file": "textures/aura-wisp.png",
+      "width": 1024,
+      "height": 1536,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 1348021,
+      "semitransparentPixels": 224843,
+      "maximumOuterEdgeAlpha": 0
+    },
+    {
+      "file": "textures/electric-filament.png",
+      "width": 1254,
+      "height": 1254,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 1350549,
+      "semitransparentPixels": 221967,
+      "maximumOuterEdgeAlpha": 1
+    },
+    {
+      "file": "textures/electric-spike.png",
+      "width": 1254,
+      "height": 1254,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 1227177,
+      "semitransparentPixels": 345339,
+      "maximumOuterEdgeAlpha": 1
+    },
+    {
+      "file": "textures/explosion-density.png",
+      "width": 1254,
+      "height": 1254,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 824264,
+      "semitransparentPixels": 748252,
+      "maximumOuterEdgeAlpha": 1
+    },
+    {
+      "file": "textures/fire-lobe-v2.png",
+      "width": 1254,
+      "height": 1254,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 895924,
+      "semitransparentPixels": 676592,
+      "maximumOuterEdgeAlpha": 1
+    },
+    {
+      "file": "textures/flame-density.png",
+      "width": 1254,
+      "height": 1254,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 1064183,
+      "semitransparentPixels": 508333,
+      "maximumOuterEdgeAlpha": 1
+    },
+    {
+      "file": "textures/flame-tongue.png",
+      "width": 1024,
+      "height": 1536,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 1025386,
+      "semitransparentPixels": 547478,
+      "maximumOuterEdgeAlpha": 0
+    },
+    {
+      "file": "textures/glow.png",
+      "width": 256,
+      "height": 256,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 22476,
+      "semitransparentPixels": 43044,
+      "maximumOuterEdgeAlpha": 0
+    },
+    {
+      "file": "textures/plasma-flow.png",
+      "width": 1254,
+      "height": 1254,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 1119762,
+      "semitransparentPixels": 452754,
+      "maximumOuterEdgeAlpha": 1
+    },
+    {
+      "file": "textures/smoke-puff.png",
+      "width": 1254,
+      "height": 1254,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 1170048,
+      "semitransparentPixels": 402468,
+      "maximumOuterEdgeAlpha": 1
+    },
+    {
+      "file": "textures/short-flame.png",
+      "width": 1254,
+      "height": 1254,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 1109143,
+      "semitransparentPixels": 463373,
+      "maximumOuterEdgeAlpha": 1
+    },
+    {
+      "file": "textures/spark.png",
+      "width": 256,
+      "height": 256,
+      "channels": 4,
+      "hasAlpha": true,
+      "fullyTransparentPixels": 54672,
+      "semitransparentPixels": 10860,
+      "maximumOuterEdgeAlpha": 0
+    }
+  ]
+}

@@ -176,10 +176,11 @@ export async function calibrateCamera(videoOrCanvas, { fovYGuess = 55, fitFocal 
   return r && { ...r, tags };
 }
 
-/** Place a THREE.PerspectiveCamera from a calibrateCamera result (three's camera = cv frame turned 180° about x). */
+/** Accept a calibration result or dummy truePose (three's camera = cv frame turned 180° about x). */
 export function toThreeCamera(result, camera) {
-  const R = W.mul3(result.pose.R, [1, 0, 0, 0, -1, 0, 0, 0, -1]), [w, x, y, z] = W.toQuat(R);
-  camera.position.set(...result.pose.t);
+  const pose = result.pose ?? result;
+  const R = W.mul3(pose.R, [1, 0, 0, 0, -1, 0, 0, 0, -1]), [w, x, y, z] = W.toQuat(R);
+  camera.position.set(...pose.t);
   camera.quaternion.set(x, y, z, w).normalize();
   camera.fov = result.fovY;
   if (result.width && result.height) camera.aspect = result.width / result.height;

@@ -2,7 +2,7 @@
 //   1 接続     phones A / B (SensorLink app over /ws) and phone C (cam.html over /cam), everything they send
 //   2 3D空間   phones, swords and AprilTags in the field world (phonealign.js), dark and raw
 //   3 ゲーム   the match in the stylised 3D arena: magic attacks (小・中・大), charge meters, HP, timer (game.js + stage.js)
-//   4 最終映像 the same 3D state projected onto phone C's live picture (camera pose from the tag scan)
+//   4 最終映像 the untouched camera picture plus effects projected from sensor-world coordinates (camera pose/FOV from the tag scan)
 // Data: hub.js → phonealign.js (positions), map.js (the sensing team's estimate, for comparison), actions.js (moves) → game.js.
 import * as W from './world.js';
 import { createHub } from './hub.js';
@@ -12,8 +12,10 @@ import { createActions } from './actions.js';
 import { createVideoSource } from './video.js';
 import { createStage, DRONE_JA } from './stage.js';
 import { createGame, PHASE_JA, POS_JA, ELEMENT_JA, RULES, TIER_JA } from './game.js';
+import { createSmashStyle } from './fx-smash.js';
 import { createSpace } from './space3d.js';
 import { createConnect } from './connect.js';
+import { createFinalControls } from './final-controls.js';
 
 const $ = s => document.querySelector(s);
 const nowS = () => Date.now() / 1000;
@@ -23,14 +25,15 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
   minimap: true, debug: false, pip: false, fpv: null, drone: 'auto', videoSrc: 'remote', tagMode: 4, tagMount: 'stand', tagHeight: 1.0, knownFov: null,
-  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 2,
+  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 4, fxStyle: 'smash',
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
 if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
 if ((saved.rulesVer ?? 0) < 2) cfg.aim = 'motion'; // ...and the aim from the tip's motion
-cfg.rulesVer = 2;
-cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg } };
+if ((saved.rulesVer ?? 0) < 4) cfg.fxStyle = 'smash'; // the program-drawn set is the one used in the show (10/18)
+cfg.rulesVer = 4;
+cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg }, size: { ...RULES.size, ...saved.rules?.size } };
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
 const axis = { A: W.STICK.axis, B: W.STICK.axis }; // the IMU's +Y points to the stick tip, on both sticks
 
@@ -48,7 +51,8 @@ import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const 
 
 const stage = createStage({ video, cfg, hub, PA, isSetup: () => game.match.phase === 'setup' });
 const hudFlash = { el: null };
-const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el) });
+const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), getDummyFrame: () => vsrc.dummy?.frame });
+stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: プログラム版 (smash, default) / 画像素材版 (textured) / いつもの (classic)
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
 
 hub.on(k => {
@@ -97,7 +101,7 @@ gameCtrl.innerHTML = `
   <h3>試合の進行</h3>
   <div class="phase">
     <button data-phase="setup">準備中<kbd>1</kbd></button>
-    <button data-phase="fight" class="go">試合開始<kbd>3</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
+    <button data-phase="fight" class="go">試合開始<kbd>3</kbd></button><button data-phase="demo" title="試合と同じだが、魔法が全部相手に向かって飛ぶ（ホーミング）">デモ試合開始<kbd>2</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
   </div>
   <div class="row" style="margin-top:6px"><button data-cmd="reset">やり直し<kbd>R</kbd></button><label class="kv">試合時間 <input id="secIn" type="number" min="10" max="600" step="10" style="width:64px"> 秒</label></div>
   <p class="why" id="why"></p>
@@ -116,8 +120,15 @@ gameCtrl.innerHTML = `
     <label>大のダメージ <input data-rule="dmg.l" type="number" min="0" max="100" step="1"></label>
     <label>小の連打の間隔 <input data-rule="rapid" type="number" min="0" max="3" step="0.05"> 秒</label>
     <label>溜め失敗になる移動 <input data-rule="moveFail" type="number" min="5" max="300" step="5" data-scale="100"> cm</label>
+    <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">小の玉の大きさ <input data-rule="size.s" type="number" min="0.2" max="4" step="0.1"> 倍</label>
+    <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">中の玉の大きさ <input data-rule="size.m" type="number" min="0.2" max="4" step="0.1"> 倍</label>
+    <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">大の玉の大きさ <input data-rule="size.l" type="number" min="0.2" max="4" step="0.1"> 倍</label>
     <div class="row"><button id="rulesReset">初期値に戻す</button><span class="muted" id="rulesNote"></span></div>
   </div>
+  <h3>エフェクトを試す</h3>
+  <div class="seg" id="fxStyles"><button data-fxstyle="smash">プログラム版</button><button data-fxstyle="textured">画像素材版</button><button data-fxstyle="classic">いつもの</button></div>
+  <p class="muted" style="font-size:12px;margin:4px 0">試合中でなくても出る。ダメージは入らない。弾は相手の胸に向けて撃つ。「溜め」は押している間溜まり、離すとその段階の技を撃つ</p>
+  <div class="fxtry">${['A', 'B'].map(s => `<div class="row"><b style="color:var(--${s});width:1.4em">${s}</b>${['s', 'm', 'l'].map(t => `<button data-fxshot="${t}" data-s="${s}">${TIER_JA[t]}</button>`).join('')}<button data-fxcharge data-s="${s}">溜め（押している間）</button></div>`).join('')}</div>
   <h3>カメラ（ドローン視点）<kbd>D</kbd></h3>
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
   <h3>表示</h3>
@@ -143,7 +154,14 @@ for (const i of ruleIns) i.onchange = () => {
   if (cfg.rules.t2 <= cfg.rules.t1) cfg.rules.t2 = +(cfg.rules.t1 + .5).toFixed(2);
   save(); showRules();
 };
-$('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg } }; save(); showRules(); };
+for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.onclick = () => { cfg.fxStyle = b.dataset.fxstyle; save(); stage.fx.setStyle(cfg.fxStyle); };
+for (const b of gameCtrl.querySelectorAll('[data-fxshot]')) b.onclick = () => game.command({ cmd: 'fxShot', slot: b.dataset.s, tier: b.dataset.fxshot });
+for (const b of gameCtrl.querySelectorAll('[data-fxcharge]')) {
+  b.onpointerdown = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: true });
+  b.onpointerup = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: false, fire: true });
+  b.onpointerleave = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: false });
+}
+$('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg }, size: { ...RULES.size } }; save(); showRules(); };
 showRules();
 for (const pc of gameCtrl.querySelectorAll('.pc')) for (const b of pc.querySelectorAll('[data-act]')) {
   const slot = pc.dataset.s, a = b.dataset.act;
@@ -156,17 +174,7 @@ for (const b of document.querySelectorAll('[data-tog]')) b.onclick = () => toggl
 
 // ---- final screen toolbar ----
 const finalBar = $('#finalBar');
-finalBar.innerHTML = `
-  <button id="scanBtn" class="go">タグでスキャン<kbd>K</kbd></button>
-  <span class="kv" id="tagCheck"></span>
-  <span class="msg" id="finalMsg"></span>
-  <div class="seg" id="fpvs"><button data-fpv="">第三者カメラ</button><button data-fpv="A">A の胸</button><button data-fpv="B">B の胸</button></div>
-  <button data-tog="pip">小窓に 3D</button>
-  <button id="fullBtn">全画面<kbd>F</kbd></button>`;
-$('#scanBtn').onclick = () => scan();
-for (const b of finalBar.querySelectorAll('[data-tog]')) b.onclick = () => toggle(b.dataset.tog);
-for (const b of finalBar.querySelectorAll('[data-fpv]')) b.onclick = () => { cfg.fpv = b.dataset.fpv || null; save(); stage.resize(); stage.applyCam(); };
-$('#fullBtn').onclick = () => fullscreen();
+const finalControls = createFinalControls({ bar: finalBar, stage, game, vsrc, cfg, save, scan, fullscreen });
 function fullscreen() { const box = $('#finalBox'); document.fullscreenElement ? document.exitFullscreen() : box.requestFullscreen?.().then(() => setTimeout(stage.resize, 100)); }
 document.addEventListener('fullscreenchange', () => setTimeout(stage.resize, 50));
 async function scan() { game.command({ cmd: 'phase', phase: 'setup' }); vsrc.dummy?.showPlayers(false); await stage.scan(); vsrc.dummy?.showPlayers(true); }
@@ -193,7 +201,7 @@ drawer.innerHTML = `
     <div class="row"><button id="mute">消音</button><span class="note" id="audioInfo"></span></div>
     <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}</div></section>
   <section><h3>キー操作</h3><table class="keys">
-    <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 3 4</td><td>準備中・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
+    <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ試合開始（ホーミング）・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
     <tr><td>Space / Enter</td><td>A / B が小の攻撃（溜めなし）</td></tr><tr><td>Q / P 長押し</td><td>A / B が溜める（離した時の溜め時間で小・中・大）</td></tr>
     <tr><td>K</td><td>タグでスキャン</td></tr><tr><td>D</td><td>ドローン視点の切り替え</td></tr><tr><td>M / G</td><td>ミニマップ / デバッグ表示</td></tr><tr><td>F</td><td>最終映像を全画面</td></tr><tr><td>S</td><td>設定</td></tr></table></section>`;
 $('#openSettings').onclick = () => drawer.classList.toggle('open');
@@ -218,7 +226,7 @@ for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
 };
 
 // ---- keys ----
-const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 3: { cmd: 'phase', phase: 'fight' }, 4: { cmd: 'pause' }, r: { cmd: 'reset' },
+const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 2: { cmd: 'phase', phase: 'demo' }, 3: { cmd: 'phase', phase: 'fight' }, 4: { cmd: 'pause' }, r: { cmd: 'reset' },
   ' ': { cmd: 'shoot', slot: 'A' }, Enter: { cmd: 'shoot', slot: 'B' } };
 const held = { q: 'A', p: 'B' };
 addEventListener('keydown', e => {
@@ -226,7 +234,7 @@ addEventListener('keydown', e => {
   if (e.altKey) { const n = { Digit1: 'connect', Digit2: 'space', Digit3: 'game', Digit4: 'final' }[e.code]; if (n) { e.preventDefault(); show(n); } return; }
   if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (held[k]) return game.command({ cmd: 'charge', slot: held[k], on: true });
+  if (held[k] && screen !== 'final') return game.command({ cmd: 'charge', slot: held[k], on: true });
   if (KEYS[k]) return game.command(KEYS[k]);
   if (k === 'k') scan();
   else if (k === 'd') { stage.drone.next(); cfg.drone = stage.drone.mode; save(); }
@@ -235,7 +243,7 @@ addEventListener('keydown', e => {
   else if (k === 's') drawer.classList.toggle('open');
   else if (k === 'Escape') drawer.classList.remove('open');
 });
-addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k]) game.command({ cmd: 'charge', slot: held[k], on: false }); });
+addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k] && screen !== 'final') game.command({ cmd: 'charge', slot: held[k], on: false }); });
 
 // ---- per-frame UI ----
 function pill(id, state) { const p = $(id); p.classList.toggle('on', state === true); p.classList.toggle('half', state === 'half'); }
@@ -256,7 +264,7 @@ function updateHud() {
   }
   const showTimer = m.phase === 'fight' || m.phase === 'result';
   setText(hud.querySelector('.timer'), showTimer ? `${Math.floor(Math.ceil(m.left) / 60)}:${String(Math.ceil(m.left) % 60).padStart(2, '0')}` : '');
-  const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : '';
+  const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : m.mode === 'demo' ? 'デモ試合（ホーミング）' : '';
   setText(pp, pt); pp.style.display = pt ? '' : 'none';
   const bt = game.bannerText(), bn = hud.querySelector('.banner');
   bn.style.display = bt ? 'grid' : 'none'; setText(bn, bt);
@@ -270,10 +278,12 @@ function updateSlowUi() {
   const st = vsrc.state; pill('#pillC', video.videoWidth ? true : st.mode === 'remote' && st.cam ? 'half' : false);
   $('#pillC span:last-child').textContent = st.mode === 'remote' ? 'カメラ' : st.mode === 'local' ? 'PCカメラ' : 'ダミー';
   pill('#pillLink', hub.link === 'open');
-  for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.classList.toggle('on', b.dataset.phase === m.phase || (b.dataset.phase === 'fight' && ['countdown', 'fight', 'result'].includes(m.phase)));
+  const playing = ['countdown', 'fight', 'result'].includes(m.phase);
+  for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.classList.toggle('on', b.dataset.phase === 'setup' ? m.phase === 'setup' : playing && b.dataset.phase === (m.mode === 'demo' ? 'demo' : 'fight'));
   gameCtrl.querySelector('[data-cmd=pause]').classList.toggle('on', m.paused);
   for (const b of document.querySelectorAll('[data-tog]')) b.classList.toggle('on', !!cfg[b.dataset.tog]);
   for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.classList.toggle('on', b.dataset.drone === stage.drone.mode);
+  for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.classList.toggle('on', b.dataset.fxstyle === stage.fx.style);
   for (const b of finalBar.querySelectorAll('[data-fpv]')) b.classList.toggle('on', (b.dataset.fpv || null) === cfg.fpv);
   for (const g of drawer.querySelectorAll('[data-seg]')) for (const b of g.querySelectorAll('button')) b.classList.toggle('on', String(cfg[g.dataset.seg]) === b.dataset.v);
   $('#why').textContent = !stage.state.scanned ? '未スキャン：最終映像の位置はずれます（最終映像の画面で「タグでスキャン」）' : !hub.phones.A.online && !hub.phones.B.online ? 'スマホ A・B が未接続：キーかボタンで操作できます' : '';
@@ -305,9 +315,12 @@ function frame(ts) {
   const t = performance.now() / 1000, raw = t - last, dt = Math.min(.05, raw); last = t;
   fps = .95 * fps + .05 / Math.max(raw, 1e-3);
   try { est = PA.estimate(nowS()); } catch (e) { console.warn('phonealign', e); }
-  game.step(dt, raw, est);
+  vsrc.dummy?.render(t); // the picture and game placement consume this exact same pose snapshot
+  game.step(dt, raw, est, { sensorOnly: screen === 'final' });
+  if (screen === 'final') finalControls.step(t);
   if (screen === 'game' || screen === 'final') { stage.render(dt, game, est); updateHud(); }
   else stage.fx.step(dt); // effects keep their time even when nobody looks
+  if (screen === 'final') finalControls.updateStatus();
   if (screen === 'space') space.frame(nowS(), est);
   if (screen === 'connect') connect.frame();
   if (t - lastSlow > .2) { lastSlow = t; updateSlowUi(); $('#pillFps').textContent = `${fps.toFixed(0)} fps`; }

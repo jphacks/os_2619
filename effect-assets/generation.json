@@ -1,0 +1,48 @@
+{
+  "tool": "Codex built-in image_gen",
+  "transparent_background": true,
+  "processing": "Original generated RGBA files copied without image modification.",
+  "assets": [
+    {
+      "file": "flame-density.png",
+      "source": "exec-32010f4d-6b1c-4406-97ca-c0cde0be3774.png",
+      "prompt": "Use case: game VFX texture / production asset. Generate ONE square RGBA PNG particle texture on a genuinely transparent background, with a real alpha channel. Subject: a small local tuft of turbulent flame density, seen close up, to be reused many times on particles in a 3D battle effect. It is an isolated fragment of flowing hot gas, NOT a complete fireball, flame icon, or explosion. Shape: asymmetric three-dimensional curling wisps with intertwined fine internal streaks and a few broad rolling lobes. A loose organic plume, brighter and denser near its lower-middle region, thinning irregularly into delicate tendrils upward; no flat base, no hard silhouette, no closed outline. Visual treatment: neutral white and pale gray emissive density only, suitable for shader tinting to yellow/orange; flowing volume and rich continuous opacity gradients, with internal transparent gaps, subtly crisp wisps inside a soft irregular outer boundary. Think practical high-quality real-time particle texture used in a polished stylized 3D action game, with fluid detail and luminous volume rather than cel-painted cartoon art. NO black outlines, contour strokes, discrete posterized color bands, vector-art shapes, sticker appearance, sphere or donut silhouette, radial emblem, character, object, floor, shadows, backdrop, text, grid, checkerboard, border, or watermark. Keep all visible gas within the central 70 percent of the image and let every outer edge be fully transparent. One local flame-density patch only; no sprite sheet and no multiple variants. Preserve the semitransparent wisps so multiple copies can overlap in 3D without opaque boundaries."
+    },
+    {
+      "file": "explosion-density.png",
+      "source": "exec-f31b9022-d772-49c9-b6cd-8dddd7a421aa.png",
+      "prompt": "Create ONE production-ready square RGBA PNG texture for a game particle system, on a genuinely transparent background with real soft alpha. Asset: an irregular turbulent EXPANDING HOT-GAS CLUMP used as one piece of a three-dimensional magical explosion. It must be a localized approximately round puff, asymmetric and ragged, not a complete explosion event and not a fireball icon. Show fluid rolling lobes with overlapping translucent folds, fine curling incandescent filaments within the volume, and porous wispy gaps. Denser luminous inner layers transition continuously into thin irregular transparent edges. Use ONLY neutral white and light-to-medium gray, designed as an emissive density mask that a shader recolors orange/yellow. Convey a coherent sense of luminous volume using density, never flat painted outlines or cel-shaded bands. Enough broad shapes to read at small scale, fine turbulence as supporting detail. ONE clump only, compact within central 70 percent with fully transparent clear padding on every edge. No ring, starburst, ground, shockwave, mushroom stem, billowing scene, realistic background, floor, character, weapon, text, checkerboard, watermark, grid, multiple copies, black contour strokes, vector illustration, posterized bands, opaque circle or drawn ball. No long directional tail. Intended to overlap with many independently rotated and moving particles in a paused free-camera 3D replay. A high quality flowing real-time VFX density texture, not a finished illustrated spell."
+    },
+    {
+      "file": "smoke-puff.png",
+      "source": "exec-a3dc52a1-84dc-4aa5-8fb6-267b7833bfd9.png",
+      "prompt": "Production game asset: ONE square RGBA PNG with a genuinely transparent background, real semitransparent alpha, generous fully transparent margins. A single small irregular soft SMOKE PUFF particle, neutral pale gray/white density, to be tinted darker or warmer in a Three.js shader. Show 4 to 6 large soft rolling vapor lobes with gentle internal turbulence and wisps dissolving into transparency. Local cloud volume viewed close up, uneven density and some thin porous patches, soft broad readable forms. This is low-frequency smoke, NOT bright flame, NOT high-frequency filaments or lightning. No luminous white center, no bright rim, no harsh hard outline, no cel-shaded bands, no vector art, no icon, no complete explosion, no mushroom cloud, no rings. Entire puff fits within the central 65 percent; every edge completely transparent. No scene, character, ground, shadow, backdrop, checkerboard, text, watermark, frame, grid, or multiple samples. It should look like a small actual plume of smoke that remains visually soft when many independently rotated particles overlap. Do not bake in a dramatic light source; preserve neutral tintable gray values."
+    },
+    {
+      "file": "electric-filament.png",
+      "source": "exec-37587a89-2b23-4ce0-8772-cc21530e579a.png",
+      "prompt": "Use case: stylized-concept. Asset type: production game VFX particle texture, ONE square RGBA PNG with real transparent background. Subject: one narrow irregular electric filament, running roughly vertically through the central 65 percent of the square, with an angular zigzag main strand and a few tiny branching tendrils. Grayscale only, pure white narrow core, softer pale gray luminous falloff immediately around the core, continuous semitransparent alpha. Main strand remains thin with uneven thickness and sharp irregular bends, not a broad ribbon. Fine plasma vapor near just a few junctions. Readable high energy electrical discharge, grounded in polished real-time 3D action game VFX. This is a small reusable local strand for overlapping particles and ribbons, NOT a whole spell illustration, NOT a lightning strike scene, NOT an orb. No rings, circles, bursts, spheres, cartoon symbol, dark outline, bold comic contour, posterized bands, background, floor, text, checkerboard, grid, border, watermark, or multiple specimens. Keep all tips and glow inside clear fully transparent padding at every edge. Rich transparency for layering. Single electrical fragment only."
+    },
+    {
+      "file": "aura-wisp.png",
+      "source": "exec-53c9aa60-9855-46dd-9e4d-f81ff132c561.png",
+      "prompt": "Use case: stylized-concept. Asset type: ONE reusable grayscale game VFX aura-wisp particle texture, square RGBA PNG, genuinely transparent background with real semitransparent alpha. Subject: a single slender upward flowing energy wisp, like a loose elongated curl of vapor and silky luminous gas, suitable for many particles rising around a charging person's body. A few fine internal flowing filaments weave through one broader diffuse fluid ribbon; asymmetrical, gently bending, tapered at both ends, lightest density toward its lower-middle. It must look like a small local piece of flowing energy, not a complete aura around a body, not a flame icon or drawn cartoon ribbon. Neutral white and pale gray only, continuous soft transparency, delicate wispy edges, broad readable flow plus restrained fine turbulence. The texture should be long and thin vertically, occupying at most the middle half of the image width and middle 65 percent of height, with completely clear transparent margins. Refined 3D action-game particle texture, not cel shading or poster art. No hard contours, black outline, solid opaque shape, closed circle, orb, donut, explosion, human silhouette, scene, weapon, text, grid, checkerboard, watermark or frame. No diffuse rectangular haze across the canvas. One wisp only."
+    },
+    {
+      "file": "plasma-flow.png",
+      "source": "exec-3b629fe2-fd69-4888-b87b-260b10b82dd9.png",
+      "prompt": "Use case: stylized-concept. Asset type: production game VFX texture, ONE square RGBA PNG on genuinely transparent background with soft real alpha. Primary request: one local patch of turbulent flowing plasma for layering on a three-dimensional charging energy sphere. Subject is an open curved SWEEP of luminous vapor and fine tangled filaments, about a quarter of a circle, with tapered broken ends and porous internal gaps. It is not the entire sphere; it is a small fragment of energy running along a curved surface. Neutral white and pale gray only so a shader can tint it orange or blue. A few broad semi-transparent flowing streaks with finer energetic micro-filaments, bright thin flow through a softer translucent volume, subtle irregular edge dissipation. Fluid action game VFX density, moderate detail that survives downsizing, not a vector graphic, cartoon outline or cel-painted object. Keep the whole fragment comfortably inside the central 65 percent with fully transparent padding. No full circle, closed ring, donut, full orb, filled ball, badge, spiral emblem, sun icon, complete attack effect, character, weapon, scene, ground, text, checkerboard, grid, border, watermark or baked background. No black outlines or posterized color bands. One coherent open curved energy-flow patch only."
+    }
+  ],
+  "common_assets": [
+    {
+      "file": "glow.png",
+      "method": "Procedural smooth radial white alpha mask, 256x256."
+    },
+    {
+      "file": "spark.png",
+      "method": "Procedural tapered narrow white streak alpha mask, 256x256."
+    }
+  ],
+  "rejected_sources": "Earlier Nano Banana JPEGs retained under imagegen/output, not part of approved textures."
+}
