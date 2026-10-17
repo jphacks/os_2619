@@ -126,7 +126,7 @@ function connect() {
     const s = slots[k.slot]; if (!s) return;
     count(s, k.type, k.t);
     k.rx = now();
-    s.last[k.type] = k;
+    s.last[k.type === 'color' && k.side === 'opp' ? 'colorOpp' : k.type] = k;
     if (k.type === 'imu') { s.imu.push(k); while (s.imu.length && s.imu[0].t < k.t - WINDOW) s.imu.shift(); }
     if (k.type === 'ar' && k.tracking === 'TRACKING') { s.traj.push(k.p); if (s.traj.length > 600) s.traj.shift(); }
     if (k.type === 'calib') s.traj.length = 0;
@@ -246,10 +246,10 @@ function videoView(s) {
     for (const p of lm) { g.beginPath(); g.arc(p[0] * w, p[1] * h, lw * 1.5, 0, 7); g.fill(); }
   };
   if (fresh(s.last.pose) && s.last.pose.found) skel(s.last.pose.lm, POSE, '#f0f');
-  if (fresh(s.last.hands)) for (const hd of s.last.hands.hands) skel(hd.lm, HAND, '#0ff');
-  const co = s.last.color;
-  if (fresh(co) && co.found) {
-    g.strokeStyle = '#ff0'; g.strokeRect(co.box[0] * w, co.box[1] * h, co.box[2] * w, co.box[3] * h);
+  if (fresh(s.last.hands)) for (const hd of s.last.hands.hands) skel(hd.lm, HAND, hd.owner === 'me' ? '#0ff' : hd.owner === 'opp' ? '#f80' : '#bbb');
+  for (const [co, col] of [[s.last.color, '#ff0'], [s.last.colorOpp, '#f33']]) {
+    if (!fresh(co) || !co.found) continue;
+    g.strokeStyle = col; g.strokeRect(co.box[0] * w, co.box[1] * h, co.box[2] * w, co.box[3] * h);
     const x = co.x * w, y = co.y * h; g.beginPath(); g.moveTo(x - 20, y); g.lineTo(x + 20, y); g.moveTo(x, y - 20); g.lineTo(x, y + 20); g.stroke();
   }
 }
@@ -275,12 +275,14 @@ function panels(s) {
     ? `<tr><td>${esc(t.id)}</td>${t.p.map(v => `<td>${v.toFixed(2)}</td>`).join('')}<td>${Math.hypot(...t.p).toFixed(2)}</td></tr>`
     : `<tr><td>${esc(t.id)}</td><td colspan=4>no pose</td></tr>`).join('') || '<tr><td colspan=5 class=kv>none in view</td></tr>';
 
-  const h = s.last.hands, p = s.last.pose, c = s.last.color;
+  const h = s.last.hands, p = s.last.pose;
+  const colourLine = (label, c) => `colour ${label}: ${c ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;background:${hsvCss(c.target)}"></span> ` +
+    (c.found ? `at (${c.x.toFixed(2)}, ${c.y.toFixed(2)}), area ${(c.area * 100).toFixed(1)}%` : 'not found') : 'no target picked'}`;
   s.q('.vision').innerHTML = [
-    `hands: ${h ? (h.hands.map(x => `${esc(x.side)} ${(x.score * 100).toFixed(0)}%`).join(', ') || 'none') : 'no data'}`,
+    `hands: ${h ? (h.hands.map(x => `${esc(x.owner ?? '?')}/${esc(x.side)} ${(x.score * 100).toFixed(0)}%`).join(', ') || 'none') : 'no data'}`,
     `opponent pose: ${p ? (p.found ? `found, ${p.lm.filter(l => l[3] > 0.5).length}/33 visible` : 'none') : 'no data'}`,
-    `colour: ${c ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;background:${hsvCss(c.target)}"></span> ` +
-      (c.found ? `at (${c.x.toFixed(2)}, ${c.y.toFixed(2)}), area ${(c.area * 100).toFixed(1)}%` : 'not found') : 'no target picked'}`,
+    colourLine('me', s.last.color),
+    colourLine('opp', s.last.colorOpp),
   ].join('<br>');
 }
 
