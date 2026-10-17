@@ -243,7 +243,10 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         link.send(JSONObject().put("type", "ar").put("t", t).put("tracking", tracking.name).put("reason", reason)
             .put("p", JSONArray().put(r4(p.tx())).put(r4(p.ty())).put(r4(p.tz())))
             .put("q", JSONArray().put(r4(p.qx())).put(r4(p.qy())).put(r4(p.qz())).put(r4(p.qw())))
-            .put("planes", planes))
+            .put("planes", planes)
+            // raw ARCore world pose: gravity-aligned (y up), unlike p/q which tilt with the calibration pose; the dashboard map needs it
+            .put("wp", JSONArray().put(r4(cam.pose.tx())).put(r4(cam.pose.ty())).put(r4(cam.pose.tz())))
+            .put("wq", JSONArray().put(r4(cam.pose.qx())).put(r4(cam.pose.qy())).put(r4(cam.pose.qz())).put(r4(cam.pose.qw()))))
         arText = "AR: $tracking${if (reason != "NONE") " ($reason)" else ""}  planes $planes  " +
             "pos %.2f %.2f %.2f".format(p.tx(), p.ty(), p.tz())
 
@@ -287,7 +290,8 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         tagW.offer {
             val r = (tagDet ?: TagDetector().also { tagDet = it }).detect(fr, prefs.getFloat("tag", 0.1f).toDouble())
             tags = r
-            link.send(JSONObject().put("type", "tags").put("t", fr.t).put("tags", r))
+            link.send(JSONObject().put("type", "tags").put("t", fr.t).put("tags", r)
+                .put("k", JSONArray().put(r4(fr.fx / fr.bmp.width)).put(r4(fr.fy / fr.bmp.height)).put(r4(fr.cx / fr.bmp.width)).put(r4(fr.cy / fr.bmp.height))))
         }
         val mine = target; val theirs = targetOpp
         if (mine != null || theirs != null) colorW.offer {

@@ -7,11 +7,12 @@ import { WebSocketServer } from 'ws';
 
 const PORT = +process.env.PORT || 8000;
 const SLOTS = ['A', 'B'];
-const page = new URL('./index.html', import.meta.url);
+const files = { '/': ['index.html', 'text/html; charset=utf-8'], '/map.js': ['map.js', 'text/javascript; charset=utf-8'] };
 
 const server = http.createServer(async (req, res) => {
-  if (new URL(req.url, 'http://x').pathname !== '/') return res.writeHead(404).end();
-  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(await readFile(page));
+  const f = files[new URL(req.url, 'http://x').pathname];
+  if (!f) return res.writeHead(404).end();
+  res.writeHead(200, { 'content-type': f[1] }).end(await readFile(new URL(f[0], import.meta.url)));
 });
 
 const phones = new Map(); // phone id -> { slot, name, ws, seen }

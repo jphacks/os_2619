@@ -55,11 +55,31 @@
   .kv { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
   .chart { height: 90px; }
   .square { aspect-ratio: 1; }
+  .wide { grid-column: 1 / -1; }
+  .mapcols { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; }
+  @media (max-width: 900px) { .mapcols { grid-template-columns: 1fr; } }
+  canvas.plan { aspect-ratio: 4 / 3; }
+  canvas.elev { aspect-ratio: 2 / 1; }
+  .sticks label { margin-right: 12px; }
+  .sticks input { width: 70px; font: inherit; color: var(--text-primary); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; }
 </style>
 </head>
 <body>
 <header class="top"><h1>SensorLink</h1><span id="conn">connecting…</span></header>
-<main id="cards"></main>
+<main id="cards">
+  <section class="card wide map">
+    <header><h2>Space map</h2><span class="name">best guess from both phones, room coordinates</span><span class="badge off mapstate">no data</span></header>
+    <div class="mapcols">
+      <div><h3>Top view (1 m grid)</h3><canvas class="plan" aria-label="top-down map: floor tags, people, sticks"></canvas></div>
+      <div>
+        <h3>Side view (height above floor)</h3><canvas class="elev" aria-label="side view: heights above the floor"></canvas>
+        <h3>Stick length (m)</h3>
+        <div class="kv sticks"><label>A's <input type="number" min="0.1" step="0.05" value="1.0" data-s="A"></label><label>B's <input type="number" min="0.1" step="0.05" value="1.0" data-s="B"></label></div>
+        <h3>Estimate</h3><div class="kv mapinfo">waiting for data</div>
+      </div>
+    </div>
+  </section>
+</main>
 
 <template id="card">
   <section class="card">
@@ -94,7 +114,9 @@
   </section>
 </template>
 
-<script>
+<script type="module">
+import { createMap } from './map.js';
+const map = createMap();
 const HAND = [0,1, 1,2, 2,3, 3,4, 0,5, 5,6, 6,7, 7,8, 5,9, 9,10, 10,11, 11,12, 9,13, 13,14, 14,15, 15,16, 13,17, 0,17, 17,18, 18,19, 19,20];
 const POSE = [11,12, 11,13, 13,15, 12,14, 14,16, 11,23, 12,24, 23,24, 23,25, 25,27, 24,26, 26,28, 27,29, 29,31, 27,31, 28,30, 30,32, 28,32,
   0,1, 1,2, 2,3, 3,7, 0,4, 4,5, 5,6, 6,8, 9,10, 15,17, 15,19, 15,21, 17,19, 16,18, 16,20, 16,22, 18,20];
@@ -124,6 +146,7 @@ function connect() {
     let k; try { k = JSON.parse(m.data); } catch { return; }
     if (k.type === 'phones') return phonesChanged(k.list);
     const s = slots[k.slot]; if (!s) return;
+    map.ingest(k);
     count(s, k.type, k.t);
     k.rx = now();
     s.last[k.type === 'color' && k.side === 'opp' ? 'colorOpp' : k.type] = k;
@@ -293,10 +316,95 @@ function rates(s) {
     `<tr><td>${esc(k)}</td><td>${r.hz.toFixed(0)}</td><td>${s.lat[k] == null ? '–' : (s.lat[k] * 1000).toFixed(0) + ' ms'}</td></tr>`).join('');
 }
 
+// ---- space map ----
+const sticks = {}; // stick length per holder, remembered per browser
+for (const inp of document.querySelectorAll('.sticks input')) {
+  try { inp.value = localStorage.getItem('stick' + inp.dataset.s) ?? inp.value; } catch {}
+  const read = () => { sticks[inp.dataset.s] = +inp.value > 0 ? +inp.value : 1; try { localStorage.setItem('stick' + inp.dataset.s, inp.value); } catch {} };
+  inp.oninput = read; read();
+}
+const who = { A: '--series-1', B: '--series-2' };
+
+function plan(c, e, top) { // top: x right, z down; side: x right, y up
+  const [g, w, h] = fit(c);
+  g.clearRect(0, 0, w, h);
+  const V = p => top ? p[2] : p[1];
+  const pts = e.corners.map(c => c.p);
+  for (const p of Object.values(e.people)) pts.push(p.p, ...p.trail);
+  for (const t of Object.values(e.tips)) pts.push(t.p);
+  if (!pts.length) { g.fillStyle = css('--text-muted'); g.font = '13px system-ui'; g.fillText('waiting for AR tracking', 12, 20); return; }
+  let x0 = Infinity, x1 = -Infinity, v0 = top ? Infinity : 0, v1 = top ? -Infinity : 2;
+  for (const p of pts) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); v0 = Math.min(v0, V(p)); v1 = Math.max(v1, V(p)); }
+  const sc = Math.min(w / (x1 - x0 + 1), h / (v1 - v0 + 1)), mx = (x0 + x1) / 2, mv = (v0 + v1) / 2;
+  const X = x => w / 2 + (x - mx) * sc, Y = v => top ? h / 2 + (v - mv) * sc : h / 2 - (v - mv) * sc, P = p => [X(p[0]), Y(V(p))];
+  g.strokeStyle = css('--grid'); g.lineWidth = 1; g.beginPath();
+  for (let x = Math.ceil(mx - w / 2 / sc); x < mx + w / 2 / sc; x++) { g.moveTo(X(x), 0); g.lineTo(X(x), h); }
+  for (let v = Math.ceil(mv - h / 2 / sc); v < mv + h / 2 / sc; v++) { g.moveTo(0, Y(v)); g.lineTo(w, Y(v)); }
+  g.stroke();
+  g.font = '11px system-ui'; g.lineCap = g.lineJoin = 'round';
+
+  // floor: tag polygon from above, floor line from the side
+  g.strokeStyle = g.fillStyle = css('--text-muted'); g.lineWidth = 1.5;
+  if (top && e.corners.length > 1) {
+    const ring = [...e.corners].sort((a, b) => Math.atan2(a.p[2], a.p[0]) - Math.atan2(b.p[2], b.p[0]));
+    g.beginPath(); ring.forEach((c, i) => i ? g.lineTo(...P(c.p)) : g.moveTo(...P(c.p))); g.closePath(); g.stroke();
+  }
+  if (!top && e.floorKnown) { g.beginPath(); g.moveTo(0, Y(0)); g.lineTo(w, Y(0)); g.stroke(); }
+  for (const c of e.corners) { const [x, y] = P(c.p); g.fillRect(x - 4, y - 4, 8, 8); if (top) g.fillText(`tag ${c.id}`, x + 6, y - 6); }
+
+  for (const [s, p] of Object.entries(e.people)) {
+    const col = css(who[s]);
+    g.strokeStyle = g.fillStyle = col;
+    g.globalAlpha = 0.35; g.lineWidth = 1.5; g.beginPath(); p.trail.forEach((q, i) => i ? g.lineTo(...P(q)) : g.moveTo(...P(q))); g.stroke(); g.globalAlpha = 1;
+    const b = e.bodies[s];
+    if (b) { g.lineWidth = 1.5; g.beginPath(); for (let i = 0; i < POSE.length; i += 2) { const a = b[POSE[i]], c = b[POSE[i + 1]]; if (a && c) { g.moveTo(...P(a)); g.lineTo(...P(c)); } } g.stroke(); }
+    const [x, y] = P(p.p);
+    if (p.tag && p.src === 'AR') { const [tx, ty] = P(p.tag); g.lineWidth = 1; g.strokeRect(tx - 4, ty - 4, 8, 8); } // where the other phone sees the chest tag
+    g.beginPath(); g.arc(x, y, 7, 0, 7); g.fill();
+    if (top && p.fwd) { g.lineWidth = 2.5; g.beginPath(); g.moveTo(x, y); g.lineTo(x + p.fwd[0] * 0.5 * sc, y + p.fwd[2] * 0.5 * sc); g.stroke(); }
+    g.fillStyle = css('--text-primary'); g.font = '600 12px system-ui'; g.fillText(s, x + 9, y + 4); g.font = '11px system-ui';
+  }
+  for (const [s, t] of Object.entries(e.tips)) {
+    const [x, y] = P(t.p);
+    if (t.wrist) { g.strokeStyle = css(who[s]); g.lineWidth = 3; g.beginPath(); g.moveTo(...P(t.wrist)); g.lineTo(x, y); g.stroke(); }
+    g.fillStyle = hsvCss(t.target); g.strokeStyle = css('--text-primary'); g.lineWidth = 1.5;
+    g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill(); g.stroke();
+  }
+}
+
+function mapPanel(e) {
+  const m = v => v.toFixed(2), cm = v => (v * 100).toFixed(0) + ' cm', P = e.people;
+  const st = document.querySelector('.mapstate'), n = Object.keys(P).length;
+  const full = n === 2 && e.aligned && e.floorKnown;
+  st.textContent = !n ? 'no data' : full ? 'room + both phones' : 'partial';
+  st.className = 'badge mapstate ' + (!n ? 'off' : full ? 'ok' : 'warn');
+  const L = [];
+  for (const s of ['A', 'B']) {
+    const p = P[s];
+    L.push(p ? `<b>${s}</b>: x ${m(p.p[0])} z ${m(p.p[2])} m, chest ${m(p.p[1])} m high (${p.src})${p.check != null ? `, tag check ±${cm(p.check)}` : ''}` : `<b>${s}</b>: not located`);
+  }
+  if (P.A && P.B) L.push(`A–B: ${m(Math.hypot(P.A.p[0] - P.B.p[0], P.A.p[2] - P.B.p[2]))} m apart`);
+  for (const [s, t] of Object.entries(e.tips))
+    L.push(`${s}'s stick tip: ${m(t.p[1])} m high${t.hit != null ? `, ${m(t.hit)} m from ${s === 'A' ? 'B' : 'A'}'s chest` : ''} (${t.src})`);
+  const a = e.align;
+  L.push(e.aligned ? `A↔B frames: ${a.pairs} pairs, rms ${cm(a.rms)}, ${a.shared} shared floor tags`
+    : 'A↔B not aligned yet: walk around while each phone sees the other\'s chest tag, or let both see one floor tag');
+  if (e.corners.length) {
+    const ring = [...e.corners].sort((x, y) => Math.atan2(x.p[2], x.p[0]) - Math.atan2(y.p[2], y.p[0]));
+    const edges = ring.length > 1 ? ring.map((c, i) => { const d = ring[(i + 1) % ring.length].p; return m(Math.hypot(c.p[0] - d[0], c.p[2] - d[2])); }) : [];
+    L.push(`floor tags ${ring.map(c => c.id).join(', ')}${edges.length > 1 ? ` · edges ${edges.join(' / ')} m` : ''}`);
+  }
+  for (const w of e.warn) L.push(`<span class="warn">${esc(w)}</span>`);
+  document.querySelector('.mapinfo').innerHTML = L.join('<br>');
+}
+
 let lastSlow = 0;
 function frame() {
   const slow = now() - lastSlow > 0.1; // tables and text 10x a second, canvases every frame
   if (slow) lastSlow = now();
+  const est = map.estimate({ now: now(), L: sticks });
+  plan(document.querySelector('.map .plan'), est, true); plan(document.querySelector('.map .elev'), est, false);
+  if (slow) mapPanel(est);
   for (const s of Object.values(slots)) {
     videoView(s); chart(s, 'euler', 180); chart(s, 'gyro'); chart(s, 'acc'); orient(s); traj(s);
     if (slow) { panels(s); rates(s); }
