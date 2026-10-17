@@ -202,11 +202,21 @@ scenario('ガードと回避のセンサー判定は、ゲームでは何も起�
 });
 
 // ---- デモ試合（ホーミング） ----
-scenario('デモ試合では、横に1m動いた相手にも小が曲がって当たる', () => {
+scenario('デモ試合では、撃つ前に横へ1m動いた相手にも、狙って小が当たる', () => {
   const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
   eq(S.g.match.phase, 'fight', '状態'); eq(S.g.match.mode, 'demo', 'モード');
   S.walk('B', 0, 1, .3); S.swing('A'); S.run(1.5);
   eq(S.B.hp, 95, 'B の HP');
+});
+scenario('デモ試合でも、大を撃たれた直後に素早く1.2m横へ動けば避けられる（弾は曲がらない）', () => {
+  const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
+  S.charge('A'); S.run(5.5); S.swing('A'); S.walk('B', 0, 1.2, .15); S.run(1.8);
+  eq(S.B.hp, 100, 'B の HP');
+});
+scenario('デモ試合で、撃たれたあとゆっくり動いても大は当たる', () => {
+  const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
+  S.charge('A'); S.run(5.5); S.swing('A'); S.walk('B', 0, .3, .4); S.run(1.5);
+  eq(S.B.hp, 40, 'B の HP');
 });
 scenario('デモ試合では、下に振り下ろしても相手に飛んで大が当たる', () => {
   const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);

@@ -57,7 +57,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const players = { A: makePlayer('A'), B: makePlayer('B') };
   const other = p => p === players.A ? players.B : players.A;
   const shots = [];
-  // mode 'demo' (デモ試合): the same match, but every shot homes in on the other player (for showing it off)
+  // mode 'demo' (デモ試合): the same match, but every shot is aimed at the other player's chest when it is fired, then flies
+  // straight (for showing it off; a quick enough sidestep after the shot still dodges it)
   const match = { phase: 'setup', mode: 'normal', ready: false, paused: false, sec: 60, left: 60, until: 0, fightAt: -9 };
   let winner = null;
   const canAct = () => !match.paused && match.phase === 'fight';
@@ -171,7 +172,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function stepShots(dt) {
     for (let i = shots.length - 1; i >= 0; i--) {
       const s = shots[i], foe = other(s.owner), T = TIER[s.tier];
-      if (s.homing || (s.dummyTarget && getDummyFrame())) { // homing (デモ試合 / dummy room): steer straight at the chest every frame
+      if (s.dummyTarget && getDummyFrame()) { // dummy room: steer at the chest every frame
         const distance = s.pos.distanceTo(foe.chest);
         s.vel.copy(foe.chest).sub(s.pos).normalize().multiplyScalar(T.speed);
         s.pos.addScaledVector(s.vel, Math.min(dt, distance / T.speed));
@@ -240,12 +241,12 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     for (const s of shots) fx.endShot(s.id); shots.length = 0; winner = null;
     for (const p of Object.values(players)) p.preview = null;
   }
-  /** ph: 'setup' | 'fight' | 'demo' (デモ試合: a fight where every shot homes in) */
+  /** ph: 'setup' | 'fight' | 'demo' (デモ試合: a fight where every shot is aimed at the other player when fired) */
   function setPhase(ph) {
     if (ph === 'demo' || ph === 'fight') match.mode = ph === 'demo' ? 'demo' : 'normal';
     reset(); match.paused = false;
     if (ph === 'fight' || ph === 'demo') { match.phase = 'countdown'; match.until = now() + 3; match.left = match.sec; } else { match.phase = ph; match.left = match.sec; }
-    log(null, 'phase', { setup: '準備中にした', fight: '試合開始（3 秒前）', demo: 'デモ試合開始（3 秒前・魔法は全部ホーミング）' }[ph] ?? ph);
+    log(null, 'phase', { setup: '準備中にした', fight: '試合開始（3 秒前）', demo: 'デモ試合開始（3 秒前・魔法は撃った瞬間に相手を狙う）' }[ph] ?? ph);
   }
   function finish(w) {
     winner = w; match.phase = 'result';
