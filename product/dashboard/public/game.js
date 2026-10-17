@@ -66,7 +66,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const IMU_SIDE = cross(W.STICK.axis, W.STICK.up);
 
   function place(p, est, sensorOnly = false) {
-    const dummy = getDummyFrame()?.players?.[p.slot];
+    let dummy = getDummyFrame()?.players?.[p.slot];
+    if (dummy?.source === 'synthetic' && (p.imu || est?.stick?.[p.slot]?.dir)) dummy = null; // a real stick is sending: never replace it with the dummy room's made-up swing
     if (dummy) {
       p.body = W.bodyPose(dummy.chest, dummy.yaw, dummy.chest[1]);
       p.chest.fromArray(dummy.chest); p.base.fromArray(dummy.base);
