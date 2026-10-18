@@ -164,7 +164,7 @@ gameCtrl.innerHTML = `
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
   <div class="row" id="zoomRow"><label title="今のカメラのズーム。カメラごとに覚える。1 が元の大きさ">ズーム <input id="zoom" type="range" min="0.5" max="3" step="0.05" style="width:130px;vertical-align:middle"> <span id="zoomOut" class="num"></span> 倍</label><button id="zoomReset">1 倍に戻す</button><span class="muted" id="zoomFor" style="font-size:12px"></span></div>
   <h3>表示</h3>
-  <div class="row"><button data-tog="minimap">ミニマップ<kbd>M</kbd></button><button data-tog="debug">デバッグ<kbd>G</kbd></button></div>
+  <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="debug">デバッグ<kbd>G</kbd></button></div>
   <div class="row"><button data-tog="mimic" title="第三者視点カメラの映像を MediaPipe で見て、アバターに同じ姿勢をとらせる（別スレッドで 1 秒に最大 15 回）">カメラの姿勢をアバターに反映</button><span class="muted" id="mimicStatus" style="font-size:12px"></span></div>
   <h3>攻撃・防御の記録</h3>
   <ul class="log" id="gameLog"></ul>`;
@@ -263,7 +263,7 @@ drawer.innerHTML = `
     <div class="row"><button data-tog="test">テスト（HP が減らない）</button><button data-tog="useTruth">正解位置（シミュレーター）</button></div></section>
   <section><h3>音</h3>
     ${['master:全体', 'bgm:BGM', 'sfx:効果音', 'amb:環境音'].map(x => { const [k, n] = x.split(':'); return `<label class="f"><span>${n}</span><input type="range" min="0" max="1" step="0.01" data-vol="${k}"><output data-volout="${k}"></output></label>`; }).join('')}
-    <div class="row"><button id="mute">消音</button><button id="bgmPreview" title="試合の BGM を、試合とは関係なく流す。試合が始まると自動で止まり、試合の BGM が頭から流れる">試合 BGM を流す</button><span class="note" id="audioInfo"></span></div>
+    <div class="row"><button id="mute">消音</button><button id="bgmPreview" title="M キーでも押せる。試合の BGM を、試合とは関係なく流す。試合が始まると自動で止まり、試合の BGM が頭から流れる">試合 BGM を流す<kbd>M</kbd></button><span class="note" id="audioInfo"></span></div>
     <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}</div></section>
   <section><h3>キー操作</h3><table class="keys">
     <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ試合開始（撃った瞬間に相手を狙う）・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
@@ -306,7 +306,8 @@ addEventListener('keydown', e => {
   if (KEYS[k]) return game.command(KEYS[k]);
   if (k === 'k') scan();
   else if (k === 'd') { stage.drone.next(); cfg.drone = stage.drone.mode; save(); }
-  else if (k === 'm') toggle('minimap'); else if (k === 'g') toggle('debug');
+  else if (k === 'm') $('#bgmPreview').click(); // 試合 BGM を流す / 止める (also while the slides are open: tutorial.js lets M through); the minimap is its button only
+  else if (k === 'g') toggle('debug');
   else if (k === 'f' && screen === 'final') fullscreen();
   else if (k === 's') drawer.classList.toggle('open');
   else if (k === 'Escape') drawer.classList.remove('open');
@@ -317,6 +318,7 @@ addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k] && s
 function pill(id, state) { const p = $(id); p.classList.toggle('on', state === true); p.classList.toggle('half', state === 'half'); }
 const hudP = Object.fromEntries(['A', 'B'].map(s => { const el = hud.querySelector('.pl.' + s); return [s, { el, hp: el.querySelector('.hp i'), ch: el.querySelector('.ch'), chi: el.querySelector('.ch i'), hpn: el.querySelector('.hpn'), act: el.querySelector('.act'), tick: el.querySelector('.ch b'), chips: Object.fromEntries([...el.querySelectorAll('.chips span')].map(c => [c.className.split(' ')[0], c])) }]; }));
 const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
+const setHtml = (el, h) => { if (el.innerHTML !== h) el.innerHTML = h; };
 // damage numbers: HUD text over the player's HP bar, pushed out to the side away from the opponent and up, so the hit's
 // effects (round the body, between the two) never cover it; drawn above the 3D, bigger for a bigger hit
 const dmgLast = {}, dmgPops = [];
@@ -399,7 +401,7 @@ function updateSlowUi() {
   $('#fovNote').textContent = cfg.knownFov ? `覚えた縦画角 ${cfg.knownFov.toFixed(1)}°（立てたタグのスキャンで使う）` : '画角はまだ覚えていない（床置きか、まっすぐ立てた状態のスキャンで覚える）';
   for (const r of drawer.querySelectorAll('[data-vol]')) { const v = sfx?.volumes?.[r.dataset.vol]; if (v != null && document.activeElement !== r) r.value = v; drawer.querySelector(`[data-volout=${r.dataset.vol}]`).textContent = v != null ? Math.round(v * 100) : '--'; }
   $('#mute').textContent = sfx?.muted ? '消音を解除' : '消音';
-  $('#bgmPreview').textContent = sfx?.previewingBgm ? '試合 BGM を止める' : '試合 BGM を流す';
+  setHtml($('#bgmPreview'), (sfx?.previewingBgm ? '試合 BGM を止める' : '試合 BGM を流す') + '<kbd>M</kbd>');
   const v = vision.state;
   $('#mimicStatus').textContent = !cfg.mimic ? '' : !v.on ? '待機中（カメラの映像が届くと動く）' : v.error ? v.error : !v.ready ? 'MediaPipe を読み込み中…（初回は数十秒）'
     : `${v.delegate} ${v.hz.toFixed(0)} 回/秒 · 1回 ${v.ms.toFixed(0)} ms · 反映 ${['A', 'B'].filter(s => game.players[s].skel).join('・') || 'なし'}`;
