@@ -21,6 +21,7 @@ import { createVision } from './vision.js';
 import { createVisionFx } from './visionfx.js';
 import { personTo3D } from './avatarpose.js';
 import { createPlayable } from './playable.js';
+import { createTutorial } from './tutorial.js';
 
 const $ = s => document.querySelector(s);
 const nowS = () => Date.now() / 1000;
@@ -71,6 +72,7 @@ const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg,
 stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: プログラム版 (smash, default) / 画像素材版 (textured) / いつもの (classic)
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
 // A / B: keyboard / random / still (screens 3 / 4, dummy room only), through the dummy's truth input and game.command
+const tutorial = createTutorial({ isActive: () => screen === 'game' }); // slides over the whole page, opened from screen 3 (made before playable: its keys come first)
 const playable = createPlayable({ vsrc, game, cfg, save, isActive: () => screen === 'game' || screen === 'final' });
 let phones = [];
 playable.onChange(() => game.setOnline(playable.withSelf(phones)));
@@ -118,6 +120,7 @@ addEventListener('hashchange', () => show(location.hash.slice(1)));
 // ---- game screen controls ----
 const gameCtrl = $('#gameCtrl');
 gameCtrl.innerHTML = `
+  <div class="row" id="tutRow" style="margin-bottom:6px"></div>
   <h3>試合の進行</h3>
   <div class="phase">
     <button data-phase="setup">準備中<kbd>1</kbd></button>
@@ -164,6 +167,7 @@ gameCtrl.innerHTML = `
   <div class="row"><button data-tog="mimic" title="第三者視点カメラの映像を MediaPipe で見て、アバターに同じ姿勢をとらせる（別スレッドで 1 秒に最大 15 回）">カメラの姿勢をアバターに反映</button><span class="muted" id="mimicStatus" style="font-size:12px"></span></div>
   <h3>攻撃・防御の記録</h3>
   <ul class="log" id="gameLog"></ul>`;
+tutorial.mountButton($('#tutRow'));
 for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.onclick = () => game.command({ cmd: 'phase', phase: b.dataset.phase });
 gameCtrl.querySelector('[data-cmd=pause]').onclick = () => game.command({ cmd: 'pause' });
 gameCtrl.querySelector('[data-cmd=reset]').onclick = () => game.command({ cmd: 'reset' });
@@ -280,6 +284,7 @@ for (const r of drawer.querySelectorAll('[data-vol]')) r.oninput = () => {
   try { localStorage.setItem('pd-vol', JSON.stringify(sfx?.volumes ?? {})); } catch {}
 };
 $('#mute').onclick = () => sfx?.setMuted(!sfx.muted);
+$('#tutRow').append($('#bgmPreview')); // the match BGM button sits next to 発表用スライド on screen 3 (moved out of the settings drawer)
 $('#bgmPreview').onclick = () => { if (!sfx) return; sfx.unlock?.(); sfx.previewBgm(!sfx.previewingBgm); };
 for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
   if (!sfx) return; sfx.unlock?.();
