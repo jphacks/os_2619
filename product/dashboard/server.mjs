@@ -4,7 +4,7 @@
 //  /ws    phones A and B (the SensorLink app) and the dashboards. Same protocol as sensing/dashboard/server.mjs:
 //         slots A / B, packets relayed with `slot` added, ping → pong, `phones` list. Phones A / B send no picture.
 //  /cam   phone C, the third-person camera (cam.html + camlink.js): WebRTC signalling and a JPEG fallback relay
-//  /info  JSON for the dashboard;  /ca.crt /ca.pem  the local CA phone C trusts once (trust.html)
+//  /marker.js  the floor sheets' marker (april | rune), saved in settings.json;  /info  JSON for the dashboard;  /ca.crt /ca.pem  the local CA phone C trusts once (trust.html)
 //  /cdn/npm/<pkg>@<x.y.z>/<file>  cdn.jsdelivr.net cached in vendor/cdn/ (works offline once fetched)
 //  /cdn/mp-models/<path>.task      MediaPipe's models (storage.googleapis.com/mediapipe-models), cached the same way
 // Env: PORT (8000), OPENSSL (path to openssl). Without openssl only plain http runs: everything but phone C's page works.
@@ -80,6 +80,19 @@ const dashboards = new Set();
 const toDashboards = data => { for (const d of dashboards) if (d.readyState === 1) d.send(data); };
 const phoneList = () => [...phones.values()].map(({ slot, name, addr }) => ({ slot, name, addr }));
 const status = () => toDashboards(JSON.stringify({ type: 'phones', list: phoneList() }));
+// The floor sheets' marker, one choice for every page and phone (public/marker.js): saved in settings.json, served as /marker.js,
+// sent to phones in `welcome` and to everyone as { type: 'marker' } when a dashboard switches it ({ type: 'setMarker', marker }).
+const settingsFile = join(root, 'settings.json');
+let settings = {}; try { settings = JSON.parse(readFileSync(settingsFile, 'utf8')); } catch {}
+let marker = ['april', 'rune'].includes(process.env.MARKER) ? process.env.MARKER : settings.marker === 'rune' ? 'rune' : 'april';
+function setMarker(m) {
+  if (!['april', 'rune'].includes(m) || m === marker) return;
+  marker = m; settings.marker = m;
+  try { writeFileSync(settingsFile, JSON.stringify(settings, null, 2)); } catch (e) { console.warn('settings:', e.message); }
+  log(`marker: ${m === 'rune' ? 'RuneTag' : 'AprilTag'} for the floor sheets`);
+  const k = JSON.stringify({ type: 'marker', marker });
+  toDashboards(k); for (const p of phones.values()) if (p.ws.readyState === 1) p.ws.send(k);
+}
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
 wss.on('connection', (ws, req) => {
@@ -107,7 +120,7 @@ wss.on('connection', (ws, req) => {
     }
     if (k.type === 'hello') {
       role = String(k.role); id = String(k.id).slice(0, 64);
-      if (role === 'dashboard') { dashboards.add(ws); return status(); }
+      if (role === 'dashboard') { dashboards.add(ws); send(ws, { type: 'marker', marker }); return status(); }
       if (role !== 'phone') return;
       const old = phones.get(id); // same phone reconnecting keeps its slot
       const slot = old?.slot ?? SLOTS.find(s => ![...phones.values()].some(q => q.slot === s));
@@ -115,9 +128,10 @@ wss.on('connection', (ws, req) => {
       old?.ws.terminate();
       phones.set(id, { slot, name: String(k.name).slice(0, 40), ws, seen: Date.now(), since: Date.now(), gap: 0, n: { msg: 0, bytes: 0 }, addr: req.socket.remoteAddress?.replace(/^::ffff:/, '') });
       log(`phone ${slot} (${k.name}) connected from ${req.socket.remoteAddress}`);
-      send(ws, { type: 'welcome', slot });
+      send(ws, { type: 'welcome', slot, marker });
       return status();
     }
+    if (k.type === 'setMarker' && role === 'dashboard') return setMarker(k.marker);
     if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); }
   });
   ws.on('close', (code, reason) => {
@@ -212,7 +226,7 @@ async function fromCdn(p) {
 function info(host) {
   const list = ips(), ip = list[0] ?? 'localhost', base = `${ip}:${PORT}`;
   return {
-    ips: list, port: PORT, https: !!tls, certFingerprint: tls?.fingerprint ?? null, phones: phoneList(), cams: camList().list, dashboards: dashboards.size,
+    ips: list, port: PORT, https: !!tls, certFingerprint: tls?.fingerprint ?? null, phones: phoneList(), cams: camList().list, dashboards: dashboards.size, marker,
     urls: { dashboard: `http://${base}/`, camera: `https://${base}/cam.html`, trust: `http://${base}/trust.html`, ca: `http://${base}/ca.crt`, sensorApp: base, host },
   };
 }
@@ -221,6 +235,7 @@ async function onRequest(req, res) {
     // posix: '/' stays '/' on Windows too; backslashes become '/' first so they can't climb out of the folder
     let path = posix.normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/\\/g, '/')).replace(/^(\.\.[/\\])+/, '');
     if ((path === '/ca.pem' || path === '/ca.crt') && tls) return res.writeHead(200, { 'content-type': path.endsWith('.pem') ? 'application/x-pem-file' : 'application/x-x509-ca-cert', 'cache-control': 'no-store' }).end(tls.ca);
+    if (path === '/marker.js') return res.writeHead(200, { 'content-type': types['.js'], 'cache-control': 'no-store' }).end(`export const MARKER = '${marker}'; // server.mjs settings\n`);
     if (path === '/info') return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(info(req.headers.host)));
     if (path.startsWith('/cdn/')) {
       const p = path.slice(5);

@@ -1,4 +1,7 @@
 // Shared contract: arena layout, tag table and frame conventions. Plain JS (no deps) so node and the browser both use it.
+import { MARKER } from './marker.js';
+import { RUNE, RUNE_IDS } from './runetag.js';
+export { MARKER };
 //
 // World: metres, y up, origin on the floor at the arena centre. A starts at -x facing +x, B at +x facing -x.
 // Pose = { R: 3x3 row-major [9], t: [3] }, maps points from the child frame into the parent frame: p_parent = R p_child + t.
@@ -37,12 +40,14 @@ const H = ARENA.half;
 // map4 = four floor sheets, ids 0-3, laid edge to edge as one big square in the middle of the room, clockwise seen from above:
 // 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left, every sheet upright (its top edge towards -z). The origin is the middle of
 // the big square. The positions are fixed, not measured: PITCH is the distance between the centres of neighbouring sheets
-// (the paper width when the sheets touch: 200 mm; ?pitch=0.2 or env PITCH overrides it).
+// (the paper width when the sheets touch: 200 mm, 250 mm for RuneTags; ?pitch=0.2 or env PITCH overrides it).
 // Sizes: the printed paper is 200 mm (fixed tags) / 50 mm (worn tags 8-11) square, with a white margin of 1/10 of that on each side,
 // so the black square (TAGS[id].size, what the distance maths measures) is 160 mm / 40 mm. tagSquare() draws the paper at size x 10/8.
-const PITCH = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('pitch')) || (typeof process !== 'undefined' && +process.env?.PITCH) || 0.2;
+// MARKER 'rune': the four map4 sheets are 250 mm RuneTags (print/make_runetags.mjs). Their detectors report the corners of a virtual
+// 200 mm square (RUNE.square), so size 0.2 and the 10/8 paper rule still hold. Worn tags 8-11 and the other layouts stay tag36h11.
+const PITCH = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('pitch')) || (typeof process !== 'undefined' && +process.env?.PITCH) || (MARKER === 'rune' ? RUNE.sheet : 0.2);
 export const TAG_PITCH = PITCH;
-const HP = PITCH / 2;
+const HP = PITCH / 2, FS = MARKER === 'rune' ? RUNE.square : 0.16; // map4 sheet size
 const LAYOUTS = {
   full: {
     0: { size: 0.16, pos: [-H, CHEST_H, -H] },
@@ -57,10 +62,10 @@ const LAYOUTS = {
     1: { size: 0.16, pos: [-H, CHEST_H, 0], flip: true },
   },
   map4: {
-    0: { size: 0.16, pos: [-HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
-    1: { size: 0.16, pos: [HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
-    2: { size: 0.16, pos: [HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
-    3: { size: 0.16, pos: [-HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
+    0: { size: FS, pos: [-HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
+    1: { size: FS, pos: [HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
+    2: { size: FS, pos: [HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
+    3: { size: FS, pos: [-HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
   },
   floor: {
     0: { size: 0.16, pos: [1.5, 0, 1], floor: true, flip: true },
@@ -70,6 +75,8 @@ const LAYOUTS = {
 const pick = (typeof location !== 'undefined' && new URLSearchParams(location.search).get('layout'))
   || (typeof process !== 'undefined' && process.env?.LAYOUT) || 'map4';
 export const LAYOUT = LAYOUTS[pick] ? pick : 'map4';
+/** Is fixed sheet `id` a RuneTag (MARKER rune, map4 ids 0-3)? Everything else is tag36h11. */
+export const isRune = id => MARKER === 'rune' && LAYOUT === 'map4' && RUNE_IDS.includes(+id);
 export const TAGS = LAYOUTS[LAYOUT];
 export const FIXED_FIELD = LAYOUT === 'map4'; // sheet positions and turns are fixed (a scan only places phone C)
 export const CORNER_IDS = Object.keys(TAGS).map(Number).filter(id => TAGS[id].pos); // every fixed tag (name kept for the modules that use it)

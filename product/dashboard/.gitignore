@@ -4,3 +4,5 @@ cert/
 # MediaPipe's wasm and models (~20 MB): server.mjs downloads them into vendor/cdn on first use
 vendor/cdn/npm/@mediapipe/
 vendor/cdn/mp-models/
+# the server's saved choices (marker)
+settings.json
