@@ -92,7 +92,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
 
   // ---- field scan (map4: 2 or 4 sheets anywhere, fieldmap.js) ----
   function applyField(f) { S.scanned = true; if (f.tags && Object.keys(f.tags).length) S.scannedIds = Object.keys(f.tags).map(Number); W.setField(f); }
-  try { const f = JSON.parse(localStorage.getItem(FIELD_KEY)); if (f?.poly) applyField(f); } catch {}
+  try { const f = JSON.parse(localStorage.getItem(FIELD_KEY)); if (f?.poly) applyField(W.FIXED_FIELD ? { ...f, poly: W.FIELD.poly.map(p => [...p]) } : f); } catch {} // fixed layout: the outline is the code's (a saved one may be an older size)
   try { S.tagCam = JSON.parse(localStorage.getItem(CAM_KEY)); } catch {}
   buildGuide();
   const saveField = () => { try { localStorage.setItem(FIELD_KEY, JSON.stringify({ poly: W.FIELD.poly, tags: Object.fromEntries((S.scannedIds ?? W.CORNER_IDS).map(id => { const T = W.TAGS[id]; return [id, { pos: T.pos, yaw: T.yaw ?? 0, ...(T.stand ? { stand: true, spin: T.spin ?? 0, R: T.R } : {}) }]; })) })); } catch {} };
@@ -242,6 +242,17 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
   setInterval(() => checkTags(isSetup()), 600);
   let minimap = null; // the HUD's corner map (attachMinimap)
 
+  // the game view's last camera, so the HUD can put things over a world point (project)
+  const viewProj = new THREE.Matrix4(); let viewOk = false;
+  const keepView = cam => { viewProj.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); viewOk = true; };
+  /** World point -> { x, y } in the stage element's CSS pixels on the game screen, or null (behind the camera / no view yet). */
+  function project(v) {
+    if (!viewOk || S.mode !== 'game') return null;
+    const q = new THREE.Vector4(v.x, v.y, v.z, 1).applyMatrix4(viewProj);
+    if (q.w <= 0) return null;
+    return { x: (q.x / q.w + 1) / 2 * S.w, y: (1 - q.y / q.w) / 2 * S.h };
+  }
+
   /** Render one frame. In final mode the base scene is strictly camera pixels; only fx is projected over it. */
   function render(dt, game, est) {
     const P = game.players, setup = game.match.phase === 'setup';
@@ -265,15 +276,19 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
       drawGuide2d(false);
       scene.background = field.background; field.group.visible = true; camHelper.visible = cfg.debug; guide.visible = false;
       if (S.fixed !== (drone.mode === 'fixed')) resize();
+      const zoom = drone.mode === 'free' ? 1 : +cfg.zoom?.[drone.mode] || 1; // per camera mode (free: the mouse wheel zooms instead)
       if (S.fixed) { // where phone C is, as on screen 4 (the dummy room's exact pose, else the scan, else the guide camera)
-        applyCam(); if (video.__dummy) { toThreeCamera(video.__dummy.truePose, camera); camera.aspect = S.aspect; camera.updateProjectionMatrix(); }
-        renderer.setViewport(0, 0, S.w, S.h); fx.render(); return;
+        applyCam(); if (video.__dummy) { toThreeCamera(video.__dummy.truePose, camera); camera.aspect = S.aspect; }
+        camera.zoom = zoom; camera.updateProjectionMatrix(); camera.updateMatrixWorld(); keepView(camera);
+        renderer.setViewport(0, 0, S.w, S.h); fx.render();
+        camera.zoom = 1; camera.updateProjectionMatrix(); return; // the final render shares this camera
       }
       overCam.aspect = S.aspect; overCam.updateProjectionMatrix();
       const keep = { p: camera.position.clone(), q: camera.quaternion.clone(), fov: camera.fov };
-      camera.position.copy(overCam.position); camera.quaternion.copy(overCam.quaternion); camera.fov = overCam.fov; camera.aspect = S.aspect; camera.updateProjectionMatrix();
+      camera.position.copy(overCam.position); camera.quaternion.copy(overCam.quaternion); camera.fov = overCam.fov; camera.aspect = S.aspect; camera.zoom = zoom; camera.updateProjectionMatrix();
+      camera.updateMatrixWorld(); keepView(camera);
       renderer.setViewport(0, 0, S.w, S.h); fx.render();
-      camera.position.copy(keep.p); camera.quaternion.copy(keep.q); camera.fov = keep.fov; camera.updateProjectionMatrix();
+      camera.position.copy(keep.p); camera.quaternion.copy(keep.q); camera.fov = keep.fov; camera.zoom = 1; camera.updateProjectionMatrix();
       return;
     }
     const fpv = cfg.fpv && placePhoneCamera(cfg.fpv);
@@ -320,7 +335,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
   }
 
   return {
-    el, scene, camera, fx, drone, field, state: S, render, phoneCam, scan, autoAlign, clearScan, tagChecks, seenTags: seen, applyCam,
+    el, scene, camera, fx, drone, field, state: S, render, project, phoneCam, scan, autoAlign, clearScan, tagChecks, seenTags: seen, applyCam,
     attach(box, mode) { S.box = box; S.mode = mode; if (el.parentNode !== box) box.append(el); resize(); applyCam(); },
     attachMinimap(c) { minimap = createMinimap(c); minimap.canvas = c; },
     resize,

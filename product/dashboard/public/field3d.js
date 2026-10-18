@@ -1,4 +1,4 @@
-// Stylized arena for the 3D / drone views: floor, glowing boundary along FIELD.poly, start rings, the tags with their real images,
+// Stylized arena for the 3D / drone views: floor, boundary line painted along FIELD.poly, start rings, the tags with their real images,
 // two team-coloured avatars posed from the players' body / stick, and a 2D top-down minimap.
 // Everything lives in one group the integrator shows only in 3D views; effects.js renders on top (no depth test).
 // World frame and layout: world.js (metres, y up, origin floor centre). Body frame: x forward, y up, z right.
@@ -97,8 +97,8 @@ void main() {
   c += inside * vec3(.035, .04, .06) * exp(-r * r / 5.);                                           // soft centre spot
   c += mix(vec3(.04, .05, .08), vec3(.10, .12, .17), inside) * gridAt(p, .5) * (inside > .5 ? 1. : exp(-d * .8));
   c += inside * vec3(.07, .08, .11) * gridAt(p, 1.);
-  // boundary: one thin flat line
-  c += team * aline(abs(d) / fwidth(d), 1.);
+  // boundary: a line painted on the floor, 6 cm wide (no wall, no posts)
+  c += team * (1. - smoothstep(.03, .03 + fwidth(d) * 1.5, abs(d)));
   // centre line (dashed, x = 0 runs across the field between the A and B halves) and circle
   float dash = step(.45, fract(p.y * 2.5 + uTime * .3));
   c += inside * vec3(.55, .6, .7) * aline(abs(p.x) / fwidth(p.x), .7) * dash * .5;
@@ -120,17 +120,6 @@ void main() {
   gl_FragColor = vec4(c, alpha);
 }`;
 
-// boundary curtain: additive, fades upward, slow scanlines
-const WALL_VS = `
-varying vec2 vUv; varying float vX;
-void main() { vUv = uv; vec4 w = modelMatrix * vec4(position, 1.); vX = w.x; gl_Position = projectionMatrix * viewMatrix * w; }`;
-const WALL_FS = `
-uniform float uTime; uniform vec2 uX; uniform vec3 uCA, uCB; varying vec2 vUv; varying float vX;
-void main() {
-  vec3 team = vX < 0. ? uCA : uCB;
-  gl_FragColor = vec4(team * (.06 + .7 * step(.97, vUv.y)), 1.);
-}`;
-
 function makeFloor(uniforms) { // unit quad, scaled to the field on rebuild
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShaderMaterial({
     vertexShader: FLOOR_VS, fragmentShader: FLOOR_FS, uniforms, transparent: true, depthWrite: true,
@@ -138,35 +127,6 @@ function makeFloor(uniforms) { // unit quad, scaled to the field on rebuild
   }));
   floor.rotation.x = -Math.PI / 2; floor.renderOrder = -1;
   return floor;
-}
-/** Curtain along every edge of the outline, one geometry (uv.y 0 at the floor, 1 at the top). */
-function wallGeometry(poly, h = .32) {
-  const n = poly.length, pos = new Float32Array(n * 12), uv = new Float32Array(n * 8), idx = [];
-  for (let i = 0; i < n; i++) {
-    const [ax, az] = poly[i], [bx, bz] = poly[(i + 1) % n], o = i * 4;
-    pos.set([ax, 0, az, bx, 0, bz, bx, h, bz, ax, h, az], o * 3); uv.set([0, 0, 1, 0, 1, 1, 0, 1], o * 2);
-    idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); g.setIndex(idx);
-  return g;
-}
-const POST = new THREE.CylinderGeometry(.012, .012, .6, 6); // shared by every rebuild, never disposed
-const POST_MAT = { A: new THREE.MeshBasicMaterial({ color: new THREE.Color(TEAM.A).multiplyScalar(1.1) }), B: new THREE.MeshBasicMaterial({ color: new THREE.Color(TEAM.B).multiplyScalar(1.1) }) };
-function makePosts(g) { // one at every outline vertex, unless a tag pole stands there; a floor sheet there pushes it just outside
-  for (const [x, z] of W.FIELD.poly) {
-    let px = x, pz = z, skip = false;
-    for (const id of W.CORNER_IDS) {
-      const t = W.TAGS[id], d = Math.hypot(t.pos[0] - x, t.pos[2] - z);
-      if (!t.floor && d < .3) skip = true;
-      if (t.floor && d < t.size * .9 + .1) { // outward from the centre, past the sheet's corner
-        const n = Math.hypot(t.pos[0], t.pos[2]) || 1, k = t.size * .9 + .08;
-        px = t.pos[0] + t.pos[0] / n * k; pz = t.pos[2] + t.pos[2] / n * k;
-      }
-    }
-    if (skip) continue;
-    const m = new THREE.Mesh(POST, POST_MAT[x < 0 ? 'A' : 'B']); m.position.set(px, .3, pz); g.add(m);
-  }
 }
 function floorText(text, color, x, z) { // big flat letter on the floor, upright seen from +z
   const tex = canvasTex(128, 128, (g, w, h) => { g.font = '900 100px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = color; g.fillText(text, w / 2, h / 2 + 6); });
@@ -183,11 +143,10 @@ const tagTex = id => {
   const t = new THREE.CanvasTexture(tagCanvas(id, 16)); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.NearestFilter; t.anisotropy = 4;
   return (TAG_TEX[id] = t);
 };
-const KEEP = new Set([POST, ...Object.values(POST_MAT)]);
 function disposeTree(root) { // geometries / materials / textures made for one build (shared ones are kept)
   root.traverse(o => {
-    if (o.geometry && !o.isSprite && !KEEP.has(o.geometry) && o.geometry !== CYL && o.geometry !== JOINT) o.geometry.dispose(); // sprites share three's quad
-    if (o.material && !KEEP.has(o.material)) { const m = o.material; if (m.map && !Object.values(TAG_TEX).includes(m.map)) m.map.dispose(); m.dispose(); }
+    if (o.geometry && !o.isSprite && o.geometry !== CYL && o.geometry !== JOINT) o.geometry.dispose(); // sprites share three's quad
+    if (o.material) { const m = o.material; if (m.map && !Object.values(TAG_TEX).includes(m.map)) m.map.dispose(); m.dispose(); }
   });
 }
 function makeTags(debugGroup) {
@@ -329,24 +288,25 @@ function makeAvatar(slot) {
   let fig = null;
   FIG.then(f => { if (f) fig = f(wire, root); });
   // floating HP bar
-  const hpCanvas = Object.assign(document.createElement('canvas'), { width: 320, height: 88 }), hpCtx = hpCanvas.getContext('2d');
+  const hpCanvas = Object.assign(document.createElement('canvas'), { width: 320, height: 104 }), hpCtx = hpCanvas.getContext('2d');
   const hpTex = new THREE.CanvasTexture(hpCanvas); hpTex.colorSpace = THREE.SRGBColorSpace;
   const hpSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: hpTex, depthWrite: false, depthTest: false })); hpSprite.renderOrder = 10;
-  hpSprite.scale.set(1, 88 / 320, 1); hpSprite.center.set(.5, -.15); world.add(hpSprite); // anchored below: stays above the head on screen from any angle
-  const facing = V(1, 0, 0); limitSprite(hpSprite, { facing });
+  hpSprite.scale.set(1.4, 1.4 * 104 / 320, 1); hpSprite.center.set(.5, -.15); world.add(hpSprite); // anchored below: stays above the head on screen from any angle
+  const facing = V(1, 0, 0); limitSprite(hpSprite, { facing, maxFrac: .18 });
   let hpKey = '';
-  function drawHp(hp, online, charge) { // a thin flat bar, the slot and HP in small type above it
-    const key = `${Math.ceil(hp)}|${online}|${Math.round(charge * 10)}`; if (key === hpKey) return; hpKey = key;
-    const g = hpCtx, w = 320, h = 88, c = online ? css(color) : '#7a7f8a', bx = 20, bw = w - 40, by = 52, bh = 10;
+  function drawHp(hp, online, charge, value = hp) { // a thick bar, the slot and HP above it. hp: 0..100 (bar length), value: the HP number shown
+    const key = `${Math.ceil(hp)}|${Math.ceil(value)}|${online}|${Math.round(charge * 10)}`; if (key === hpKey) return; hpKey = key;
+    const g = hpCtx, w = 320, h = 104, c = online ? css(color) : '#7a7f8a', bx = 12, bw = w - 24, by = 46, bh = 34;
     g.clearRect(0, 0, w, h);
-    g.font = '600 26px system-ui, sans-serif'; g.textBaseline = 'alphabetic'; g.shadowColor = '#000'; g.shadowBlur = 6;
+    g.font = '700 34px system-ui, sans-serif'; g.textBaseline = 'alphabetic'; g.shadowColor = '#000'; g.shadowBlur = 6;
     g.textAlign = 'left'; g.fillStyle = c; g.fillText(slot, bx, by - 10);
-    g.textAlign = 'right'; g.fillStyle = '#d8dbe2'; g.fillText(!online ? 'OFFLINE' : hp <= 0 ? 'KO' : String(Math.ceil(hp)), bx + bw, by - 10);
+    g.textAlign = 'right'; g.fillStyle = '#d8dbe2'; g.fillText(!online ? 'OFFLINE' : hp <= 0 ? 'KO' : String(Math.ceil(value)), bx + bw, by - 10);
     g.shadowBlur = 0;
+    g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(bx - 3, by - 3, bw + 6, bh + 6);
     g.fillStyle = 'rgba(255,255,255,.18)'; g.fillRect(bx, by, bw, bh);
     if (online) {
       g.fillStyle = c; g.fillRect(bx, by, bw * Math.max(0, Math.min(1, hp / 100)), bh);
-      if (charge > 0) { g.fillStyle = 'rgba(255,255,255,.85)'; g.fillRect(bx, by + bh + 4, bw * charge, 3); }
+      if (charge > 0) { g.fillStyle = 'rgba(255,255,255,.85)'; g.fillRect(bx, by + bh + 5, bw * charge, 6); }
     }
     hpTex.needsUpdate = true;
   }
@@ -373,7 +333,7 @@ function makeAvatar(slot) {
       glow.color.copy(online ? onColor : offColor).multiplyScalar(1.4);
       wire.color.copy(online ? onColor : offColor);
     }
-    drawHp(100 * (p.hp ?? 100) / (p.hpMax || 100), online, p.charging ? (p.charge ?? 0) : 0);
+    drawHp(100 * (p.hp ?? 100) / (p.hpMax || 100), online, p.charging ? (p.charge ?? 0) : 0, p.hp ?? 100);
   }
 
   // The pose from phone C's picture (p.skel = { joints, vis }, world joints from avatarpose.js) gives the body its shape only:
@@ -534,10 +494,9 @@ export function createField(scene, opts = {}) {
     uP: { value: [new THREE.Vector4(), new THREE.Vector4()] },
   };
   const floor = makeFloor(uniforms);
-  const walls = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.ShaderMaterial({ vertexShader: WALL_VS, fragmentShader: WALL_FS, uniforms, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
   const debug = new THREE.Group(); debug.visible = false;
   debug.add(new THREE.AxesHelper(.6));
-  group.add(floor, walls, debug);
+  group.add(floor, debug);
   let arena = null, debugArena = null, sig = NaN;
   function rebuild() {
     sig = fieldSig();
@@ -546,10 +505,8 @@ export function createField(scene, opts = {}) {
     uniforms.uR.value = e.R; uniforms.uX.value.set(e.minX, e.maxX);
     uniforms.uSA.value.set(W.START.A.pos[0], W.START.A.pos[2]); uniforms.uSB.value.set(W.START.B.pos[0], W.START.B.pos[2]);
     floor.scale.set(2 * (e.R + 6), 2 * (e.R + 6), 1);
-    walls.geometry.dispose(); walls.geometry = wallGeometry(P);
     if (arena) { group.remove(arena); disposeTree(arena); debug.remove(debugArena); disposeTree(debugArena); }
     arena = new THREE.Group(); debugArena = new THREE.Group();
-    makePosts(arena);
     arena.add(floorText('A', css(TEAM.A), W.START.A.pos[0], W.START.A.pos[2] + .66), floorText('B', css(TEAM.B), W.START.B.pos[0], W.START.B.pos[2] + .66));
     arena.add(makeTags(debugArena));
     for (const [t, x, z, c] of [['+x', e.maxX + .35, 0, '#ff6b6b'], ['+z', 0, e.maxZ + .35, '#6b9bff']]) { const l = label(t, c, .16); l.position.set(x, .12, z); debugArena.add(l); }

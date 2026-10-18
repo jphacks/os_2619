@@ -6,3 +6,5 @@ vendor/cdn/npm/@mediapipe/
 vendor/cdn/mp-models/
 # the server's saved choices (marker)
 settings.json
+# the game screen numbers saved with 3 ゲーム > パラメータを保存 (per PC)
+rules.json

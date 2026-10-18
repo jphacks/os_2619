@@ -90,7 +90,7 @@ export function truthLayout(floorTags = null) {
   if (sheets.length >= 3 && !W.FIXED_FIELD) { // (the fixed middle square of map4 is not the play area: that stays the ARENA square)
     const mx = sheets.reduce((a, t) => a + t.pos[0], 0) / sheets.length, mz = sheets.reduce((a, t) => a + t.pos[2], 0) / sheets.length;
     poly = sheets.map(t => [t.pos[0], t.pos[2]]).sort((p, q) => Math.atan2(p[1] - mz, p[0] - mx) - Math.atan2(q[1] - mz, q[0] - mx));
-  } else { const H = 2; poly = [[-H, -H], [H, -H], [H, H], [-H, H]]; } // the layouts' 4 m square (ARENA.half before any scan)
+  } else { const H = 4; poly = [[-H, -H], [H, -H], [H, H], [-H, H]]; } // the layouts' 8 m square (ARENA.half before any scan)
   const xs = poly.map(p => p[0]), minX = Math.min(...xs), maxX = Math.max(...xs), inset = Math.min(.9, (maxX - minX) * .22);
   return { tags, poly, start: { A: [minX + inset, 0, 0], B: [maxX - inset, 0, 0] } };
 }

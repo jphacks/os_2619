@@ -166,9 +166,17 @@ export function createAudio({ base = 'audio/' } = {}) {
     v.src.stop(t + tc * 7);
     v.src.onended = () => { v.src.disconnect(); v.g.disconnect(); v.p.disconnect(); };
   }
-  let music = null, musicOn = false;
+  let music = null, musicOn = false, preview = false, gameOn = false;
+  /** The match asks for its music every frame. The preview (the button) plays the same music outside a match; when the match
+   *  starts it stops and the match's music starts from the top as usual. */
   function bgm(on) {
     on = !!on;
+    if (on && preview) { preview = false; release(music, .3); music = null; musicOn = false; }
+    gameOn = on;
+    setMusic(on || preview);
+  }
+  function previewBgm(on) { if (gameOn) return; preview = !!on; setMusic(preview); }
+  function setMusic(on) {
     if (on === musicOn && (!on || music)) return; // cheap enough to call every frame
     if (on && (!buf.bgm || ctx.state !== 'running')) return; // retried on the next call after unlock / load
     musicOn = on;
@@ -277,7 +285,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     for (const v of voices.splice(0)) kill(v, .05);
     charge('A', false); charge('B', false);
     for (const k in beds) { release(beds[k].v, .05); beds[k].v = null; }
-    release(music, .05); music = null; musicOn = false;
+    release(music, .05); music = null; musicOn = false; preview = false;
   }
   const peakBuf = new Float32Array(meter.fftSize);
   function peak() { meter.getFloatTimeDomainData(peakBuf); let m = 0; for (let i = 0; i < peakBuf.length; i++) { const a = Math.abs(peakBuf[i]); if (a > m) m = a; } return m; }
@@ -291,7 +299,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     load, unlock,
     get unlocked() { return ctx.state === 'running'; }, get loaded() { return loaded; },
     setVolume, get volumes() { return { ...vol }; }, setMuted, get muted() { return muted; },
-    bgm, shot, hit, special, charge, aura, guard, play, stopAll, dispose,
+    bgm, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, aura, guard, play, stopAll, dispose,
     peak, // output peak (linear) over the last ~43 ms, for meters / tests
     ctx,
   };

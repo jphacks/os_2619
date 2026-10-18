@@ -1,4 +1,4 @@
-// 棒バトル ダッシュボード: one page, four screens, one match.
+// Full Stick ダッシュボード: one page, four screens, one match.
 //   1 接続     phones A / B (SensorLink app over /ws) and phone C (cam.html over /cam), everything they send
 //   2 3D空間   phones, swords and AprilTags in the field world (phonealign.js), dark and raw
 //   3 ゲーム   the match in the stylised 3D arena: magic attacks (小・中・大), charge meters, HP, timer (game.js + stage.js)
@@ -21,6 +21,7 @@ import { createVision } from './vision.js';
 import { createVisionFx } from './visionfx.js';
 import { personTo3D } from './avatarpose.js';
 import { createPlayable } from './playable.js';
+import { createTutorial } from './tutorial.js';
 
 const $ = s => document.querySelector(s);
 const nowS = () => Date.now() / 1000;
@@ -31,10 +32,11 @@ const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
   minimap: true, debug: false, pip: false, mirrorX: false, mirrorY: false, swordFlip: false, fovC: 40, viewVer: 2, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
   matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 5, fxStyle: 'smash',
+  zoom: { fixed: 1, auto: 1, orbit: 1, chaseA: 1, chaseB: 1, top: 1, side: 1 }, // game screen: zoom per camera mode (free: the mouse wheel)
   mimic: true, // the avatars copy the poses MediaPipe finds in phone C's picture (screen 3, and the small 3D window of screen 4)
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
-const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
+const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen }, zoom: { ...DEFAULTS.zoom, ...saved.zoom } };
 if ((saved.viewVer ?? 0) < 2) { cfg.mirrorX = cfg.mirrorY = cfg.swordFlip = false; cfg.viewVer = 2; } // the left-right / up-down guesses are off until a measured need: the alignment is solved from the tags now
 cfg.visOn = false; // picture recognition (MediaPipe) is off at every start: nothing is loaded or run until it is switched on in the final bar
 if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
@@ -70,6 +72,7 @@ const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg,
 stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: プログラム版 (smash, default) / 画像素材版 (textured) / いつもの (classic)
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
 // A / B: keyboard / random / still (screens 3 / 4, dummy room only), through the dummy's truth input and game.command
+const tutorial = createTutorial({ isActive: () => screen === 'game' }); // slides over the whole page, opened from screen 3 (made before playable: its keys come first)
 const playable = createPlayable({ vsrc, game, cfg, save, isActive: () => screen === 'game' || screen === 'final' });
 let phones = [];
 playable.onChange(() => game.setOnline(playable.withSelf(phones)));
@@ -118,6 +121,7 @@ addEventListener('hashchange', () => show(location.hash.slice(1)));
 // ---- game screen controls ----
 const gameCtrl = $('#gameCtrl');
 gameCtrl.innerHTML = `
+  <div class="row" id="tutRow" style="margin-bottom:6px"></div>
   <h3>試合の進行</h3>
   <div class="phase">
     <button data-phase="setup">準備中<kbd>1</kbd></button>
@@ -142,12 +146,15 @@ gameCtrl.innerHTML = `
     <label>小のダメージ <input data-rule="dmg.s" type="number" min="0" max="100" step="1"></label>
     <label>中のダメージ <input data-rule="dmg.m" type="number" min="0" max="100" step="1"></label>
     <label>大のダメージ <input data-rule="dmg.l" type="number" min="0" max="100" step="1"></label>
+    <label title="ガードで跳ね返した小が当たったときのダメージ。小のダメージ × この倍率">反射のダメージ倍率 <input data-rule="reflectMul" type="number" min="0" max="10" step="0.1"> 倍</label>
     <label>小の連打の間隔 <input data-rule="rapid" type="number" min="0" max="3" step="0.05"> 秒</label>
     <label>溜め失敗になる移動 <input data-rule="moveFail" type="number" min="5" max="300" step="5" data-scale="100"> cm</label>
     <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">小の玉の大きさ <input data-rule="size.s" type="number" min="0.2" max="4" step="0.1"> 倍</label>
     <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">中の玉の大きさ <input data-rule="size.m" type="number" min="0.2" max="4" step="0.1"> 倍</label>
     <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">大の玉の大きさ <input data-rule="size.l" type="number" min="0.2" max="4" step="0.1"> 倍</label>
-    <div class="row"><button id="rulesReset">初期値に戻す</button><span class="muted" id="rulesNote"></span></div>
+    <div class="row"><button id="rulesSave" class="go" title="この PC のサーバーに保存。次に開いたとき（別のブラウザでも）この値で始まる">パラメータを保存</button><button id="rulesLoad" title="サーバーに保存した値に戻す">保存した値を読み込む</button><button id="rulesReset">初期値に戻す</button></div>
+    <div class="row"><span class="muted" id="rulesSaved" style="font-size:12px"></span></div>
+    <div class="row"><span class="muted" id="rulesNote"></span></div>
   </div>
   <h3>エフェクトを試す</h3>
   <div class="seg" id="fxStyles"><button data-fxstyle="smash">プログラム版</button><button data-fxstyle="textured">画像素材版</button><button data-fxstyle="classic">いつもの</button></div>
@@ -155,11 +162,13 @@ gameCtrl.innerHTML = `
   <div class="fxtry">${['A', 'B'].map(s => `<div class="row"><b style="color:var(--${s});width:1.4em">${s}</b>${['s', 'm', 'l'].map(t => `<button data-fxshot="${t}" data-s="${s}">${TIER_JA[t]}</button>`).join('')}<button data-fxcharge data-s="${s}">溜め（押している間）</button></div>`).join('')}</div>
   <h3>カメラ（ドローン視点）<kbd>D</kbd></h3>
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
+  <div class="row" id="zoomRow"><label title="今のカメラのズーム。カメラごとに覚える。1 が元の大きさ">ズーム <input id="zoom" type="range" min="0.5" max="3" step="0.05" style="width:130px;vertical-align:middle"> <span id="zoomOut" class="num"></span> 倍</label><button id="zoomReset">1 倍に戻す</button><span class="muted" id="zoomFor" style="font-size:12px"></span></div>
   <h3>表示</h3>
   <div class="row"><button data-tog="minimap">ミニマップ<kbd>M</kbd></button><button data-tog="debug">デバッグ<kbd>G</kbd></button></div>
   <div class="row"><button data-tog="mimic" title="第三者視点カメラの映像を MediaPipe で見て、アバターに同じ姿勢をとらせる（別スレッドで 1 秒に最大 15 回）">カメラの姿勢をアバターに反映</button><span class="muted" id="mimicStatus" style="font-size:12px"></span></div>
   <h3>攻撃・防御の記録</h3>
   <ul class="log" id="gameLog"></ul>`;
+tutorial.mountButton($('#tutRow'));
 for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.onclick = () => game.command({ cmd: 'phase', phase: b.dataset.phase });
 gameCtrl.querySelector('[data-cmd=pause]').onclick = () => game.command({ cmd: 'pause' });
 gameCtrl.querySelector('[data-cmd=reset]').onclick = () => game.command({ cmd: 'reset' });
@@ -188,6 +197,22 @@ for (const b of gameCtrl.querySelectorAll('[data-fxcharge]')) {
   b.onpointerup = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: false, fire: true });
   b.onpointerleave = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: false });
 }
+// the numbers saved on this PC's server (server.mjs /rules -> rules.json): loaded once at start (they win over this browser's), saved with the button
+const mergeRules = r => ({ ...RULES, ...r, dmg: { ...RULES.dmg, ...r?.dmg }, size: { ...RULES.size, ...r?.size } });
+const rulesMsg = t => { $('#rulesSaved').textContent = t; };
+async function loadSavedRules(quiet) {
+  try {
+    const r = await fetch('/rules', { cache: 'no-store' }); if (r.status === 404) { if (!quiet) rulesMsg('サーバーに保存した値はまだない'); return; }
+    if (!r.ok) throw new Error(r.status); cfg.rules = mergeRules(await r.json()); save(); showRules();
+    rulesMsg(quiet ? 'サーバーに保存した値で始めた' : '保存した値を読み込んだ');
+  } catch (e) { if (!quiet) rulesMsg('読み込めなかった（' + e.message + '）'); }
+}
+$('#rulesSave').onclick = async () => {
+  try { const r = await fetch('/rules', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg.rules) }); if (!r.ok) throw new Error(r.status);
+    rulesMsg('保存した（' + new Date().toLocaleTimeString() + '）'); } catch (e) { rulesMsg('保存できなかった（' + e.message + '）'); }
+};
+$('#rulesLoad').onclick = () => loadSavedRules(false);
+loadSavedRules(true);
 $('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg }, size: { ...RULES.size } }; save(); showRules(); };
 showRules();
 for (const pc of gameCtrl.querySelectorAll('.pc')) for (const b of pc.querySelectorAll('[data-act]')) {
@@ -197,6 +222,16 @@ for (const pc of gameCtrl.querySelectorAll('.pc')) for (const b of pc.querySelec
   else b.onclick = () => game.command({ cmd: a, slot });
 }
 for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.onclick = () => { stage.drone.setMode(b.dataset.drone); cfg.drone = b.dataset.drone; save(); };
+const zoomIn = $('#zoom'), setZoom = v => { const m = stage.drone.mode; if (m === 'free') return; cfg.zoom[m] = Math.round(v * 100) / 100; save(); };
+zoomIn.oninput = () => setZoom(+zoomIn.value);
+$('#zoomReset').onclick = () => setZoom(1);
+function syncZoom() { // the slider shows the current camera's zoom; free mode zooms with the mouse wheel instead
+  const m = stage.drone.mode, free = m === 'free', v = cfg.zoom[m] ?? 1;
+  zoomIn.disabled = $('#zoomReset').disabled = free;
+  if (document.activeElement !== zoomIn && +zoomIn.value !== v) zoomIn.value = v;
+  setText($('#zoomOut'), free ? '—' : v.toFixed(2));
+  setText($('#zoomFor'), free ? '自由操作のときはマウスホイールで拡大・縮小する' : `（${DRONE_JA[m]}）`);
+}
 const toggle = k => { cfg[k] = !cfg[k]; save(); };
 for (const b of document.querySelectorAll('[data-tog]')) b.onclick = () => toggle(b.dataset.tog);
 
@@ -228,7 +263,7 @@ drawer.innerHTML = `
     <div class="row"><button data-tog="test">テスト（HP が減らない）</button><button data-tog="useTruth">正解位置（シミュレーター）</button></div></section>
   <section><h3>音</h3>
     ${['master:全体', 'bgm:BGM', 'sfx:効果音', 'amb:環境音'].map(x => { const [k, n] = x.split(':'); return `<label class="f"><span>${n}</span><input type="range" min="0" max="1" step="0.01" data-vol="${k}"><output data-volout="${k}"></output></label>`; }).join('')}
-    <div class="row"><button id="mute">消音</button><span class="note" id="audioInfo"></span></div>
+    <div class="row"><button id="mute">消音</button><button id="bgmPreview" title="試合の BGM を、試合とは関係なく流す。試合が始まると自動で止まり、試合の BGM が頭から流れる">試合 BGM を流す</button><span class="note" id="audioInfo"></span></div>
     <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}</div></section>
   <section><h3>キー操作</h3><table class="keys">
     <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ試合開始（撃った瞬間に相手を狙う）・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
@@ -250,6 +285,8 @@ for (const r of drawer.querySelectorAll('[data-vol]')) r.oninput = () => {
   try { localStorage.setItem('pd-vol', JSON.stringify(sfx?.volumes ?? {})); } catch {}
 };
 $('#mute').onclick = () => sfx?.setMuted(!sfx.muted);
+$('#tutRow').append($('#bgmPreview')); // the match BGM button sits next to 発表用スライド on screen 3 (moved out of the settings drawer)
+$('#bgmPreview').onclick = () => { if (!sfx) return; sfx.unlock?.(); sfx.previewBgm(!sfx.previewingBgm); };
 for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
   if (!sfx) return; sfx.unlock?.();
   ({ shotFire: () => sfx.shot('fire', 0, .6), shotThunder: () => sfx.shot('thunder', 0, .6), hitFire: () => sfx.hit('fire', 0, .7), hitThunder: () => sfx.hit('thunder', 0, .7),
@@ -280,7 +317,31 @@ addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k] && s
 function pill(id, state) { const p = $(id); p.classList.toggle('on', state === true); p.classList.toggle('half', state === 'half'); }
 const hudP = Object.fromEntries(['A', 'B'].map(s => { const el = hud.querySelector('.pl.' + s); return [s, { el, hp: el.querySelector('.hp i'), ch: el.querySelector('.ch'), chi: el.querySelector('.ch i'), hpn: el.querySelector('.hpn'), act: el.querySelector('.act'), tick: el.querySelector('.ch b'), chips: Object.fromEntries([...el.querySelectorAll('.chips span')].map(c => [c.className.split(' ')[0], c])) }]; }));
 const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
+// damage numbers: HUD text over the player's HP bar, pushed out to the side away from the opponent and up, so the hit's
+// effects (round the body, between the two) never cover it; drawn above the 3D, bigger for a bigger hit
+const dmgLast = {}, dmgPops = [];
+function damagePops() {
+  for (const p of Object.values(game.players)) {
+    const prev = dmgLast[p.slot]; dmgLast[p.slot] = p.hp;
+    if (prev == null || !(p.hp < prev - .5) || screen !== 'game') continue;
+    const n = Math.round(prev - p.hp), k = Math.min(1, n / 60) ** .6; // 5 -> ~30 px, 20 -> ~50 px, 60 -> 82 px
+    const el = document.createElement('div'); el.className = 'dmg' + (n >= 40 ? ' l' : n >= 15 ? ' m' : '');
+    el.textContent = String(n); el.style.fontSize = Math.round(22 + 60 * k) + 'px';
+    hud.append(el); dmgPops.push({ el, slot: p.slot, t0: performance.now() });
+  }
+  // anchored on the game's own chest position (sensor data, steady) rather than the avatar's drawn HP bar; head height
+  const at = s => { const c = game.players[s]?.chest; return c && stage.project({ x: c.x, y: c.y + .7, z: c.z }); };
+  for (let i = dmgPops.length - 1; i >= 0; i--) {
+    const d = dmgPops[i], t = (performance.now() - d.t0) / 1000, me = at(d.slot), foe = at(d.slot === 'A' ? 'B' : 'A');
+    if (t > 1.4 || !me) { d.el.remove(); dmgPops.splice(i, 1); continue; }
+    const out = foe ? Math.sign(me.x - foe.x) || (d.slot === 'A' ? -1 : 1) : d.slot === 'A' ? -1 : 1; // away from the opponent
+    const pop = t < .12 ? .6 + 3.3 * t : t < .25 ? 1.2 - 1.5 * (t - .12) : 1;
+    const half = d.el.offsetWidth / 2; d.el.style.left = Math.max(half + 8, Math.min(hud.clientWidth - half - 8, me.x + out * (half + 90))) + 'px'; // kept on screen d.el.style.top = Math.max(half / 2 + 70, Math.min(hud.clientHeight - 40, me.y - 30 - 50 * Math.min(1, t))) + 'px'; // never off screen or under the top HUD
+    d.el.style.transform = `translate(-50%, -50%) scale(${pop})`; d.el.style.opacity = Math.min(1, (1.4 - t) / .4);
+  }
+}
 function updateHud() {
+  damagePops();
   const m = game.match;
   for (const p of Object.values(game.players)) {
     const h = hudP[p.slot];
@@ -315,6 +376,7 @@ function updateSlowUi() {
   gameCtrl.querySelector('[data-cmd=pause]').classList.toggle('on', m.paused);
   for (const b of document.querySelectorAll('[data-tog]')) b.classList.toggle('on', !!cfg[b.dataset.tog]);
   for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.classList.toggle('on', b.dataset.drone === stage.drone.mode);
+  syncZoom();
   for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.classList.toggle('on', b.dataset.fxstyle === stage.fx.style);
   for (const b of finalBar.querySelectorAll('[data-fpv]')) b.classList.toggle('on', (b.dataset.fpv || null) === cfg.fpv);
   for (const g of drawer.querySelectorAll('[data-seg]')) for (const b of g.querySelectorAll('button')) b.classList.toggle('on', String(cfg[g.dataset.seg]) === b.dataset.v);
@@ -337,6 +399,7 @@ function updateSlowUi() {
   $('#fovNote').textContent = cfg.knownFov ? `覚えた縦画角 ${cfg.knownFov.toFixed(1)}°（立てたタグのスキャンで使う）` : '画角はまだ覚えていない（床置きか、まっすぐ立てた状態のスキャンで覚える）';
   for (const r of drawer.querySelectorAll('[data-vol]')) { const v = sfx?.volumes?.[r.dataset.vol]; if (v != null && document.activeElement !== r) r.value = v; drawer.querySelector(`[data-volout=${r.dataset.vol}]`).textContent = v != null ? Math.round(v * 100) : '--'; }
   $('#mute').textContent = sfx?.muted ? '消音を解除' : '消音';
+  $('#bgmPreview').textContent = sfx?.previewingBgm ? '試合 BGM を止める' : '試合 BGM を流す';
   const v = vision.state;
   $('#mimicStatus').textContent = !cfg.mimic ? '' : !v.on ? '待機中（カメラの映像が届くと動く）' : v.error ? v.error : !v.ready ? 'MediaPipe を読み込み中…（初回は数十秒）'
     : `${v.delegate} ${v.hz.toFixed(0)} 回/秒 · 1回 ${v.ms.toFixed(0)} ms · 反映 ${['A', 'B'].filter(s => game.players[s].skel).join('・') || 'なし'}`;
