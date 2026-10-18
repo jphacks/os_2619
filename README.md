@@ -2,16 +2,14 @@
 
 [<img width="1920" alt="Full Stick のサムネイル（クリックで CM 動画）" src="https://github.com/user-attachments/assets/d9873445-7496-4eac-9af3-f32de4267488" />](https://www.youtube.com/watch?v=7773MsnY1Ag)
 
+▶ 画像をクリックすると YouTube で CM 動画が再生されます。
+
 チーム「チャオベン最強伝説」（os_2619）: 橋本康佑（チャオベン）・富本康太・河島航・相良拓海
 
 ## 各種リンク
 
-- スライドURL:
 - デモ動画URL（CM 動画）: https://www.youtube.com/watch?v=7773MsnY1Ag
 - AwardDayスライドURL:
-
-> [!NOTE]
-> 遊ぶには、PC 1台、スマホ3台、棒に付ける IMU センサー2つが必要です。動かし方は [`product/README.md`](product/README.md) にあります。ハードがなくても、`npm run fake` で偽のスマホを使って試せます。
 
 ## 製品概要
 
