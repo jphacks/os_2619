@@ -65,5 +65,45 @@ for (const c of cases) {
 // must-find: every sheet at least ~110 px across and tilted <= 55°; farther / steeper ones are reported but not required
 for (const t of miss) { const px = +t.match(/sheet=(\d+)/)[1], tilt = +t.match(/tilt=(\d+)/)[1]; console.log('miss', t); check(px < 110 || tilt > 55, `${t}: not found`); }
 for (const cam of cams) { const g = render(null, camHomography({ ...cam, dist: 1, tilt: 0, spin: 0, roll: 0 }), cam.w, cam.h, { noise: 12 }); check(!detectRunes(g, cam.w, cam.h).length, 'found a tag in an empty picture'); }
-console.log(`${n - fails}/${n} checks passed, ${cases.length - miss.length}/${cases.length} found, ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+console.log(`${cases.length - miss.length}/${cases.length} found, ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+
+// End to end in RuneTag mode: phone C's picture of the four map4 sheets (250 mm, edge to edge) -> tagdetect.js -> extrinsics.js pose
+{
+  process.env.MARKER = 'rune';
+  const W = await import('./public/world.js'), { detectInImage } = await import('./public/tagdetect.js'), { solveCamera } = await import('./public/extrinsics.js');
+  check(W.MARKER === 'rune' && W.TAGS[0].size === RUNE.square && W.TAG_PITCH === RUNE.sheet, 'world.js did not switch to RuneTag');
+  const CW = 1920, CH = 1080, fov = 40, f = CH / 2 / Math.tan(fov * Math.PI / 360), K = [f, 0, CW / 2, 0, f, CH / 2, 0, 0, 1];
+  const lookAt = (eye, tgt) => {
+    const sub = (a, b) => a.map((v, i) => v - b[i]), cr = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]], nz = a => a.map(v => v / Math.hypot(...a));
+    const z = nz(sub(tgt, eye)), x = nz(cr(z, [0, 1, 0])), y = cr(z, x);
+    return { R: [x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]], t: eye };
+  };
+  const m3 = (A, B) => { const r = []; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) r.push(A[3 * i] * B[j] + A[3 * i + 1] * B[3 + j] + A[3 * i + 2] * B[6 + j]); return r; };
+  let worstPos = 0, worstAng = 0, views = 0;
+  for (const [dist, hgt, az] of [[2.5, 1.5, .3], [3.5, 1.7, -.5], [4.5, 2.0, .1]]) {
+    const eye = [dist * Math.sin(az), hgt, dist * Math.cos(az)], pose = lookAt(eye, [0, 0, 0]), inv = W.invert(pose);
+    const Hs = W.CORNER_IDS.map(id => { const ct = W.compose(inv, W.worldTagPose(id)), R = ct.R, t = ct.t; return { id, Hi: inv3(m3(K, [R[0], R[1], t[0], R[3], R[4], t[1], R[6], R[7], t[2]])) }; });
+    const data = new Uint8ClampedArray(CW * CH * 4), half = RUNE.sheet / 2;
+    for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) {
+      let acc = 0;
+      for (let s = 0; s < 4; s++) {
+        const u = x + .25 + .5 * (s & 1), v = y + .25 + .5 * (s >> 1); let val = 90 + 20 * Math.sin(u * .03) * Math.sin(v * .021);
+        for (const { id, Hi } of Hs) { const [X, Y] = project(Hi, u, v); if (Math.abs(X) < half && Math.abs(Y) < half) { val = 225 - 195 * tex[id][Math.min(TEX - 1, Math.floor((half - Y) / RUNE.sheet * TEX)) * TEX + Math.min(TEX - 1, Math.floor((X + half) / RUNE.sheet * TEX))]; break; } }
+        acc += val;
+      }
+      const g = acc / 4 + 3 * gauss(), o = 4 * (y * CW + x); data[o] = data[o + 1] = data[o + 2] = g; data[o + 3] = 255;
+    }
+    const t1 = Date.now(), dets = await detectInImage({ width: CW, height: CH, data }, W.CORNER_IDS), ms = Date.now() - t1;
+    // 4.5 m from 2 m up the far sheets are seen at ~70° from their normal: the inner dots blur away, 2 of 4 still read
+    check(dets.length >= (dist > 4 ? 2 : 4), `phone C at ${dist} m: found ${dets.map(d => d.id)}`);
+    const r = solveCamera(dets, CW, CH, { fovYGuess: fov, fitFocal: 'auto' });
+    if (!r) { check(false, 'no pose'); continue; }
+    const RR = W.mul3(W.tr3(r.pose.R), pose.R), ang = Math.acos(Math.max(-1, Math.min(1, (RR[0] + RR[4] + RR[8] - 1) / 2))) * 180 / Math.PI;
+    const pe = Math.hypot(...r.pose.t.map((v, i) => v - eye[i]));
+    worstPos = Math.max(worstPos, pe); worstAng = Math.max(worstAng, ang); views++;
+    console.log(`phone C ${dist} m: ${dets.length} sheets in ${ms} ms, pose off ${(pe * 100).toFixed(1)} cm ${ang.toFixed(2)} deg, fovY ${r.fovY?.toFixed(1)}`);
+  }
+  check(worstPos < 0.1 && worstAng < 1, `phone C pose from RuneTags: worst ${worstPos.toFixed(3)} m ${worstAng.toFixed(2)} deg`);
+}
+console.log(`${n - fails}/${n} checks passed`);
 process.exit(fails ? 1 : 0);

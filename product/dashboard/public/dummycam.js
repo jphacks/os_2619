@@ -5,6 +5,7 @@
 import * as THREE from 'three'; // resolved by the page's importmap (local ./cdn copy on index.html)
 import * as W from './world.js';
 import { createDummyMotion } from './dummy-motion.js';
+import { RUNE, runePrims } from './runetag.js';
 
 // ---- tag36h11 ----
 // Codes for ids 0-11 (AprilRobotics Tag36h11.java; same as js-aruco2 / OpenCV DICT_APRILTAG_36h11).
@@ -27,10 +28,27 @@ export function tagGrid(id) {
 }
 /** Tag image on a canvas, `cell` px per cell (10 cells incl. quiet zone). Print it so the black square is TAGS[id].size. */
 export function tagCanvas(id, cell = 32) {
+  if (W.isRune(id)) return runeCanvas(id, Math.max(10 * cell, 640));
   const g = tagGrid(id), cv = document.createElement('canvas');
   cv.width = cv.height = 10 * cell;
   const x = cv.getContext('2d');
   for (let r = 0; r < 10; r++) for (let k = 0; k < 10; k++) { x.fillStyle = g[r][k] ? '#fff' : '#000'; x.fillRect(k * cell, r * cell, cell, cell); }
+  return cv;
+}
+
+/** The whole printed RuneTag sheet (250 mm, = TAGS[id].size x 10/8 like a tag's paper) on an n x n canvas. */
+function runeCanvas(id, n) {
+  const cv = document.createElement('canvas'), x = cv.getContext('2d'), k = n / RUNE.sheet;
+  cv.width = cv.height = n;
+  x.fillStyle = '#fff'; x.fillRect(0, 0, n, n);
+  x.setTransform(k, 0, 0, -k, n / 2, n / 2); // marker frame (m, y up) -> pixels
+  x.fillStyle = x.strokeStyle = '#000'; x.lineCap = x.lineJoin = 'round';
+  for (const p of runePrims(id)) {
+    x.beginPath();
+    if (p.t === 'path') { p.p.forEach((q, i) => x[i ? 'lineTo' : 'moveTo'](...q)); if (p.closed) x.closePath(); }
+    else x.arc(p.c[0], p.c[1], p.r, 0, 2 * Math.PI);
+    if (p.t === 'disc') x.fill(); else { x.lineWidth = p.w; x.stroke(); }
+  }
   return cv;
 }
 

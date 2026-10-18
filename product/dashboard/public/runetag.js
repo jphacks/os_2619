@@ -241,6 +241,7 @@ function detectPass(B, w, h, ids) {
   B.sort((p, q) => q.n - p.n);
   const byX = B.map((b, i) => i).sort((i, j) => B[i].x - B[j].x), xs = byX.map(i => B[i].x);
   const lower = v => { let lo = 0, hi = xs.length; while (lo < hi) { const m = (lo + hi) >> 1; if (xs[m] < v) lo = m + 1; else hi = m; } return lo; };
+  const near = (x, y, r, cb) => { for (let t = lower(x - r); t < xs.length && xs[t] <= x + r; t++) if (Math.abs(B[byX[t]].y - y) <= r) cb(byX[t]); };
   const used = new Uint8Array(B.length), out = [];
   for (let si = 0; si < B.length && si < 400; si++) {
     if (used[si]) continue;
@@ -263,7 +264,7 @@ function detectPass(B, w, h, ids) {
       if (!best || inl.length > best.length) best = inl;
     }
     if (!best || best.length < 5) continue;
-    const ringIdx = [si, ...best.map(o => o.i)], m = readMarker(B, ringIdx, w, h, ids);
+    const ringIdx = [si, ...best.map(o => o.i)], m = readMarker(B, near, ringIdx, w, h, ids);
     if (!m) continue;
     for (const i of m.used) used[i] = 1;
     delete m.used; out.push(m);
@@ -277,7 +278,7 @@ const mulT = (M, C) => { // M C Mᵀ for symmetric 2x2 [a, b, c]
   return [x * a + y * b, x * b + y * c, z * b + u * c];
 };
 /** One ring's dots found: order them round the ring, try each ring index, read all 54 slots through the homography, decode. */
-function readMarker(B, ringIdx, w, h, ids) {
+function readMarker(B, near, ringIdx, w, h, ids) {
   const P = ringIdx.map(i => [B[i].x, B[i].y]), e = fitEllipse(P);
   if (!e) return null;
   const R = sqrtSym(e.M), ang = P.map(p => { const q = mul2(R, p[0] - e.c[0], p[1] - e.c[1]); return { r: Math.hypot(...q), a: Math.atan2(q[1], q[0]) }; });
@@ -295,7 +296,7 @@ function readMarker(B, ringIdx, w, h, ids) {
   for (let k = 0; k < K; k++) {
     let H = homography(sec.map(s => slotPos(k, s)), P), read = null;
     for (let it = 0; it < 3; it++) {
-      read = readSlots(B, H, w, h);
+      read = readSlots(B, near, H, w, h);
       if (read.hits.length < 6) break;
       H = homography(read.hits.map(o => slotPos(o.k, o.j)), read.hits.map(o => [B[o.i].x, B[o.i].y]));
     }
@@ -312,7 +313,7 @@ function readMarker(B, ringIdx, w, h, ids) {
   // the true sector numbers from here on; read again through the refitted homography, keeping only dots where the code has one
   let hits = best.read.hits.map(o => ({ ...o, j: (o.j + best.r) % S })).filter(o => code[o.j] >> o.k & 1), err = best.err;
   for (let it = 0; it < 2 && hits.length >= 8; it++) {
-    const rd = readSlots(B, fit(hits), w, h);
+    const rd = readSlots(B, near, fit(hits), w, h);
     err = 0; for (let k = 0; k < K; k++) for (let j = 0; j < S; j++) { const b = rd.bits[k * S + j]; if (b >= 0 && b !== (code[j] >> k & 1)) err++; }
     hits = rd.hits.filter(o => code[o.j] >> o.k & 1);
   }
@@ -323,7 +324,7 @@ function readMarker(B, ringIdx, w, h, ids) {
   return { id: best.id, corners, err, n: hits.length, rms, used: [...best.read.hits, ...hits].map(o => o.i) };
 }
 /** Look for a dot at every slot through H: bits (1 dot, 0 none, -1 off the picture) and the dots it found. */
-function readSlots(B, H, w, h) {
+function readSlots(B, near, H, w, h) {
   const bits = new Int8Array(S * K).fill(-1), hits = []; let known = 0;
   for (let k = 0; k < K; k++) for (let j = 0; j < S; j++) {
     const [x, y] = slotPos(k, j), c = project(H, x, y);
@@ -333,10 +334,10 @@ function readSlots(B, H, w, h) {
     if (e < 1.2) continue; // too small to see: unknown, not empty
     known++; bits[k * S + j] = 0;
     const tol = Math.max(1.5, .9 * Math.max(er, et)); let bi = -1, bd = tol;
-    for (let i = 0; i < B.length; i++) {
-      const b = B[i], d = Math.hypot(b.x - c[0], b.y - c[1]); if (d >= bd) continue;
+    near(c[0], c[1], tol, i => {
+      const b = B[i], d = Math.hypot(b.x - c[0], b.y - c[1]); if (d >= bd) return;
       const rb = Math.sqrt(b.n / Math.PI); if (rb > .5 * e && rb < 2 * e + 1) { bd = d; bi = i; }
-    }
+    });
     if (bi >= 0) { bits[k * S + j] = 1; hits.push({ k, j, i: bi }); }
   }
   return { bits, hits, known };

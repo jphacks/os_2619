@@ -1,5 +1,8 @@
 // tag36h11 detection core, shared by the page (extrinsics.js) and the detection worker (tagworker.js): no DOM needed.
 // js-aruco2 (tag36h11 dictionary) finds the quads, corners are refined here (edge lines, then a photometric fit of the whole tag).
+// In RuneTag mode (world.js isRune) the floor sheets 0-3 are read by runetag.js instead, in the same output shape.
+import { isRune } from './world.js';
+import { RUNE_IDS, detectRunes } from './runetag.js';
 
 // js-aruco2 from the serve.mjs cache (cdn/..., works offline once fetched) first, the CDN itself when served by something else
 const ARUCO = [new URL('./cdn/npm/js-aruco2@2.0.0/src/', import.meta.url).href, 'https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/'];
@@ -175,14 +178,18 @@ export const PASSES = [[1, 2], [1, 6], [2, 4], [2, 12], [3, 6], [3, 18], [4, 8]]
 /**
  * Detect tag36h11 tags in a grab()bed frame: [{ id, hamming, coarse, scale, corners: [[u,v] x4], misfit }] with corners in
  * OpenCV order (tag (-h,h), (h,h), (h,-h), (-h,-h)). Tries `passes` in order while some of `ids` are still missing.
+ * RuneTag sheets come first, from one full-size pass (hamming: bits off the code, misfit: dot reprojection RMS px / 10).
  */
 export async function detectInImage(img, ids = null, passes = PASSES) {
-  const det = await detector(), I = sampler(greyOf(img), img.width, img.height);
-  const out = [], big = {};
+  const g = greyOf(img), out = [], rune = (ids ?? RUNE_IDS).filter(isRune);
+  if (rune.length) for (const m of detectRunes(g, img.width, img.height, { ids: rune }))
+    out.push({ id: m.id, hamming: m.err, coarse: m.corners, scale: 1, corners: m.corners, misfit: m.rms / 10 });
+  if (ids && ids.every(id => isRune(id))) return out; // nothing left for js-aruco2
+  const det = await detector(), I = sampler(g, img.width, img.height), big = {};
   for (const [s, rad] of passes) {
     if (ids && ids.every(id => out.some(o => o.id === id))) break;
     for (const m of arucoDetect(det, s === 1 ? img : (big[s] ??= upscaled(img, s)), rad)) {
-      if ((ids && !ids.includes(m.id)) || out.some(o => o.id === m.id)) continue;
+      if ((ids && !ids.includes(m.id)) || isRune(m.id) || out.some(o => o.id === m.id)) continue;
       const q = [0, 1, 2, 3].map(k => { const c = m.corners[[0, 1, 2, 3].find(j => ARUCO_TO_CV(j) === k)]; return [(c.x + .5) / s, (c.y + .5) / s]; });
       const r = photoRefine(I, refineQuad(I, q), gridOf(det, m.id));
       if (r.misfit < 1) out.push({ id: m.id, hamming: m.hammingDistance, coarse: q, scale: s, ...r });
