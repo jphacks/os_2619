@@ -75,6 +75,7 @@ let phones = [];
 playable.onChange(() => game.setOnline(playable.withSelf(phones)));
 
 hub.on(k => {
+  if (k.type === 'marker') { if (k.marker !== W.MARKER) location.reload(); return; } // world.js fixed its tag table at load: start over with the new one
   PA.ingest(k); smap.ingest(k);
   if (k.type === 'phones') { phones = k.list; game.setOnline(playable.withSelf(k.list)); return; }
   connect.ingest(k); game.ingest(k);

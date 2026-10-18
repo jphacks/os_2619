@@ -93,6 +93,10 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
       <div class="urls kv"></div><div class="qrs"></div>
       <p class="kv" style="font-size:12px;margin:10px 0 0">A・B：SensorLink アプリの LAN 欄に IP とポート 8000 を入れて接続（先につないだ方が A）。C：ブラウザで QR のページを開いて「開始」。初回は証明書のページの手順で信頼させる。</p>
     </section>
+    <section class="card"><header><h2>床のマーカー</h2><span class="sub">全体の設定（ID 0-3）</span></header>
+      <div class="seg marker"><button data-v="april">AprilTag</button><button data-v="rune">RuneTag</button></div>
+      <p class="kv" style="font-size:12px;margin:8px 0 0">AprilTag：200 mm の紙（黒い正方形 160 mm）。RuneTag：250 mm の紙（product/print/runetags_A3.pdf）。どちらも 4 枚を端から端まで並べる。切り替えるとサーバーが保存し、スマホ A・B に送り、開いているページは読み直す。胸のタグ 8-11 は AprilTag のまま。</p>
+    </section>
     <section class="card"><header><h2>動作の判定</h2><span class="sub">棒の IMU と胸のスマホから</span></header>
       <ul class="actions"></ul>
       <h3>棒の軸</h3>
@@ -102,6 +106,10 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
     </section>
     <section class="card"><header><h2>履歴</h2><span class="sub">新しい順</span></header><ul class="history"><li class="kv empty">まだありません</li></ul></section>`;
   const sq = c => side.querySelector(c);
+  for (const b of side.querySelectorAll('.marker button')) {
+    b.classList.toggle('on', b.dataset.v === W.MARKER);
+    b.onclick = () => { if (b.dataset.v !== W.MARKER && confirm(`床のマーカーを ${b.textContent} に切り替えます（全体・ページは読み直し）`)) hub.send({ type: 'setMarker', marker: b.dataset.v }); };
+  }
   for (const inp of side.querySelectorAll('.sticks input')) {
     inp.value = cfg.stickLen[inp.dataset.s];
     inp.oninput = () => { if (+inp.value > 0) onStick(inp.dataset.s, +inp.value); };

@@ -23,6 +23,7 @@ export function createHub() {
 
   function connect() {
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+    hub.send = k => ws.readyState === 1 && ws.send(JSON.stringify(k));
     ws.onopen = () => { ws.send(JSON.stringify({ type: 'hello', role: 'dashboard', id: 'product-' + Math.random().toString(36).slice(2, 8) })); hub.link = 'open'; };
     ws.onclose = () => {
       hub.link = 'closed';
@@ -33,7 +34,8 @@ export function createHub() {
     ws.onmessage = m => {
       if (typeof m.data !== 'string') return;
       let k; try { k = JSON.parse(m.data); } catch { return; }
-      if (k.type === 'phones') {
+      if (k.type === 'marker') hub.marker = k.marker; // the floor sheets' marker (server.mjs); app.js reloads when it differs from world.js
+      else if (k.type === 'phones') {
         for (const [id, s] of Object.entries(st)) {
           const p = k.list.find(q => q.slot === id);
           s.online = !!p; s.name = p?.name ?? ''; s.addr = p?.addr ?? '';
