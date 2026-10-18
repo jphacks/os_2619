@@ -148,7 +148,9 @@ gameCtrl.innerHTML = `
     <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">小の玉の大きさ <input data-rule="size.s" type="number" min="0.2" max="4" step="0.1"> 倍</label>
     <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">中の玉の大きさ <input data-rule="size.m" type="number" min="0.2" max="4" step="0.1"> 倍</label>
     <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">大の玉の大きさ <input data-rule="size.l" type="number" min="0.2" max="4" step="0.1"> 倍</label>
-    <div class="row"><button id="rulesReset">初期値に戻す</button><span class="muted" id="rulesNote"></span></div>
+    <div class="row"><button id="rulesSave" class="go" title="この PC のサーバーに保存。次に開いたとき（別のブラウザでも）この値で始まる">パラメータを保存</button><button id="rulesLoad" title="サーバーに保存した値に戻す">保存した値を読み込む</button><button id="rulesReset">初期値に戻す</button></div>
+    <div class="row"><span class="muted" id="rulesSaved" style="font-size:12px"></span></div>
+    <div class="row"><span class="muted" id="rulesNote"></span></div>
   </div>
   <h3>エフェクトを試す</h3>
   <div class="seg" id="fxStyles"><button data-fxstyle="smash">プログラム版</button><button data-fxstyle="textured">画像素材版</button><button data-fxstyle="classic">いつもの</button></div>
@@ -190,6 +192,22 @@ for (const b of gameCtrl.querySelectorAll('[data-fxcharge]')) {
   b.onpointerup = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: false, fire: true });
   b.onpointerleave = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: false });
 }
+// the numbers saved on this PC's server (server.mjs /rules -> rules.json): loaded once at start (they win over this browser's), saved with the button
+const mergeRules = r => ({ ...RULES, ...r, dmg: { ...RULES.dmg, ...r?.dmg }, size: { ...RULES.size, ...r?.size } });
+const rulesMsg = t => { $('#rulesSaved').textContent = t; };
+async function loadSavedRules(quiet) {
+  try {
+    const r = await fetch('/rules', { cache: 'no-store' }); if (r.status === 404) { if (!quiet) rulesMsg('サーバーに保存した値はまだない'); return; }
+    if (!r.ok) throw new Error(r.status); cfg.rules = mergeRules(await r.json()); save(); showRules();
+    rulesMsg(quiet ? 'サーバーに保存した値で始めた' : '保存した値を読み込んだ');
+  } catch (e) { if (!quiet) rulesMsg('読み込めなかった（' + e.message + '）'); }
+}
+$('#rulesSave').onclick = async () => {
+  try { const r = await fetch('/rules', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg.rules) }); if (!r.ok) throw new Error(r.status);
+    rulesMsg('保存した（' + new Date().toLocaleTimeString() + '）'); } catch (e) { rulesMsg('保存できなかった（' + e.message + '）'); }
+};
+$('#rulesLoad').onclick = () => loadSavedRules(false);
+loadSavedRules(true);
 $('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg }, size: { ...RULES.size } }; save(); showRules(); };
 showRules();
 for (const pc of gameCtrl.querySelectorAll('.pc')) for (const b of pc.querySelectorAll('[data-act]')) {

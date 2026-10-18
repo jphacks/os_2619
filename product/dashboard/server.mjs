@@ -216,12 +216,23 @@ function info(host) {
     urls: { dashboard: `http://${base}/`, camera: `https://${base}/cam.html`, trust: `http://${base}/trust.html`, ca: `http://${base}/ca.crt`, sensorApp: base, host },
   };
 }
+// the game screen's numbers saved on this PC (rules.json next to server.mjs, not in git): GET -> them (404 when none), POST <- them
+const RULES_FILE = join(root, 'rules.json');
+async function rulesFile(req, res) {
+  const json = { 'content-type': 'application/json', 'cache-control': 'no-store' };
+  if (req.method === 'GET') { let body; try { body = await readFile(RULES_FILE); } catch { return res.writeHead(404, json).end('null'); } return res.writeHead(200, json).end(body); }
+  if (req.method !== 'POST') return res.writeHead(405).end();
+  let body = ''; for await (const c of req) { body += c; if (body.length > 64e3) return res.writeHead(413).end(); }
+  try { const r = JSON.parse(body); if (!r || typeof r !== 'object' || Array.isArray(r)) throw 0; await writeFile(RULES_FILE, JSON.stringify(r, null, 2)); log('rules: saved to rules.json'); return res.writeHead(200, json).end('{"ok":true}'); }
+  catch { return res.writeHead(400, json).end('{"ok":false}'); }
+}
 async function onRequest(req, res) {
   try {
     // posix: '/' stays '/' on Windows too; backslashes become '/' first so they can't climb out of the folder
     let path = posix.normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/\\/g, '/')).replace(/^(\.\.[/\\])+/, '');
     if ((path === '/ca.pem' || path === '/ca.crt') && tls) return res.writeHead(200, { 'content-type': path.endsWith('.pem') ? 'application/x-pem-file' : 'application/x-x509-ca-cert', 'cache-control': 'no-store' }).end(tls.ca);
     if (path === '/info') return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(info(req.headers.host)));
+    if (path === '/rules') return rulesFile(req, res);
     if (path.startsWith('/cdn/')) {
       const p = path.slice(5);
       if (!pinned(p)) return res.writeHead(404).end();

@@ -4,3 +4,5 @@ cert/
 # MediaPipe's wasm and models (~20 MB): server.mjs downloads them into vendor/cdn on first use
 vendor/cdn/npm/@mediapipe/
 vendor/cdn/mp-models/
+# the game screen numbers saved with 3 ゲーム > パラメータを保存 (per PC)
+rules.json
