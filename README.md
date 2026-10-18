@@ -6,6 +6,8 @@
 
 チーム「チャオベン最強伝説」（os_2619）: 橋本康佑（チャオベン）・富本康太・河島航・相良拓海
 
+🏆 JPHACKS 2026 Hack Day の大阪会場で、オーディエンス投票により **Hack Day Audience Award** をいただきました。
+
 ## 各種リンク
 
 - デモ動画URL（CM 動画）: https://www.youtube.com/watch?v=7773MsnY1Ag
