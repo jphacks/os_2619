@@ -32,6 +32,8 @@ class Link(private val id: String, private val name: String) {
     /** PC clock minus phone clock, in seconds (lowest-RTT ping wins). */
     @Volatile var offset = 0.0; private set
     @Volatile var rttMs = 0.0; private set
+    /** The floor sheets' marker the PC chose: "april" or "rune" (Rune.kt reads ids 0-3 then). Older servers say nothing: april. */
+    @Volatile var marker = "april"; private set
 
     /** Phone wall time converted to the PC clock, seconds. */
     fun pcTime(wallMs: Long = System.currentTimeMillis()) = wallMs / 1000.0 + offset
@@ -80,7 +82,8 @@ class Link(private val id: String, private val name: String) {
                     if (rtt <= bestRtt) { bestRtt = rtt; offset = k.getDouble("ts") - (t0 + t1) / 2 }
                     rttMs = rtt * 1000
                 }
-                "welcome" -> { slot = k.optString("slot", "-"); status = "connected" }
+                "welcome" -> { slot = k.optString("slot", "-"); marker = k.optString("marker", "april"); status = "connected" }
+                "marker" -> marker = k.optString("marker", marker)
                 "full" -> status = "PC already has 2 phones"
             }
         }

@@ -23,10 +23,11 @@ class Frame(val bmp: Bitmap, val t: Double, val fx: Double, val fy: Double, val 
 fun r4(x: Double) = round(x * 1e4) / 1e4
 fun r4(x: Float) = r4(x.toDouble())
 
-/** Black-square size (m) of every tag. The printed paper is 200 mm square with a white margin of a tenth on each side, so the black square is 160 mm. */
-fun tagSizeOf(id: Int) = 0.16
+/** Black-square size (m) of every tag. The printed paper is 200 mm square with a white margin of a tenth on each side, so the black square is 160 mm.
+ *  A RuneTag (marker rune, ids 0-3) reports the corners of its virtual 200 mm square instead (Rune.SQUARE). */
+fun tagSizeOf(id: Int, rune: Boolean = false) = if (rune && id in Rune.IDS) Rune.SQUARE else 0.16
 
-/** AprilTag tag36h11 via OpenCV's aruco module, pose by solvePnP. Positions in the OpenCV camera frame (x right, y down, z forward), metres. */
+/** AprilTag tag36h11 via OpenCV's aruco module (and RuneTags 0-3 via Rune.kt when [rune]), pose by solvePnP. Positions in the OpenCV camera frame (x right, y down, z forward), metres. */
 class TagDetector {
     private val det = ArucoDetector(
         Objdetect.getPredefinedDictionary(Objdetect.DICT_APRILTAG_36h11),
@@ -35,18 +36,26 @@ class TagDetector {
     private val rgba = Mat()
     private val gray = Mat()
 
-    fun detect(f: Frame): JSONArray {
+    fun detect(f: Frame, rune: Boolean = false): JSONArray {
         Utils.bitmapToMat(f.bmp, rgba)
         Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+        val found = ArrayList<Pair<Int, FloatArray>>() // id, corners (x, y) x 4 in OpenCV order
+        if (rune) {
+            val g = ByteArray(gray.cols() * gray.rows()).also { gray.get(0, 0, it) }
+            for (m in Rune.detect(g, gray.cols(), gray.rows())) found.add(m.id to FloatArray(8) { m.corners[it].toFloat() })
+        }
         val corners = ArrayList<Mat>()
         val ids = Mat()
         det.detectMarkers(gray, corners, ids)
+        for (i in 0 until ids.rows()) {
+            val id = ids.get(i, 0)[0].toInt()
+            if (!(rune && id in Rune.IDS)) found.add(id to FloatArray(8).also { corners[i].get(0, 0, it) })
+            corners[i].release()
+        }
         val out = JSONArray()
         val k = Mat(3, 3, CvType.CV_64F).apply { put(0, 0, f.fx, 0.0, f.cx, 0.0, f.fy, f.cy, 0.0, 0.0, 1.0) }
-        for (i in 0 until ids.rows()) {
-            val c = FloatArray(8).also { corners[i].get(0, 0, it) }
-            val id = ids.get(i, 0)[0].toInt()
-            val size = tagSizeOf(id)
+        for ((id, c) in found) {
+            val size = tagSizeOf(id, rune)
             val h = size / 2
             val obj = MatOfPoint3f(Point3(-h, h, 0.0), Point3(h, h, 0.0), Point3(h, -h, 0.0), Point3(-h, -h, 0.0))
             val rvec = Mat(); val tvec = Mat()
@@ -59,7 +68,7 @@ class TagDetector {
                 tag.put("r", JSONArray().put(r4(rvec.get(0, 0)[0])).put(r4(rvec.get(1, 0)[0])).put(r4(rvec.get(2, 0)[0])))
             }
             out.put(tag)
-            rvec.release(); tvec.release(); obj.release(); corners[i].release()
+            rvec.release(); tvec.release(); obj.release()
         }
         ids.release(); k.release()
         return out

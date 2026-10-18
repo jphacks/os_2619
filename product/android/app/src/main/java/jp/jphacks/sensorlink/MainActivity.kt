@@ -265,7 +265,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         overlay.postInvalidate()
 
         tagW.offer {
-            val r = (tagDet ?: TagDetector().also { tagDet = it }).detect(fr)
+            val r = (tagDet ?: TagDetector().also { tagDet = it }).detect(fr, link.marker == "rune")
             tags = r
             link.send(JSONObject().put("type", "tags").put("t", fr.t).put("tags", r)
                 .put("k", JSONArray().put(r4(fr.fx / fr.bmp.width)).put(r4(fr.fy / fr.bmp.height)).put(r4(fr.cx / fr.bmp.width)).put(r4(fr.cy / fr.bmp.height))))
@@ -322,7 +322,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     }
 
     fun statusLines() = listOf(
-        "LAN: ${link.status}  slot ${link.slot}  rtt %.0f ms".format(link.rttMs),
+        "LAN: ${link.status}  slot ${link.slot}  rtt %.0f ms  floor tags: ${if (link.marker == "rune") "RuneTag" else "AprilTag"}".format(link.rttMs),
         "IMU: ${imu.status}" + (imu.last?.let { "  %.0f Hz  p %.0f r %.0f y %.0f".format(imu.hz, it.euler[0], it.euler[1], it.euler[2]) } ?: ""),
         arError ?: arText,
         "Hz  cam %.0f  tag %.0f".format(convertW.hz, tagW.hz),
