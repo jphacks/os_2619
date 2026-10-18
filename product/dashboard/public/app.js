@@ -1,4 +1,4 @@
-// 棒バトル ダッシュボード: one page, four screens, one match.
+// Full Stick ダッシュボード: one page, four screens, one match.
 //   1 接続     phones A / B (SensorLink app over /ws) and phone C (cam.html over /cam), everything they send
 //   2 3D空間   phones, swords and AprilTags in the field world (phonealign.js), dark and raw
 //   3 ゲーム   the match in the stylised 3D arena: magic attacks (小・中・大), charge meters, HP, timer (game.js + stage.js)
