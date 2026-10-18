@@ -145,15 +145,16 @@
   .hud { position: absolute; inset: 0; pointer-events: none; font-weight: 600; }
   .hud .pl { position: absolute; top: 14px; width: 34%; text-shadow: 0 0 8px #000; }
   .hud .pl.A { left: 18px; } .hud .pl.B { right: 18px; text-align: right; }
-  .hud .name { display: flex; gap: 10px; align-items: baseline; font-size: 15px; font-weight: 600; letter-spacing: .08em; }
+  .hud .name { display: flex; gap: 10px; align-items: baseline; font-size: 20px; font-weight: 600; letter-spacing: .08em; }
   .hud .pl.B .name { flex-direction: row-reverse; }
   .hud .name small { font-size: 11px; font-weight: 400; color: #8a8f99; }
-  .hud .name .hpn { margin-left: auto; font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .hud .name .hpn { margin-left: auto; font-size: 22px; font-weight: 700; font-weight: 500; font-variant-numeric: tabular-nums; }
   .hud .pl.B .name .hpn { margin-left: 0; margin-right: auto; }
   .hud .meter { height: 4px; background: rgba(255,255,255,.1); overflow: hidden; margin-top: 6px; position: relative; }
   .hud .meter i { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; transition: width .15s; }
   .hud .pl.B .meter i { left: auto; right: 0; }
   .hud .pl.A .hp i { background: var(--A); } .hud .pl.B .hp i { background: var(--B); }
+  .hud .meter.hp { height: 18px; border-radius: 4px; background: rgba(255,255,255,.14); box-shadow: 0 0 0 2px rgba(0,0,0,.5); } /* thick and easy to read from a distance */
   .hud .meter.ch { height: 2px; margin-top: 3px; overflow: visible; }
   .hud .meter.ch i { transition: none; background: #fff6; }
   .hud .meter.ch { position: relative; }

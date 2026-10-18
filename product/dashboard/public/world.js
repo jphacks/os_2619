@@ -14,7 +14,7 @@
 // - imu:   `imu.q` ([w,x,y,z]) is the IMU orientation relative to calibration, in the IMU body frame at calibration.
 //          Calibration pose: stick held forward and level. Which IMU axes point along the stick / up is in STICK.
 
-export const ARENA = { half: 2 };   // 4 m x 4 m
+export const ARENA = { half: 4 };   // 8 m x 8 m
 export const CHEST_H = 1.3;          // chest phone / chest tag height, m
 export const START = { A: { pos: [-1.2, 0, 0], yaw: 0 }, B: { pos: [1.2, 0, 0], yaw: Math.PI } }; // yaw 0 = facing +x
 export const PHONE_TAG_SIZE = 0.1;   // old app only: the one size typed into the phone; tags with `sz` (new app) are already metric
@@ -33,7 +33,7 @@ export const STICK = { len: 1.0, axis: [0, 1, 0], up: [0, 0, 1], hand: { fwd: 0.
 //        camera the page reads upright (the caption under the tag is the edge nearest the camera).
 // flip: printed in the official apriltag-imgs orientation, which OpenCV reads rotated 180° about the tag normal
 //       (our print/make_tags.py PDFs are in OpenCV's orientation and need no flip). Mount sheets upright as printed.
-const H = ARENA.half;
+const H = 2; // the full / today tag poles stay where they were put (2 m out); the play area (ARENA) is bigger
 // map4 = four floor sheets, ids 0-3, laid edge to edge as one big square in the middle of the room, clockwise seen from above:
 // 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left, every sheet upright (its top edge towards -z). The origin is the middle of
 // the big square. The positions are fixed, not measured: PITCH is the distance between the centres of neighbouring sheets
@@ -86,7 +86,7 @@ if (typeof location !== 'undefined' && LAYOUT === 'floor') { // the two-sheet la
 // map4 sheets replaces it (setField). START, ARENA.half (largest extent, for the old square-minded code) follow it.
 // Listeners (onFieldChange) rebuild whatever they drew from the old outline.
 export const FIELD = { // until a scan: map4's placeholder sheets, else the ARENA square
-  poly: [[-H, -H], [H, -H], [H, H], [-H, H]], // map4: the sheets sit in the middle, the play area is the ARENA square around them
+  poly: [[-ARENA.half, -ARENA.half], [ARENA.half, -ARENA.half], [ARENA.half, ARENA.half], [-ARENA.half, ARENA.half]], // map4: the sheets sit in the middle, the play area is the ARENA square around them
 };
 const fieldListeners = new Set();
 export const onFieldChange = cb => { fieldListeners.add(cb); return () => fieldListeners.delete(cb); };
@@ -103,8 +103,8 @@ export function setField({ poly, tags = {} }) {
   const xs = poly.map(p => p[0]), zs = poly.map(p => p[1]);
   const minX = Math.min(...xs), maxX = Math.max(...xs);
   ARENA.half = Math.max(maxX, -minX, ...zs.map(Math.abs));
-  const inset = Math.min(.9, (maxX - minX) * .22); // start marks a little in from the A / B ends
-  START.A.pos = [minX + inset, 0, 0]; START.B.pos = [maxX - inset, 0, 0];
+  const inset = Math.min(.9, (maxX - minX) * .22); // start marks a little in from the A / B ends, but never more than ~2.2 m apart
+  START.A.pos = [Math.max(minX + inset, -1.12), 0, 0]; START.B.pos = [Math.min(maxX - inset, 1.12), 0, 0]; // (the 8 m field would put them 6 m apart)
   for (const cb of fieldListeners) cb(FIELD);
 }
 if (FIXED_FIELD) setField({ poly: FIELD.poly }); // START / ARENA from the fixed square, without calling it scanned

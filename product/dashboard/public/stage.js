@@ -91,7 +91,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
 
   // ---- field scan (map4: 2 or 4 sheets anywhere, fieldmap.js) ----
   function applyField(f) { S.scanned = true; if (f.tags && Object.keys(f.tags).length) S.scannedIds = Object.keys(f.tags).map(Number); W.setField(f); }
-  try { const f = JSON.parse(localStorage.getItem(FIELD_KEY)); if (f?.poly) applyField(f); } catch {}
+  try { const f = JSON.parse(localStorage.getItem(FIELD_KEY)); if (f?.poly) applyField(W.FIXED_FIELD ? { ...f, poly: W.FIELD.poly.map(p => [...p]) } : f); } catch {} // fixed layout: the outline is the code's (a saved one may be an older size)
   try { S.tagCam = JSON.parse(localStorage.getItem(CAM_KEY)); } catch {}
   buildGuide();
   const saveField = () => { try { localStorage.setItem(FIELD_KEY, JSON.stringify({ poly: W.FIELD.poly, tags: Object.fromEntries((S.scannedIds ?? W.CORNER_IDS).map(id => { const T = W.TAGS[id]; return [id, { pos: T.pos, yaw: T.yaw ?? 0, ...(T.stand ? { stand: true, spin: T.spin ?? 0, R: T.R } : {}) }]; })) })); } catch {} };
