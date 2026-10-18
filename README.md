@@ -1,6 +1,8 @@
 # Full Stick
 
 <!-- ヘッダー画像をここに貼る -->
+<img width="1920" height="1080" alt="fullstick_photo_logo" src="https://github.com/user-attachments/assets/d9873445-7496-4eac-9af3-f32de4267488" />
+
 
 ## 各種リンク
 
