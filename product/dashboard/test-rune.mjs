@@ -71,7 +71,9 @@ console.log(`${cases.length - miss.length}/${cases.length} found, ${((Date.now()
 {
   process.env.MARKER = 'rune';
   const W = await import('./public/world.js'), { detectInImage } = await import('./public/tagdetect.js'), { solveCamera } = await import('./public/extrinsics.js');
-  check(W.MARKER === 'rune' && W.TAGS[0].size === RUNE.square && W.TAG_PITCH === RUNE.sheet, 'world.js did not switch to RuneTag');
+  check(W.MARKER === 'rune' && Math.abs(W.TAGS[0].size - W.PRINTED.rune * .8) < 1e-12 && W.TAG_PITCH === W.PRINTED.rune, 'world.js did not switch to RuneTag');
+  // the app measures a RuneTag at its drawn 200 mm square; the 246 mm print makes it 196.8 mm, so distances scale by 0.984 (not 1/1.12)
+  check(Math.abs(W.tagScale(0, RUNE.square) - W.PRINTED.rune / RUNE.sheet) < 1e-12, `RuneTag distance factor ${W.tagScale(0, RUNE.square)}`);
   const CW = 1920, CH = 1080, fov = 40, f = CH / 2 / Math.tan(fov * Math.PI / 360), K = [f, 0, CW / 2, 0, f, CH / 2, 0, 0, 1];
   const lookAt = (eye, tgt) => {
     const sub = (a, b) => a.map((v, i) => v - b[i]), cr = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]], nz = a => a.map(v => v / Math.hypot(...a));
@@ -83,12 +85,12 @@ console.log(`${cases.length - miss.length}/${cases.length} found, ${((Date.now()
   for (const [dist, hgt, az] of [[2.5, 1.5, .3], [3.5, 1.7, -.5], [4.5, 2.0, .1]]) {
     const eye = [dist * Math.sin(az), hgt, dist * Math.cos(az)], pose = lookAt(eye, [0, 0, 0]), inv = W.invert(pose);
     const Hs = W.CORNER_IDS.map(id => { const ct = W.compose(inv, W.worldTagPose(id)), R = ct.R, t = ct.t; return { id, Hi: inv3(m3(K, [R[0], R[1], t[0], R[3], R[4], t[1], R[6], R[7], t[2]])) }; });
-    const data = new Uint8ClampedArray(CW * CH * 4), half = RUNE.sheet / 2;
+    const data = new Uint8ClampedArray(CW * CH * 4), half = W.PRINTED.rune / 2; // printed (and measured) at 246 mm, not the drawn 250
     for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) {
       let acc = 0;
       for (let s = 0; s < 4; s++) {
         const u = x + .25 + .5 * (s & 1), v = y + .25 + .5 * (s >> 1); let val = 90 + 20 * Math.sin(u * .03) * Math.sin(v * .021);
-        for (const { id, Hi } of Hs) { const [X, Y] = project(Hi, u, v); if (Math.abs(X) < half && Math.abs(Y) < half) { val = 225 - 195 * tex[id][Math.min(TEX - 1, Math.floor((half - Y) / RUNE.sheet * TEX)) * TEX + Math.min(TEX - 1, Math.floor((X + half) / RUNE.sheet * TEX))]; break; } }
+        for (const { id, Hi } of Hs) { const [X, Y] = project(Hi, u, v); if (Math.abs(X) < half && Math.abs(Y) < half) { val = 225 - 195 * tex[id][Math.min(TEX - 1, Math.floor((half - Y) / (2 * half) * TEX)) * TEX + Math.min(TEX - 1, Math.floor((X + half) / (2 * half) * TEX))]; break; } }
         acc += val;
       }
       const g = acc / 4 + 3 * gauss(), o = 4 * (y * CW + x); data[o] = data[o + 1] = data[o + 2] = g; data[o + 3] = 255;

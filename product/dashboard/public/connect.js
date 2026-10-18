@@ -95,7 +95,7 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
     </section>
     <section class="card"><header><h2>床のマーカー</h2><span class="sub">全体の設定（ID 0-3）</span></header>
       <div class="seg marker"><button data-v="april">AprilTag</button><button data-v="rune">RuneTag</button></div>
-      <p class="kv" style="font-size:12px;margin:8px 0 0">AprilTag：200 mm の紙（黒い正方形 160 mm）。RuneTag：250 mm の紙（product/print/runetags_A3.pdf）。どちらも 4 枚を端から端まで並べる。切り替えるとサーバーが保存し、スマホ A・B に送り、開いているページは読み直す。胸のタグ 8-11 は AprilTag のまま。</p>
+      <p class="kv" style="font-size:12px;margin:8px 0 0">紙の一辺（印刷後に測った値、world.js の PRINTED）：AprilTag ${W.PRINTED.april * 1000} mm、RuneTag ${W.PRINTED.rune * 1000} mm（product/print/runetags_A3.pdf）。どちらも 4 枚を端から端まで並べる。印刷し直したら測って PRINTED を直す。切り替えるとサーバーが保存し、スマホ A・B に送り、開いているページは読み直す。胸のタグ 8-11 は AprilTag のまま。</p>
     </section>
     <section class="card"><header><h2>動作の判定</h2><span class="sub">棒の IMU と胸のスマホから</span></header>
       <ul class="actions"></ul>

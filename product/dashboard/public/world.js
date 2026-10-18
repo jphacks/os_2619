@@ -40,14 +40,18 @@ const H = ARENA.half;
 // map4 = four floor sheets, ids 0-3, laid edge to edge as one big square in the middle of the room, clockwise seen from above:
 // 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left, every sheet upright (its top edge towards -z). The origin is the middle of
 // the big square. The positions are fixed, not measured: PITCH is the distance between the centres of neighbouring sheets
-// (the paper width when the sheets touch: 200 mm, 250 mm for RuneTags; ?pitch=0.2 or env PITCH overrides it).
-// Sizes: the printed paper is 200 mm (fixed tags) / 50 mm (worn tags 8-11) square, with a white margin of 1/10 of that on each side,
-// so the black square (TAGS[id].size, what the distance maths measures) is 160 mm / 40 mm. tagSquare() draws the paper at size x 10/8.
-// MARKER 'rune': the four map4 sheets are 250 mm RuneTags (print/make_runetags.mjs). Their detectors report the corners of a virtual
-// 200 mm square (RUNE.square), so size 0.2 and the 10/8 paper rule still hold. Worn tags 8-11 and the other layouts stay tag36h11.
-const PITCH = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('pitch')) || (typeof process !== 'undefined' && +process.env?.PITCH) || (MARKER === 'rune' ? RUNE.sheet : 0.2);
+// (the paper width when the sheets touch: PRINTED below; ?pitch=0.2 or env PITCH overrides it).
+// Sizes: a tag36h11 sheet has a white margin of 1/10 of its side on each side, so the black square (TAGS[id].size, what the distance
+// maths measures) is 0.8 x the paper. tagSquare() draws the paper at size x 10/8.
+// MARKER 'rune': the four map4 sheets are RuneTags (print/make_runetags.mjs). Their detectors report the corners of a virtual square
+// of RUNE.square / RUNE.sheet = 0.8 of the sheet, so the same 10/8 paper rule holds. Worn tags 8-11 and the other layouts stay tag36h11.
+// PRINTED: the sheets' sides as measured with a ruler after printing and cutting (printers scale: the "200 mm" AprilTags came out
+// 180 mm, the 250 mm RuneTags 246 mm). Every size below follows from these, so a new print only needs a new measurement here.
+export const PRINTED = { april: 0.18, rune: 0.246 };
+const SHEET = PRINTED[MARKER];
+const PITCH = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('pitch')) || (typeof process !== 'undefined' && +process.env?.PITCH) || SHEET;
 export const TAG_PITCH = PITCH;
-const HP = PITCH / 2, FS = MARKER === 'rune' ? RUNE.square : 0.16; // map4 sheet size
+const HP = PITCH / 2, FS = SHEET * .8; // map4 sheet size (black square / virtual square)
 const LAYOUTS = {
   full: {
     0: { size: 0.16, pos: [-H, CHEST_H, -H] },
@@ -140,10 +144,12 @@ export function inField(x, z) {
   }
   return inside;
 }
-/** Factor from a tag message's p to metres. The app measures each tag at its black-square size (`sz`: 40 mm for the worn tags 8-11,
- *  160 mm for every fixed one), so p is already metric; an old app sends no `sz` and used one size for all (PHONE_TAG_SIZE). */
-export const TAG_DIST_SCALE = 1 / 1.12; // measured: the Android camera read 1.40 m at 1.00 m while assuming the paper size as the black square (200 mm); with the true black square (x 0.8) it reads 1.12 m. Proportional, whatever the id
-export const tagScale = (id, sz) => TAG_DIST_SCALE * (sz ? 1 : (TAGS[id]?.size ?? PHONE_TAG_SIZE) / PHONE_TAG_SIZE);
+/** Factor from a tag message's p to metres. The app measures each tag at the size it assumes (`sz`: 160 mm for tag36h11, a RuneTag's
+ *  virtual square 200 mm); the true size is TAGS[id].size (from PRINTED), so p scales by true / assumed. Tags outside TAGS are taken as
+ *  printed like the AprilTag sheets. An old app sends no `sz` and assumed PHONE_TAG_SIZE for all.
+ *  (This replaces a fixed 1/1.12 found on the 180 mm AprilTag print: 144 / 160 = 1/1.11. Applied to the RuneTags too, it made
+ *  their distances 9% short.) */
+export const tagScale = (id, sz) => (TAGS[id]?.size ?? PRINTED.april * .8) / (sz || PHONE_TAG_SIZE);
 
 // ---- small pose maths ----
 export const I3 = [1, 0, 0, 0, 1, 0, 0, 0, 1];
