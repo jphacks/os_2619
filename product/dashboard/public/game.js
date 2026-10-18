@@ -29,7 +29,7 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷' };
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, chargeHold: 1.5, guardHold: .3, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: 1 }; // size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × (all tiers)
+export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: 1 }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × (all tiers)
 // how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
 // a little larger than the ball looks so near misses still count (10/18: .12 / .28 / .5 were too strict)
 const TIER = {
@@ -195,9 +195,9 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, test: true, homing: match.mode === 'demo', pos: p.tip.clone(), vel: aim.multiplyScalar(speedOf(T)), born: now() });
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
   }
-  function damage(foe, from, tier) {
-    const n = Math.round(+rules().dmg[tier] || 0);
-    from.hits++; from.dealt += n; log(from.slot, 'hit', `${foe.slot} に${TIER_JA[tier]}が命中 ${n} ダメージ`);
+  function damage(foe, from, tier, mul = 1) {
+    const n = Math.round((+rules().dmg[tier] || 0) * mul);
+    from.hits++; from.dealt += n; log(from.slot, 'hit', `${foe.slot} に${mul !== 1 ? '反射した' : ''}${TIER_JA[tier]}が命中 ${n} ダメージ`);
     onFlash(from.element);
     if (match.phase !== 'fight' || cfg.test) return; // test mode: hits show but HP never drops
     foe.hp = Math.max(0, foe.hp - n);
@@ -222,7 +222,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
           const back = s.owner.chest.clone().sub(s.pos).normalize();
           fx.endShot(s.id, 'timeout');
           s.id = fx.shot(s.element, s.pos.clone(), back.clone(), T.power, T.big * (s.size ?? 1), { tier: s.tier, scale: s.size ?? 1 });
-          s.vel.copy(back).multiplyScalar(speedOf(T)); s.owner = foe; s.born = now(); s.steer = false;
+          s.vel.copy(back).multiplyScalar(speedOf(T)); s.owner = foe; s.born = now(); s.steer = false; s.mul = +(rules().reflectMul ?? 2) || 0; // a bounced 小 hits harder
           foe.reflects = (foe.reflects ?? 0) + 1; showAct(foe, '反射！'); log(foe.slot, 'guard', `${other(foe).slot} の小を反射`);
           continue;
         }
@@ -231,7 +231,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       if (hit) {
         fx.hit(s.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.element, panOf(s.pos), T.hit, s.tier);
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
-        if (!s.test) damage(foe, s.owner, s.tier); // try-out shots only show
+        if (!s.test) damage(foe, s.owner, s.tier, s.mul ?? 1); // try-out shots only show
       }
       const end = hit ? 'hit' : s.pos.y < 0 ? 'floor' : now() - s.born > 1.6 / Math.max(.3, rules().speed ?? 1) ? 'timeout' : null; // y < 0: into the floor; slower balls live longer, so they still reach
       if (end) { fx.endShot(s.id, end); shots.splice(i, 1); }

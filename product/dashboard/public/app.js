@@ -142,6 +142,7 @@ gameCtrl.innerHTML = `
     <label>小のダメージ <input data-rule="dmg.s" type="number" min="0" max="100" step="1"></label>
     <label>中のダメージ <input data-rule="dmg.m" type="number" min="0" max="100" step="1"></label>
     <label>大のダメージ <input data-rule="dmg.l" type="number" min="0" max="100" step="1"></label>
+    <label title="ガードで跳ね返した小が当たったときのダメージ。小のダメージ × この倍率">反射のダメージ倍率 <input data-rule="reflectMul" type="number" min="0" max="10" step="0.1"> 倍</label>
     <label>小の連打の間隔 <input data-rule="rapid" type="number" min="0" max="3" step="0.05"> 秒</label>
     <label>溜め失敗になる移動 <input data-rule="moveFail" type="number" min="5" max="300" step="5" data-scale="100"> cm</label>
     <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">小の玉の大きさ <input data-rule="size.s" type="number" min="0.2" max="4" step="0.1"> 倍</label>

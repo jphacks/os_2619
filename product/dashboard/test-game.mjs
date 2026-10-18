@@ -243,7 +243,12 @@ scenario('真一文字に構えると、小は跳ね返って撃った A に当�
   const S = setup(); S.fight(); guardB(S); S.run(.4);
   eq(S.B.guarding, true, 'B のガード');
   S.swing('A'); S.run(1.5);
-  eq(S.B.hp, 100, 'B の HP'); eq(S.A.hp, 95, '跳ね返った小を受けた A の HP');
+  eq(S.B.hp, 100, 'B の HP'); eq(S.A.hp, 90, '跳ね返った小を受けた A の HP（小 5 × 反射 2 倍）');
+});
+scenario('反射のダメージ倍率を変えると、跳ね返った小のダメージも変わる', () => {
+  const S = setup({ rules: { reflectMul: 3 } }); S.fight(); guardB(S); S.run(.4);
+  S.swing('A'); S.run(1.5);
+  eq(S.A.hp, 85, '跳ね返った小を受けた A の HP（小 5 × 反射 3 倍）');
 });
 scenario('構えてすぐ（0.3 秒未満）はまだガードにならない', () => {
   const S = setup(); S.fight(); guardB(S); S.run(.1);
@@ -278,7 +283,7 @@ scenario('棒をどの向きで止めていても（相手に向けたままで�
   const S = setup(); S.fight(); stickB(S, [-1, .3, 0]); S.run(.4);
   eq(S.B.guarding, true, 'B のガード');
   S.swing('A'); S.run(1.5);
-  eq(S.B.hp, 100, 'B の HP'); eq(S.A.hp, 95, '跳ね返った小を受けた A の HP');
+  eq(S.B.hp, 100, 'B の HP'); eq(S.A.hp, 90, '跳ね返った小を受けた A の HP（小 5 × 反射 2 倍）');
 });
 scenario('中と大はガードを貫通する', () => {
   const S = setup(); S.fight(); guardB(S);
@@ -288,7 +293,7 @@ scenario('中と大はガードを貫通する', () => {
 scenario('ガードボタンを押している間はガード、離すと小が当たる', () => {
   const S = setup(); S.fight();
   S.g.command({ cmd: 'guard', slot: 'B', on: true }); S.run(DT); S.swing('A'); S.run(1.5);
-  eq(S.A.hp, 95, '跳ね返りを受けた A の HP');
+  eq(S.A.hp, 90, '跳ね返りを受けた A の HP（小 5 × 反射 2 倍）');
   S.g.command({ cmd: 'guard', slot: 'B', on: false }); S.run(.3); S.swing('A'); S.run(1.5);
   eq(S.B.hp, 95, 'B の HP');
 });
