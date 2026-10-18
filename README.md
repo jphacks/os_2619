@@ -2,7 +2,7 @@
 
 [<img width="1920" alt="Full Stick のサムネイル（クリックで CM 動画）" src="https://github.com/user-attachments/assets/d9873445-7496-4eac-9af3-f32de4267488" />](https://www.youtube.com/watch?v=7773MsnY1Ag)
 
-▶ 画像をクリックすると YouTube で CM 動画が再生されます。
+▶ **CM 動画があります**: https://www.youtube.com/watch?v=7773MsnY1Ag （上の画像をクリックしても再生できます）
 
 チーム「チャオベン最強伝説」（os_2619）: 橋本康佑（チャオベン）・富本康太・河島航・相良拓海
 
