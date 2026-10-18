@@ -6,10 +6,10 @@ import { cross, dot, norm, qrot } from './map.js';
 
 const D = Math.PI / 180;
 export const ACTIONS = [
-  { name: 'Charge', how: 'gyro only: starts when the turning direction changes 5+ times within 1 s past 60°/s (stick circled or shaken at the base), then keeps going while it changes 4+ times past 30°/s; slower than a swing' },
+  { name: 'Charge', how: 'only while the stick is raised 45° or more; gyro only: starts when the turning direction changes 5+ times within 1 s past 60°/s (stick circled or shaken at the base), then keeps going while it changes 4+ times past 30°/s; slower than a swing' },
   { name: 'Swing', how: 'stick turns faster than 300°/s through more than 60° and stops dead (from over 250°/s to under 100°/s within 0.12 s); direction plus start and stop position' },
   { name: 'Dodge', how: 'chest phone moves faster than 1.2 m/s; left / right / back / forward' },
-  { name: 'Guard', how: 'stick within 20° of horizontal and still (under 60°/s) for 1 s' },
+  { name: 'Guard', how: 'stick within 45° of horizontal (above or below) and still (under 60°/s) for 1 s; held upright it does nothing' },
 ];
 
 /** WitMotion Z-Y-X euler (deg) applied to v: R = Rz(yaw) Ry(pitch) Rx(roll). */
@@ -51,7 +51,8 @@ export function createActions() {
       // Charge, gyro only (the sensor is at the base of the stick, so the angles stay small): what shows is the turning direction
       // changing again and again. Count sign reversals of each gyro axis (past a dead band) in the last second; swing speed resets it.
       // 10/18: a held stick's tremor sometimes started a charge. Starting needs bigger, more frequent reversals; keeping it does not
-      if (gap || w > 300) { S.rev = []; S.sign = [0, 0, 0]; S.revBig = []; S.signBig = [0, 0, 0]; }
+      // 10/18: only a stick raised 45° or more counts as circling for a charge; a level or lowered one never charges
+      if (gap || w > 300 || d[2] < Math.sin(45 * D)) { S.rev = []; S.sign = [0, 0, 0]; S.revBig = []; S.signBig = [0, 0, 0]; }
       else {
         for (const [rev, sign, band] of [[S.rev, S.sign, 30], [S.revBig, S.signBig, 60]]) {
           for (let i = 0; i < 3; i++) {
@@ -89,7 +90,7 @@ export function createActions() {
       if (S.sw && k.t - S.sw.t > 1.5) S.sw = null;
 
       // Guard: stick level and still, reported once per hold
-      if (Math.abs(d[2]) < Math.sin(20 * D) && w < 60 && !gap) {
+      if (Math.abs(d[2]) < Math.sin(45 * D) && w < 60 && !gap) {
         S.guard ??= k.t;
         if (!S.guarded && k.t - S.guard >= 1) { S.guarded = true; emit('Guard', `held 1 s · ${where(pos)}`, S.guard); }
       } else { S.guard = null; S.guarded = false; }
