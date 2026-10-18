@@ -400,7 +400,7 @@ function makeAvatar(slot) {
 
 
   return {
-    root, world, slot, hpSprite,
+    root, world, slot,
     update(dt, p) {
       const vis = !!p?.body;
       root.visible = vis && !p.hideBody; world.visible = vis; // hideBody: the real skeleton from the camera is drawn instead
@@ -525,30 +525,6 @@ export function createField(scene, opts = {}) {
     const ax = new THREE.AxesHelper(.4); a.root.add(ax); a.ax = ax; ax.visible = false;
   }
 
-  // damage numbers: one pops up over a player whenever their HP drops, bigger type for a bigger hit, rising and fading out
-  const pops = [], lastHp = {};
-  function popDamage(n, at) {
-    const k = Math.min(1.5, n / 60) ** .7, big = n >= 40, mid = n >= 15; // 5 -> small, 20 -> medium, 60 -> large
-    const tex = canvasTex(256, 128, (g, w, h) => {
-      g.font = `900 ${big ? 104 : mid ? 92 : 80}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.lineJoin = 'round'; g.lineWidth = 14; g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText('-' + n, w / 2, h / 2 + 4);
-      g.fillStyle = big ? '#ff5a3a' : mid ? '#ffc94a' : '#ffffff'; g.fillText('-' + n, w / 2, h / 2 + 4);
-    });
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false, depthTest: false, transparent: true }));
-    const hgt = .3 + .55 * k; s.renderOrder = 30; s.position.copy(at);
-    group.add(s); pops.push({ s, t: 0, w: hgt * 2, h: hgt, x: (Math.random() - .5) * .3 });
-  }
-  function stepPops(dt) {
-    for (let i = pops.length - 1; i >= 0; i--) {
-      const q = pops[i]; q.t += dt;
-      const grow = q.t < .12 ? .6 + 3.3 * q.t : q.t < .25 ? 1.2 - 1.5 * (q.t - .12) : 1; // pops in a little too big, settles
-      q.s.scale.set(q.w * grow, q.h * grow, 1);
-      q.s.position.x += q.x * dt; q.s.position.y += (.9 - .6 * Math.min(1, q.t)) * dt;
-      q.s.material.opacity = Math.min(1, (1.3 - q.t) / .4);
-      if (q.t > 1.3) { group.remove(q.s); q.s.material.map.dispose(); q.s.material.dispose(); pops.splice(i, 1); }
-    }
-  }
-
   const background = canvasTex(4, 512, (g, w, h) => {
     g.fillStyle = '#07090d'; g.fillRect(0, 0, w, h);
   });
@@ -558,11 +534,9 @@ export function createField(scene, opts = {}) {
     group, background, rebuild,
     update(dt, players = {}) {
       if (fieldSig() !== sig) rebuild();
-      uniforms.uTime.value += dt; stepPops(dt);
+      uniforms.uTime.value += dt;
       ['A', 'B'].forEach((s, i) => {
-        const r = avatars[s].update(dt, players[s]), hp = players[s]?.hp;
-        if (hp != null && lastHp[s] != null && hp < lastHp[s] - .5 && r) popDamage(Math.round(lastHp[s] - hp), avatars[s].hpSprite.getWorldPosition(V()).add(V(0, .45, 0)));
-        lastHp[s] = hp;
+        const r = avatars[s].update(dt, players[s]);
         uniforms.uP.value[i].set(r?.x ?? 0, r?.z ?? 0, r?.hp ?? 0, r ? r.vis : 0);
       });
     },

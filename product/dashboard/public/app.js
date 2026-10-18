@@ -31,10 +31,11 @@ const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
   minimap: true, debug: false, pip: false, mirrorX: false, mirrorY: false, swordFlip: false, fovC: 40, viewVer: 2, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
   matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 5, fxStyle: 'smash',
+  zoom: { fixed: 1, auto: 1, orbit: 1, chaseA: 1, chaseB: 1, top: 1, side: 1 }, // game screen: zoom per camera mode (free: the mouse wheel)
   mimic: true, // the avatars copy the poses MediaPipe finds in phone C's picture (screen 3, and the small 3D window of screen 4)
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
-const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen } };
+const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen }, zoom: { ...DEFAULTS.zoom, ...saved.zoom } };
 if ((saved.viewVer ?? 0) < 2) { cfg.mirrorX = cfg.mirrorY = cfg.swordFlip = false; cfg.viewVer = 2; } // the left-right / up-down guesses are off until a measured need: the alignment is solved from the tags now
 cfg.visOn = false; // picture recognition (MediaPipe) is off at every start: nothing is loaded or run until it is switched on in the final bar
 if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
@@ -154,6 +155,7 @@ gameCtrl.innerHTML = `
   <div class="fxtry">${['A', 'B'].map(s => `<div class="row"><b style="color:var(--${s});width:1.4em">${s}</b>${['s', 'm', 'l'].map(t => `<button data-fxshot="${t}" data-s="${s}">${TIER_JA[t]}</button>`).join('')}<button data-fxcharge data-s="${s}">溜め（押している間）</button></div>`).join('')}</div>
   <h3>カメラ（ドローン視点）<kbd>D</kbd></h3>
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
+  <div class="row" id="zoomRow"><label title="今のカメラのズーム。カメラごとに覚える。1 が元の大きさ">ズーム <input id="zoom" type="range" min="0.5" max="3" step="0.05" style="width:130px;vertical-align:middle"> <span id="zoomOut" class="num"></span> 倍</label><button id="zoomReset">1 倍に戻す</button><span class="muted" id="zoomFor" style="font-size:12px"></span></div>
   <h3>表示</h3>
   <div class="row"><button data-tog="minimap">ミニマップ<kbd>M</kbd></button><button data-tog="debug">デバッグ<kbd>G</kbd></button></div>
   <div class="row"><button data-tog="mimic" title="第三者視点カメラの映像を MediaPipe で見て、アバターに同じ姿勢をとらせる（別スレッドで 1 秒に最大 15 回）">カメラの姿勢をアバターに反映</button><span class="muted" id="mimicStatus" style="font-size:12px"></span></div>
@@ -196,6 +198,16 @@ for (const pc of gameCtrl.querySelectorAll('.pc')) for (const b of pc.querySelec
   else b.onclick = () => game.command({ cmd: a, slot });
 }
 for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.onclick = () => { stage.drone.setMode(b.dataset.drone); cfg.drone = b.dataset.drone; save(); };
+const zoomIn = $('#zoom'), setZoom = v => { const m = stage.drone.mode; if (m === 'free') return; cfg.zoom[m] = Math.round(v * 100) / 100; save(); };
+zoomIn.oninput = () => setZoom(+zoomIn.value);
+$('#zoomReset').onclick = () => setZoom(1);
+function syncZoom() { // the slider shows the current camera's zoom; free mode zooms with the mouse wheel instead
+  const m = stage.drone.mode, free = m === 'free', v = cfg.zoom[m] ?? 1;
+  zoomIn.disabled = $('#zoomReset').disabled = free;
+  if (document.activeElement !== zoomIn && +zoomIn.value !== v) zoomIn.value = v;
+  setText($('#zoomOut'), free ? '—' : v.toFixed(2));
+  setText($('#zoomFor'), free ? '自由操作のときはマウスホイールで拡大・縮小する' : `（${DRONE_JA[m]}）`);
+}
 const toggle = k => { cfg[k] = !cfg[k]; save(); };
 for (const b of document.querySelectorAll('[data-tog]')) b.onclick = () => toggle(b.dataset.tog);
 
@@ -279,7 +291,31 @@ addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k] && s
 function pill(id, state) { const p = $(id); p.classList.toggle('on', state === true); p.classList.toggle('half', state === 'half'); }
 const hudP = Object.fromEntries(['A', 'B'].map(s => { const el = hud.querySelector('.pl.' + s); return [s, { el, hp: el.querySelector('.hp i'), ch: el.querySelector('.ch'), chi: el.querySelector('.ch i'), hpn: el.querySelector('.hpn'), act: el.querySelector('.act'), tick: el.querySelector('.ch b'), chips: Object.fromEntries([...el.querySelectorAll('.chips span')].map(c => [c.className.split(' ')[0], c])) }]; }));
 const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
+// damage numbers: HUD text over the player's HP bar, pushed out to the side away from the opponent and up, so the hit's
+// effects (round the body, between the two) never cover it; drawn above the 3D, bigger for a bigger hit
+const dmgLast = {}, dmgPops = [];
+function damagePops() {
+  for (const p of Object.values(game.players)) {
+    const prev = dmgLast[p.slot]; dmgLast[p.slot] = p.hp;
+    if (prev == null || !(p.hp < prev - .5) || screen !== 'game') continue;
+    const n = Math.round(prev - p.hp), k = Math.min(1, n / 60) ** .6; // 5 -> ~30 px, 20 -> ~50 px, 60 -> 82 px
+    const el = document.createElement('div'); el.className = 'dmg' + (n >= 40 ? ' l' : n >= 15 ? ' m' : '');
+    el.textContent = String(n); el.style.fontSize = Math.round(22 + 60 * k) + 'px';
+    hud.append(el); dmgPops.push({ el, slot: p.slot, t0: performance.now() });
+  }
+  // anchored on the game's own chest position (sensor data, steady) rather than the avatar's drawn HP bar; head height
+  const at = s => { const c = game.players[s]?.chest; return c && stage.project({ x: c.x, y: c.y + .7, z: c.z }); };
+  for (let i = dmgPops.length - 1; i >= 0; i--) {
+    const d = dmgPops[i], t = (performance.now() - d.t0) / 1000, me = at(d.slot), foe = at(d.slot === 'A' ? 'B' : 'A');
+    if (t > 1.4 || !me) { d.el.remove(); dmgPops.splice(i, 1); continue; }
+    const out = foe ? Math.sign(me.x - foe.x) || (d.slot === 'A' ? -1 : 1) : d.slot === 'A' ? -1 : 1; // away from the opponent
+    const pop = t < .12 ? .6 + 3.3 * t : t < .25 ? 1.2 - 1.5 * (t - .12) : 1;
+    const half = d.el.offsetWidth / 2; d.el.style.left = Math.max(half + 8, Math.min(hud.clientWidth - half - 8, me.x + out * (half + 90))) + 'px'; // kept on screen d.el.style.top = Math.max(half / 2 + 70, Math.min(hud.clientHeight - 40, me.y - 30 - 50 * Math.min(1, t))) + 'px'; // never off screen or under the top HUD
+    d.el.style.transform = `translate(-50%, -50%) scale(${pop})`; d.el.style.opacity = Math.min(1, (1.4 - t) / .4);
+  }
+}
 function updateHud() {
+  damagePops();
   const m = game.match;
   for (const p of Object.values(game.players)) {
     const h = hudP[p.slot];
@@ -314,6 +350,7 @@ function updateSlowUi() {
   gameCtrl.querySelector('[data-cmd=pause]').classList.toggle('on', m.paused);
   for (const b of document.querySelectorAll('[data-tog]')) b.classList.toggle('on', !!cfg[b.dataset.tog]);
   for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.classList.toggle('on', b.dataset.drone === stage.drone.mode);
+  syncZoom();
   for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.classList.toggle('on', b.dataset.fxstyle === stage.fx.style);
   for (const b of finalBar.querySelectorAll('[data-fpv]')) b.classList.toggle('on', (b.dataset.fpv || null) === cfg.fpv);
   for (const g of drawer.querySelectorAll('[data-seg]')) for (const b of g.querySelectorAll('button')) b.classList.toggle('on', String(cfg[g.dataset.seg]) === b.dataset.v);
