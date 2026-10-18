@@ -77,7 +77,7 @@ export function magicCircle(id) {
     circle(rs, .0003, c); out.push(...glyph(r, c, a, rs * 1.2, .00025));
   }
   const r2 = rIn * .92; circle(r2, .0004);
-  out.push({ t: 'path', p: ring(r2, n, Math.PI / 2 + Math.PI / n), w: .0003, closed: true });
+  out.push(...(k > 2 ? star(n, k - 1, r2, Math.PI / 2 + Math.PI / n, .0003) : [{ t: 'path', p: ring(r2, n, Math.PI / 2 + Math.PI / n), w: .0003, closed: true }])); // a second, tighter star where n allows
   const r3 = r2 * .5; circle(r3, .0003);
   for (let i = 0; i < 2 * n; i++) { const a = Math.PI / 2 + i * Math.PI / n; out.push({ t: 'path', p: [rot([r3, 0], a), rot([r2 * Math.cos(Math.PI / n), 0], a)], w: .0002 }); }
   for (const c of ring(r3 / 2, 6, Math.PI / 2)) circle(r3 / 2, .00025, c); // a six-petal rosette
