@@ -66,6 +66,10 @@ JPHACKS 2026 のテーマは「X-Tech 2026 〜Full Stack Hackers〜」です。�
 
 ![ゲーム画面。左の炎使いと右の雷使いの魔法が中央でぶつかっている](docs/readme/game_screen.jpg)
 
+試合中は、溜め・発射・撃ち合い・ガードの場面が次々に入れ替わります。
+
+![実際のゲーム画面 4 場面。溜め、発射、撃ち合い、ガード](docs/readme/game_scenes.jpg)
+
 ```mermaid
 flowchart LR
   IA["棒の IMU（A）"] -- Bluetooth --> PA["スマホ A<br>胸に装着・ARCore"]
