@@ -1,0 +1,52 @@
+# XcodeGen spec: `xcodegen generate` writes SensorLink.xcodeproj (kept out of git, so the project can be edited without a Mac).
+name: SensorLink
+options:
+  bundleIdPrefix: jp.jphacks
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+targets:
+  SensorLink:
+    type: application
+    platform: iOS
+    sources:
+      - SensorLink
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kousu.fullstick
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_OBJC_BRIDGING_HEADER: SensorLink/SensorLink-Bridging-Header.h
+        FRAMEWORK_SEARCH_PATHS: $(PROJECT_DIR)/Frameworks
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CLANG_CXX_LANGUAGE_STANDARD: c++17
+        CLANG_CXX_LIBRARY: libc++
+        OTHER_LDFLAGS: -lc++
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: -O # Rune.swift and the tag detector are too slow unoptimised
+    dependencies:
+      - framework: Frameworks/opencv2.framework
+        embed: false # the official iOS build is a static framework
+      - sdk: Accelerate.framework
+      - sdk: AVFoundation.framework
+      - sdk: CoreMedia.framework
+      - sdk: CoreVideo.framework
+      - sdk: CoreImage.framework
+      - sdk: ARKit.framework
+      - sdk: CoreBluetooth.framework
+    info:
+      path: SensorLink/Info.plist
+      properties:
+        CFBundleDisplayName: SensorLink
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UIRequiredDeviceCapabilities: [arkit, bluetooth-le]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSCameraUsageDescription: AR tracking and floor-tag detection use the camera.
+        NSBluetoothAlwaysUsageDescription: Connects to the IMU (WitMotion) attached to the stick.
+        NSLocalNetworkUsageDescription: Sends sensor data to the PC on the local network.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true # ws:// to the PC's LAN address

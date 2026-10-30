@@ -1,0 +1,7 @@
+Frameworks/
+*.xcodeproj/
+xcuserdata/
+build/
+DerivedData/
+apikey/
+*.p8
