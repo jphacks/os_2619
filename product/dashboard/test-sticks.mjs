@@ -101,6 +101,9 @@ assert.equal((await json('/rules', { hp: 80, rarityMul: mul })).status, 200);
 k = await wait(() => inbox.find(k => k.type === 'sticks' && k.A?.stats.hp === stickStats(rec.seed, rec.rarity, mul).hp));
 assert.deepEqual((await (await json('/sticks')).json()).find(s => s.id === rec.id).stats, stickStats(rec.seed, rec.rarity, mul));
 assert.deepEqual(await (await json('/sticks/assign')).json(), { A: { ...rec, stats: stickStats(rec.seed, rec.rarity, mul) }, B: { ...rec2, stats: stickStats(rec2.seed, rec2.rarity, mul) } });
+// the dashboard's own save (no rarityMul in the body) keeps the one sticks.html set
+assert.equal((await json('/rules', { hp: 90 })).status, 200);
+assert.deepEqual((await (await json('/rules')).json()).rarityMul, mul);
 // deleting an assigned stick frees its slot
 assert.equal((await json('/sticks/' + rec2.id, undefined, 'DELETE')).status, 200);
 await wait(() => inbox.find(k => k.type === 'sticks' && k.A?.id === rec.id && k.B === null));

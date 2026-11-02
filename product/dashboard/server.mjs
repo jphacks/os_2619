@@ -240,7 +240,9 @@ async function rulesFile(req, res) {
   if (req.method === 'GET') { let body; try { body = await readFile(RULES_FILE); } catch { return res.writeHead(404, json).end('null'); } return res.writeHead(200, json).end(body); }
   if (req.method !== 'POST') return res.writeHead(405).end();
   let body = ''; for await (const c of req) { body += c; if (body.length > 64e3) return res.writeHead(413).end(); }
-  try { const r = JSON.parse(body); if (!r || typeof r !== 'object' || Array.isArray(r)) throw 0; await writeFile(RULES_FILE, JSON.stringify(r, null, 2)); log('rules: saved to rules.json');
+  try { const r = JSON.parse(body); if (!r || typeof r !== 'object' || Array.isArray(r)) throw 0;
+    if (!('rarityMul' in r)) r.rarityMul = rarityMul; // only sticks.html sends it; the dashboard's save keeps it
+    await writeFile(RULES_FILE, JSON.stringify(r, null, 2)); log('rules: saved to rules.json');
     rarityMul = cleanRarityMul(r.rarityMul); toDashboards(sticksMsg()); // the players' sticks' stats follow rules.rarityMul
     return res.writeHead(200, json).end('{"ok":true}'); }
   catch { return res.writeHead(400, json).end('{"ok":false}'); }

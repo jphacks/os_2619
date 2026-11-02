@@ -210,7 +210,7 @@ async function loadSavedRules(quiet) {
   } catch (e) { if (!quiet) rulesMsg('読み込めなかった（' + e.message + '）'); }
 }
 $('#rulesSave').onclick = async () => {
-  try { const r = await fetch('/rules', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg.rules) }); if (!r.ok) throw new Error(r.status);
+  try { const r = await fetch('/rules', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...cfg.rules, rarityMul: undefined }) }); if (!r.ok) throw new Error(r.status);
     rulesMsg('保存した（' + new Date().toLocaleTimeString() + '）'); } catch (e) { rulesMsg('保存できなかった（' + e.message + '）'); }
 };
 $('#rulesLoad').onclick = () => loadSavedRules(false);
