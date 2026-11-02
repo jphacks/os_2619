@@ -16,7 +16,8 @@ targets:
       - SensorLink
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.kousu.fullstick
+        SENSORLINK_BUNDLE_ID: com.kousu.fullstick # override on a personal team, e.g. xcodebuild SENSORLINK_BUNDLE_ID=jp.jphacks.fullstick.you
+        PRODUCT_BUNDLE_IDENTIFIER: $(SENSORLINK_BUNDLE_ID)
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_OBJC_BRIDGING_HEADER: SensorLink/SensorLink-Bridging-Header.h
         FRAMEWORK_SEARCH_PATHS: $(PROJECT_DIR)/Frameworks
