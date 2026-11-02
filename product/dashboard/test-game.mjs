@@ -429,6 +429,46 @@ scenario('回すのをやめると溜めはその量で止まって保持され�
   eq(S.B.hp, 75, '2.6秒回して止め、振り下ろした中のあとの B の HP');
 });
 
+// ---- 割り当てた棒（server.mjs 'sticks'）: 倍率 1 = 今のルール ----
+const stick = (element, stats = {}) => ({ id: 'x', name: 'テスト棒', seed: 1, rarity: 3, element, stats: { hp: 1, power: 1, speed: 1, charge: 1, ...stats }, image: '' });
+scenario('棒なし（null）なら今までどおり（HP100・小5・属性は炎と雷）', () => {
+  const S = setup(); S.g.setSticks({ A: null, B: null }); S.fight(); S.swing('A'); S.run(1);
+  eq(S.A.hpMax, 100, 'A の最大HP'); eq(S.B.hp, 95, 'B の HP'); eq(S.A.element, 'fire', 'A の属性'); eq(S.B.element, 'thunder', 'B の属性');
+});
+scenario('HP 1.3倍の棒なら最大HPが130になる（準備中にすぐ反映）', () => {
+  const S = setup(); S.g.setSticks({ A: stick('fire', { hp: 1.3 }), B: null }); S.run(.1);
+  eq(S.A.hpMax, 130, '準備中の A の最大HP'); S.fight();
+  eq(S.A.hp, 130, '試合開始の A の HP'); eq(S.B.hpMax, 100, 'B の最大HP');
+});
+scenario('攻撃 1.2倍の棒なら、中が24ダメージになる', () => {
+  const S = setup(); S.g.setSticks({ A: stick('fire', { power: 1.2 }) }); S.fight(); S.chargeShot('A', 3);
+  eq(S.B.hp, 76, 'B の HP');
+});
+scenario('速さ 2倍の棒なら、小の連打の間隔が半分（0.125秒）になる', () => {
+  const S = setup(); S.g.setSticks({ A: stick('fire', { speed: 2 }) }); S.fight();
+  for (let i = 0; i < 4; i++) { S.swing('A'); S.run(.15); }
+  const N = setup(); N.fight();
+  for (let i = 0; i < 4; i++) { N.swing('A'); N.run(.15); }
+  eq(S.A.shots, 4, '速さ2倍で0.15秒おき4回の発射数'); eq(N.A.shots, 2, '棒なしの発射数');
+});
+scenario('溜め 2倍の棒なら、3秒で大になる', () => {
+  const S = setup(); S.g.setSticks({ A: stick('fire', { charge: 2 }) }); S.fight(); S.chargeShot('A', 3);
+  eq(S.B.hp, 40, 'B の HP（大1発）');
+});
+scenario('試合中に棒を替えてもHPは変わらず、次のリセットで反映される', () => {
+  const S = setup(); S.fight(); S.g.setSticks({ A: stick('water', { hp: 1.5 }) }); S.run(.5);
+  eq(S.A.hpMax, 100, '試合中の A の最大HP'); eq(S.A.element, 'fire', '試合中の A の属性');
+  S.g.command({ cmd: 'reset' });
+  eq(S.A.hpMax, 150, 'リセット後の A の最大HP'); eq(S.A.element, 'water', 'リセット後の A の属性');
+});
+scenario('水と風の棒でも撃ち合い・反射・溜めが動く', () => {
+  const S = setup(); S.g.setSticks({ A: stick('water'), B: stick('wind') }); S.fight();
+  eq(S.A.element, 'water', 'A の属性'); eq(S.B.element, 'wind', 'B の属性');
+  S.swing('A'); S.run(1); S.chargeShot('A', 3);
+  S.g.command({ cmd: 'guard', slot: 'B', on: true }); S.run(.5); S.swing('A'); S.run(1.5);
+  eq(S.B.hp, 75, 'B の HP（小＋中）'); eq(S.A.hp, 90, 'A の HP（反射された小）');
+});
+
 const w = Math.max(...results.map(r => r.name.length));
 for (const r of results) console.log(`${r.ok ? '✓' : '✗'} ${r.name.padEnd(w, '　')}${r.note ? '  ' + r.note : ''}`);
 const bad = results.filter(r => !r.ok).length;

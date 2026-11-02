@@ -65,7 +65,7 @@ import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const 
 const VIS_KEYS = ['visDraw', 'visGhost', 'visSpot', 'visTrail'], EL_COLOR = { fire: '#ff7a1a', thunder: '#6cc8ff' };
 const vision = createVision({ getSource: () => video.__dummy?.canvas ?? video, stickLen: () => (cfg.stickLen.A + cfg.stickLen.B) / 2, getFps: () => fps }); // fps (below): the recognition backs off while the page itself is slow
 const vfx = createVisionFx();
-const overlay = { compose: (src, w, h, dt) => vfx.compose(src, w, h, dt, vision, cfg.visOn ? { draw: cfg.visDraw, ghost: cfg.visGhost, spot: cfg.visSpot, trail: cfg.visTrail } : {}, { A: EL_COLOR[game.players.A.element], B: EL_COLOR[game.players.B.element] }) };
+const overlay = { compose: (src, w, h, dt) => vfx.compose(src, w, h, dt, vision, cfg.visOn ? { draw: cfg.visDraw, ghost: cfg.visGhost, spot: cfg.visSpot, trail: cfg.visTrail } : {}, { A: EL_COLOR[game.players.A.element] ?? EL_COLOR.thunder, B: EL_COLOR[game.players.B.element] ?? EL_COLOR.thunder }) };
 const stage = createStage({ video, cfg, hub, PA, isSetup: () => game.match.phase === 'setup', overlay });
 const hudFlash = { el: null };
 const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), getDummyFrame: () => vsrc.dummy?.frame });
@@ -81,12 +81,14 @@ hub.on(k => {
   if (k.type === 'marker') { if (k.marker !== W.MARKER) location.reload(); return; } // world.js fixed its tag table at load: start over with the new one
   PA.ingest(k); smap.ingest(k);
   if (k.type === 'phones') { phones = k.list; game.setOnline(playable.withSelf(k.list)); return; }
+  if (k.type === 'sticks') { game.setSticks(k); return; } // assigned sticks (server.mjs): taken on while setting up / at the next match
   connect.ingest(k); game.ingest(k);
   if (k.type === 'truth' && !playable.owns(k.slot)) vsrc.dummy?.setTruth(k.slot, k); // fake-world.mjs: the dummy room shows the simulated players
   if (k.type === 'imu' || k.type === 'ar' || k.type === 'calib')
     for (const ev of detectors.ingest(k, axis[k.slot])) { if (!ev.keep) connect.logAction(ev); if (!playable.owns(ev.slot)) game.onSensed(ev); }
 });
 
+fetch('/sticks/assign', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(k => k && game.setSticks(k)).catch(() => {}); // until the first /ws 'sticks'
 // ---- screens ----
 const connect = createConnect({ cards: $('#phoneCards'), side: $('#connectSide'), hub, vsrc, cfg,
   onStick: (s, v) => { cfg.stickLen[s] = v; save(); },
@@ -355,6 +357,7 @@ function updateHud() {
     h.chips.charge.classList.toggle('on', p.charging);
     setText(h.chips.charge, p.charging ? `溜め ${TIER_JA[p.tier] ?? '小'} ${p.chargeT.toFixed(1)}s` : '溜め中');
     setText(h.act, game.actText(p));
+    const sk = p.stick; setText(h.el.querySelector('.name small'), sk ? `${sk.name} ${'★'.repeat(Math.max(1, Math.min(5, sk.rarity | 0)))} ${ELEMENT_JA[p.element] ?? ''}` : ELEMENT_JA[p.element] ?? '');
   }
   const showTimer = m.phase === 'fight' || m.phase === 'result';
   setText(hud.querySelector('.timer'), showTimer ? `${Math.floor(Math.ceil(m.left) / 60)}:${String(Math.ceil(m.left) % 60).padStart(2, '0')}` : '');
