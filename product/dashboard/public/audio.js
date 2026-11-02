@@ -15,9 +15,9 @@ const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightn
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
 const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2,
-  water1: -18.0, water2: -17.2, water3: -19.9, wind1: -12.5, wind2: -13.9, wind3: -13.3, guard: -18.0 }; // water / wind: audio/README.md // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
+  water1: -18.0, water2: -17.8, water3: -20.4, wind1: -12.7, wind2: -13.6, wind3: -13.0, guard: -18.0 }; // water / wind: audio/README.md // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
 // fire3 is also the 大 hit: its 0-6 s faded from 3 s measures differently from the 3 s bed, so that use is corrected by this
-const BIG_LUFS = { fire3: -11.8, lightning3: -7.2, water3: -20.1, wind3: -13.2 };
+const BIG_LUFS = { fire3: -11.8, lightning3: -7.2, water3: -19.6, wind3: -12.8 };
 const REF_LUFS = -16;
 // what plays what (10/18): every launch (小・中・大) = 1; the hit by tier: 小 = 1, 中 = 2, 大 = 3. fire3 is also fire's aura bed.
 export const EL = { fire: { 1: 'fire1', 2: 'fire2', 3: 'fire3', bed: 'fire3' }, thunder: { 1: 'lightning1', 2: 'lightning2', 3: 'lightning3' },

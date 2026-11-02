@@ -83,26 +83,26 @@ function mix(name, dur, layers) {
 const wa = f => join(SRC, 'wa', f), sw = f => join(SRC, 'sw/swishes', f), tmp = f => join(TMP, f);
 
 // ---- water ----
-// Timed to fx-smash-water.js (water comes up from below).
-// 1 (every launch, the 小 hit): a short splash. 2 (中 Spiral Lance): the lance splashing on the target, then the column bursting
-// up out of the whirlpool at .18 s. 3 (大 Maelstrom Geyser): the orb's splash, the maelstrom (bubbles, a low swell under the
-// floor) for .45 s, the eruption (thump + splashes), the side jets (.62 / .8 s), the column collapsing as rain from ~1.3 s,
-// then surf that audio.js fades out from 3 s to 6 s.
+// Timed to fx-smash-water.js.
+// 1 (every launch, the 小 hit): a short splash. 2 (中 Tidal Surge): the geyser bursting up under the target at once (splash +
+// thump). 3 (大 Cataract): the orb splashing into the magic circle, a low swell while the waterfall starts pouring (.3 s) and
+// falls, its impact on the floor at ~.9 s (thump + splashes), the roar of falling water until ~2.3 s, then rain and surf that
+// audio.js fades out from 3 s to 6 s.
 { const b = buf(1.2); thump(b, 0, { f: 70, gain: .55, decay: 7 }); writeWav(tmp('thump.wav'), b); }
-{ const b = buf(.6), lp = svf(); // the maelstrom: low noise swelling under the floor until the eruption
-  for (let i = 0; i < b[0].length; i++) { const t = i / SR, s = lp(rnd(), 90 + 270 * t, .9).lp * 1.4 * sm(0, .45, t) * (1 - sm(.45, .6, t)); b[0][i] += s; b[1][i] += s; }
+{ const b = buf(1.05), lp = svf(); // low noise swelling while the waterfall falls, until it lands at .9 s
+  for (let i = 0; i < b[0].length; i++) { const t = i / SR, s = lp(rnd(), 90 + 160 * t, .9).lp * 1.4 * sm(.1, .9, t) * (1 - sm(.9, 1.05, t)); b[0][i] += s; b[1][i] += s; }
   writeWav(tmp('swell.wav'), b); }
 mix('water1', .6, [[wa('splash_06.ogg'), 0, 0]]);
-mix('water2', 1.3, [[wa('splash_04.ogg'), 0, -1], [wa('splash_13.ogg'), .18, 0], [tmp('thump.wav'), .18, -6]]);
-mix('water3', 6, [[wa('splash_06.ogg'), 0, -4], [wa('loop_bubbles_1.ogg'), 0, -2, 'atrim=0:0.5,afade=t=in:d=0.25,afade=t=out:st=0.4:d=0.1'], [tmp('swell.wav'), 0, -3],
-  [wa('splash_08.ogg'), .45, 0], [wa('splash_04.ogg'), .5, -1], [tmp('thump.wav'), .45, -1], [wa('splash_07.ogg'), .62, -5], [wa('splash_13.ogg'), .8, -6],
-  [wa('loop_rain.ogg'), 1.3, 2, 'afade=t=in:d=0.3,afade=t=out:st=1.6:d=1.4'], [wa('loop_water_02.ogg'), .5, 3, 'afade=t=in:d=0.4']]);
+mix('water2', 1.3, [[wa('splash_04.ogg'), 0, -1], [wa('splash_13.ogg'), .02, 0], [tmp('thump.wav'), 0, -6]]);
+mix('water3', 6, [[wa('splash_06.ogg'), 0, -4], [wa('loop_bubbles_1.ogg'), .05, -4, 'atrim=0:0.5,afade=t=in:d=0.2,afade=t=out:st=0.35:d=0.15'], [tmp('swell.wav'), 0, -3],
+  [wa('splash_08.ogg'), .9, 0], [wa('splash_04.ogg'), .95, -1], [tmp('thump.wav'), .9, -1], [wa('splash_07.ogg'), 1.25, -5], [wa('splash_13.ogg'), 1.6, -6],
+  [wa('loop_water_02.ogg'), .35, 4, 'afade=t=in:d=0.5,afade=t=out:st=1.9:d=1.2'], [wa('loop_rain.ogg'), 1.8, 1, 'afade=t=in:d=0.3,afade=t=out:st=1.0:d=1.4'], [wa('loop_water_02.ogg'), 2.2, 0, 'afade=t=in:d=0.4']]);
 
 // ---- wind ----
-// Timed to fx-smash-wind.js (wind closes in from around).
-// 1: a quick whoosh passing left to right with a swish on its peak. 2 (中 Cross Gale): two blades rushing in from the left and
-// the right and crossing at .14 s (swish, a low air thump), after-cuts, a low body. 3 (大 Tempest): ten blades rushing in from
-// alternating sides until .65 s, the convergence (swish + thump), the howling tornado, the release gust blowing outward at 2.05 s.
+// Timed to fx-smash-wind.js.
+// 1: a quick whoosh passing left to right with a swish on its peak. 2 (中 Twin Boomerang): the two blades rushing in and
+// crossing at .14 s (swish, a low air thump), after-cuts, a low body. 3 (大 Travelling Tempest): the twister arriving and swelling
+// over the target at 0 (swish + thump), the howling tornado, the release gust blowing outward at 1.45 s.
 { const b = buf(.6); whoosh(b, 0, .55, { lo: 500, hi: 2600, end: 800, q: 1.7, gain: .7, tPeak: .32 }); writeWav(tmp('w1.wav'), b); }
 mix('wind1', .6, [[tmp('w1.wav'), 0, 0], [sw('swish-7.wav'), .13, -5]]);
 { const b = buf(1.1);
@@ -113,9 +113,9 @@ mix('wind1', .6, [[tmp('w1.wav'), 0, 0], [sw('swish-7.wav'), .13, -5]]);
 { const b = buf(1.2); thump(b, 0, { f: 48, gain: .5, decay: 9 }); writeWav(tmp('athump.wav'), b); }
 mix('wind2', 1.1, [[tmp('w2.wav'), 0, 0], [sw('swish-9.wav'), .12, -3], [sw('swish-4.wav'), .24, -7], [sw('swish-7.wav'), .32, -9], [tmp('athump.wav'), .14, -8]]);
 { const b = buf(6);
-  for (let i = 0; i < 10; i++) { const arrive = .22 + i * .043, d = .3; whoosh(b, arrive - d * .8, d, { lo: 500, hi: 2400 + 300 * (i % 3), end: 900, q: 1.8, gain: .38, tPeak: .8, pan: i & 1 ? [.8, 0] : [-.8, 0] }); }
-  gale(b, .6, 5.4, { gain: .55, fade: [1.6, 5.4] });
-  whoosh(b, 1.95, 1.1, { lo: 150, hi: 1800, end: 300, q: 1, gain: .95, tPeak: .12, pan: [0, 0] }); // the release gust
+  whoosh(b, 0, .5, { lo: 300, hi: 2200, end: 700, q: 1.4, gain: .6, tPeak: .2, pan: [0, 0] }); // the twister swelling over the target
+  gale(b, 0, 6, { gain: .55, fade: [1.1, 5.4] });
+  whoosh(b, 1.35, 1.1, { lo: 150, hi: 1800, end: 300, q: 1, gain: .95, tPeak: .12, pan: [0, 0] }); // the release gust
   writeWav(tmp('w3.wav'), b); }
-mix('wind3', 6, [[tmp('w3.wav'), 0, 0], [sw('swish-9.wav'), .63, -2], [tmp('athump.wav'), .65, -3], [sw('swish-12.wav'), 2.03, -4], [tmp('athump.wav'), 2.05, -5]]);
+mix('wind3', 6, [[tmp('w3.wav'), 0, 0], [sw('swish-9.wav'), 0, -2], [tmp('athump.wav'), .02, -3], [sw('swish-12.wav'), 1.43, -4], [tmp('athump.wav'), 1.45, -5]]);
 console.log('wrote water1-3, wind1-3 to', OUT);
