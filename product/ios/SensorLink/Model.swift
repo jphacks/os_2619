@@ -135,10 +135,11 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         let fx = Double(k[0][0]), fy = Double(k[1][1]), cx = Double(k[2][0]), cy = Double(k[2][1])
         let h = Double(res.height)
         convertW.offer { [weak self] in
-            guard let self = self, let gray = TagBridge.uprightGray(pb) else { return }
+            guard let self = self else { return }
+            self.showPreview(pb) // shown even if the grey conversion below fails
+            guard let gray = TagBridge.uprightGray(pb) else { return }
             // the picture is rotated 90° clockwise: (x, y) -> (h-1-y, x) swaps the focal lengths and moves the principal point
             let fr = TagFrame(gray: gray, t: t, fx: fy, fy: fx, cx: h - 1 - cy, cy: cx)
-            self.showPreview(pb)
             self.tagW.offer { [weak self] in
                 guard let self = self else { return }
                 let r = self.detector.detect(fr, rune: self.link.marker == "rune")
