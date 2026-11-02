@@ -1,31 +1,32 @@
-// fx-smash-water.js: the water moves of the "スマブラ風" set (contract in fx-smash.js). Original effects, no assets.
-// Element axis of the set: fire bursts from the centre, thunder strikes from above, water comes up FROM BELOW, wind closes in from AROUND.
-// How stylised water is sold in games (Genshin Hydro, Smash / Tales water arts, real-time VFX breakdowns such as the layered
-// "water bending" one on 80.lv): a dark dense blue body that hides what is behind it (not a glow), thin bright caustic bands and a
-// hard white glint on it, white foam on the edges; round, flowing shapes; motion read through chunky blobs and drops that fall
-// under gravity; timing = a telegraph on the floor (anticipation), a fast eruption (impact: white flash, crown, shock rings, shake),
-// a long heavy fall-back (rain, foam rings, mist). Kept off thunder: deep blue + white foam, no yellow, nothing from the sky.
-//   小 Aqua Bullet:   a pressurised bead leading a tapering stream with a spiral wake; on contact a white flash, a crown splash of
-//                     drops and blobs, a wet patch with ripple rings, and a short spout kicks up from the floor under the target
-//   中 Spiral Lance:  a long lance of water wrapped in three spiralling strands, pressure rings sliding down it; on contact a splash,
-//                     then a whirlpool opens on the floor under the target and a 2 m column bursts up out of it and falls back
-//   大 Maelstrom Geyser (signature, ~2.8 s): a heavy orb in a double helix, the floor rippling under its path. On contact:
-//                     0-.45 s  the floor under the target turns into a widening maelstrom (渦潮): foam arms winding into a dark eye,
-//                              rings contracting inward, foam sucked in, a rumble
-//                     .45 s    eruption: white flash, a 3.4 m geyser bursts up swallowing the target (dark body, streaks racing up,
-//                              a spiral of water round it, a crest of blobs), crown of drops, two shock rings, heavy shake;
-//                              two smaller jets burst up beside it (.62 / .8 s) like fire's secondary pops
-//                     1.4 s    the column collapses back as heavy rain, foam rings where it lands; lingering mist and a wet floor
-//   溜め (fx-smash-charge.js): water gathers up from the floor into the staff tip.
-// Layers per 大 hit: maelstrom, contracting rings, floor glow, flash, flare, crown drops, blobs, 3 columns (body + core), helix,
-// crest, up-drops, top spray, foam, shock rings x2, ripple sets, rain, rain rings, mist, shake + rumble (fire: ~14, thunder: ~13).
-// The landing is drawn once: hit() for a hit, end() for a floor landing or a timeout (end(s, 'hit') only follows a hit()).
+// fx-smash-water.js: the water moves of the "スマブラ風" set (contract in fx-smash.js). Design notes and references:
+// effect-assets/WATER_WIND_IMPLEMENTATION.md.
+// Element axis: fire bursts from the centre, thunder strikes from above in an instant, water comes UP FROM THE FLOOR or POURS
+// as a heavy sustained mass, wind comes from AROUND. Each element also travels its own way (fire / thunder fly straight).
+// How water is sold here (real-time VFX breakdowns): shader meshes with flow textures scrolled along them (fx-ww-layer.js),
+// a dark-to-light value ramp with a fresnel rim, white water (Worley foam) where it is turbulent, painted splash / spray / mist
+// sprites, droplets that fall under gravity, ring waves on the floor. Timing: anticipation → impact (flash, crown, shake) →
+// a long heavy dissipation (rain, ripples, mist).
+//   小 Water Ball:    a round, wobbling ball of water (jelly squash and stretch, swirling inside, bubbles) on a slight arc with a
+//                     short trail of droplets; on contact it bursts: crown splash, spray, drops, a wet pool with ripples
+//   中 Tidal Surge:   no projectile in the air: water bursts up out of the floor in a row of spouts racing from the caster to the
+//                     target along the line between them, a breaking crest at its head; on arrival a 2.3 m geyser swallows the target
+//   大 Cataract:      an orb arcs up over the line of fire; on contact a magic circle opens above the target and a heavy waterfall
+//                     pours out of it onto the target for ~1.4 s (white water, a splash pool with ring waves, spray, mist rolling
+//                     out over the floor), then thins and stops; the pool and the mist linger
+// The game's shot position and hit time are untouched: the paths drawn here are a slight arc ≤ 0.16 m above the line (小),
+// drawn on the floor under the shot (中), or lifted above it to where the circle opens (大).
 export function createWaterMoves(kit) {
-  const { THREE, K, S, COL, TAU, Q, R, RS, emit, spr, sprFloor, seg, segV, runit, u3, take, sc, shake, add, splashBurst, screenRot } = kit;
+  const { THREE, K, S, COL, TAU, Q, R, RS, emit, spr, sprFloor, seg, segV, runit, u3, take, sc, shake, add, screenRot } = kit;
+  const WW = kit.ww, WK = WW?.water;
   const V = () => new THREE.Vector3();
   const UP = new THREE.Vector3(0, 1, 0), X = new THREE.Vector3(1, 0, 0);
-  const tA = V(), tB = V(), tC = V(), tD = V(), pv = V(), ph = V();
-  const DEEP = COL.water, HI = COL.waterHi, FOAM = COL.foam, GLOWB = COL.waterGlow, EYE = COL.waterDeep ?? COL.waterGlow;
+  const tA = V(), tB = V(), tC = V(), pv = V(), ph = V(), vel = V();
+  const DEEP = COL.water, HI = COL.waterHi, FOAM = COL.foam, GLOWB = COL.waterGlow;
+  const BODY = [.02, .17, .78], LIGHT = [.38, .86, 1], SPR = [.6, .86, 1], MIST = [.75, .9, 1];
+  const mesh = (shape, p, s, o) => WW?.mesh('water', shape, p, s, o);
+  const sprite = (tex, p, w, h, o) => WK?.sprite(tex, p, w, h, o);
+  const sat = x => Math.max(0, Math.min(1, x));
+  const hash = i => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 
   function basis(d) { // pv: perpendicular to d, as close to world up as possible; ph: horizontal
     pv.copy(UP).addScaledVector(d, -d.dot(UP));
@@ -39,341 +40,344 @@ export function createWaterMoves(kit) {
     return dist;
   }
   const drop = (x, y, z, vx, vy, vz, life, size, inten = 1.3) => emit(x, y, z, vx, vy, vz, life, size, size * .6, .6, -9.5, R() < .25 ? HI : DEEP, K.DROP, inten, .03, .03, 0);
-  // drops shed along the path since last frame: sideways spray, falling
-  function shed(s, dt, key, rate, r, sp, size = .03) {
-    const d = s.dir;
-    for (let n = take(s, key, rate * Q); n > 0; n--) {
-      const u = R(); tA.copy(s.prev).lerp(s.pos, u); runit();
-      emit(tA.x + u3[0] * r, tA.y + u3[1] * r, tA.z + u3[2] * r, u3[0] * sp - d.x * .6, u3[1] * sp + .3 - d.y * .6, u3[2] * sp - d.z * .6,
-        .35 + .35 * R(), size * (.7 + .6 * R()), size * .6, .8, -8, R() < .2 ? HI : DEEP, K.DROP, 1.25, .05, .035, (1 - u) * dt);
-    }
-  }
-  /** ripple rings spreading over the floor at g: n rings, one every gap s, each lasting T, out to rad */
-  function ripples(g, a, n, gap, T, rad, inten, seed) {
-    for (let i = 0; i < n; i++) {
-      const k = sc(a, i * gap, i * gap + T);
-      if (k <= 0 || k >= 1) continue;
-      sprFloor(S.RING, g, .15 + rad * (1 - (1 - k) ** 2.2) * (1 - .15 * i), i & 1 ? DEEP : HI, inten * (1 - k) ** 1.4, .05 + .02 * i, seed + i);
-    }
-  }
-  /** a crown of drops thrown up and out in a cone (axis up), plus a flat skirt of drops along the floor */
+  /** a crown of drops thrown up and out in a cone (axis up), plus a flat skirt along the floor */
   function crown(p, n, sp, spread = .55, floor = true, size = .045) {
     for (let i = 0; i < n * Q; i++) {
       const th = R() * TAU, el = spread * (.5 + .5 * R()), v = sp * (.6 + .6 * R());
-      drop(p.x + Math.cos(th) * .08, p.y, p.z + Math.sin(th) * .08, Math.cos(th) * Math.sin(el) * v, Math.cos(el) * v, Math.sin(th) * Math.sin(el) * v,
-        .5 + .4 * R(), size * (.7 + .7 * R()));
+      drop(p.x + Math.cos(th) * .08, p.y, p.z + Math.sin(th) * .08, Math.cos(th) * Math.sin(el) * v, Math.cos(el) * v, Math.sin(th) * Math.sin(el) * v, .5 + .4 * R(), size * (.7 + .7 * R()));
     }
     if (floor) for (let i = 0; i < n * .5 * Q; i++) {
       const th = R() * TAU, v = sp * (.5 + .7 * R());
       drop(p.x, p.y + .02, p.z, Math.cos(th) * v, .4 + .8 * R(), Math.sin(th) * v, .3 + .2 * R(), size * .7, 1.2);
     }
   }
-  function foam(p, n, r, life = .7, inten = .32) { // white foam / mist puffs
-    for (let i = 0; i < n * Q; i++) {
-      runit(); const sp = r * (.5 + R());
-      emit(p.x + u3[0] * r * .3, p.y + Math.abs(u3[1]) * r * .3, p.z + u3[2] * r * .3, u3[0] * sp, Math.abs(u3[1]) * sp * .6 + .2, u3[2] * sp,
-        life * (.7 + .6 * R()), .12, .4 + .2 * R(), 2.5, .3, FOAM, K.GLOW, inten, .15, 0, 0);
+  /** ring waves over the floor at g */
+  function ripples(g, a, n, gap, T, rad, inten, seed) {
+    for (let i = 0; i < n; i++) {
+      const k = sc(a, i * gap, i * gap + T);
+      if (k <= 0 || k >= 1) continue;
+      sprFloor(S.RING, g, .15 + rad * (1 - (1 - k) ** 2.2) * (1 - .12 * i), i & 1 ? HI : FOAM, .7 * inten * (1 - k) ** 1.4, .03 + .015 * i, seed + i);
     }
   }
-  /** chunky blobs of water (orb sprites) thrown out, falling and stretching: what reads as "a lot of water" */
-  function blobsFx(e, dt) {
-    let alive = false;
-    for (const b of e.b) {
-      if (b.t <= 0) continue; alive = true;
-      b.v.y -= 9.5 * dt; b.p.addScaledVector(b.v, dt); b.t -= dt;
-      if (b.p.y < .03) { b.t = 0; continue; }
-      const k = Math.min(1, b.t / .25), sp = b.v.length(), st = Math.min(2.2, 1 + sp * .12);
-      spr(S.WATER, b.p, b.r * k / Math.sqrt(st), b.r * k * st, screenRot(b.v), b.seed, DEEP, 1.25, 4);
-    }
-    return alive;
-  }
-  function blobs(p, n, sp, up, r = .07, life = .7) {
-    add({ update: blobsFx, b: Array.from({ length: Math.round(n) }, () => {
-      runit(); const v = sp * (.5 + .6 * R());
-      return { p: p.clone(), v: new THREE.Vector3(u3[0] * v, Math.abs(u3[1]) * v * .7 + up * (.6 + .6 * R()), u3[2] * v), r: r * (.6 + .8 * R()), t: life * (.7 + .5 * R()), seed: R() };
-    }) });
-  }
-  /** an impact flash: a white-blue bloom and a short horizontal flare */
+  /** an impact flash: white-blue bloom, glint star, short flare */
   function flashFx(e) {
     const a = e.age, k = 1 - a / e.T; if (k <= 0) return false;
     spr(S.GLOW, e.pos, e.r, e.r, 0, 0, FOAM, e.i * k * k, .8);
     spr(S.GLOW, e.pos, e.r * 1.8, e.r * 1.8, 0, 0, GLOWB, .8 * e.i * k, .1);
-    spr(S.FLARE, e.pos, e.r * 3.5, e.r * .08, 0, 0, HI, 1.6 * e.i * k * k);
+    sprite('glint', e.pos, e.r * 2.2, e.r * 2.2, { color: [.8, .95, 1], intensity: 2.2 * e.i * k * k, occ: 0, rot: e.seed });
     return true;
   }
   const flash = (p, r, i = 1.4, T = .14) => add({ update: flashFx, pos: p.clone(), r, i, T });
-  function rippleFx(e) { const k = sc(e.age, 0, e.T); sprFloor(S.RING, e.g, .05 + e.r * (1 - (1 - k) ** 2), e.age < .08 ? FOAM : HI, e.i * (1 - k) ** 1.5, .07, e.seed); return k < 1; }
-  const ripple = (x, z, r, i = 1, T = .5) => add({ update: rippleFx, g: new THREE.Vector3(x, .02, z), r, i, T });
+  /** painted splash sheets standing round g (axis up), growing and thinning: the crown of a splash */
+  function crownSheets(g, a, T, n, size, seed, inten = 1) {
+    const k = sc(a, 0, T); if (k >= 1) return;
+    const grow = 1 - (1 - k) ** 2.5, fade = (1 - k) ** 1.2, gx = g.x, gy = g.y, gz = g.z; // g may be tA
+    for (let i = 0; i < n; i++) {
+      const th = (i / n + hash(seed * 31 + i) * .15) * TAU, r = size * .25 * grow;
+      tA.set(gx + Math.cos(th) * r, gy + size * .5 * grow, gz + Math.sin(th) * r);
+      sprite('splash', tA, size * (.75 + .3 * hash(seed + i)) * grow, size * grow, { color: SPR, intensity: 1.2 * inten * fade, opacity: fade, occ: .35, rot: (hash(seed * 7 + i) - .5) * .5 + Math.sin(th) * .35, flip: i & 1 });
+    }
+  }
+  /** spray clusters flung out from p */
+  function sprayFx(e) {
+    const a = e.age; let alive = false;
+    for (let i = 0; i < e.n; i++) {
+      const life = e.life * (.6 + .5 * hash(e.seed * 13 + i)); if (a > life) continue; alive = true;
+      const th = hash(e.seed * 5 + i) * TAU, el = .25 + hash(e.seed * 3 + i) * .9, v = e.sp * (.6 + .6 * hash(e.seed * 9 + i)), k = a / life;
+      tA.set(e.p.x + Math.cos(th) * Math.cos(el) * v * a, e.p.y + Math.sin(el) * v * a - 4.9 * a * a, e.p.z + Math.sin(th) * Math.cos(el) * v * a);
+      if (tA.y < 0) continue;
+      sprite('spray', tA, e.size * (.6 + .8 * k), e.size * (.6 + .8 * k), { color: SPR, intensity: 1.3 * (1 - k), opacity: 1 - k * k, occ: .4, rot: th + a * 2 });
+    }
+    return alive;
+  }
+  const spray = (p, n, sp, size, life = .6) => add({ update: sprayFx, p: p.clone(), n, sp, size, life });
+  /** mist rolling out over the floor from g */
+  function mistFx(e) {
+    const a = e.age; let alive = false;
+    for (let i = 0; i < e.n; i++) {
+      const t0 = hash(e.seed * 3 + i) * e.spread, b = a - t0, life = e.life * (.7 + .5 * hash(e.seed * 11 + i)); if (b < 0 || b > life) { if (b < 0) alive = true; continue; } alive = true;
+      const th = hash(e.seed * 7 + i) * TAU, k = b / life, r = e.r0 + e.v * life * (1 - (1 - k) ** 2);
+      tA.set(e.g.x + Math.cos(th) * r, e.g.y + .15 + .5 * k * e.rise, e.g.z + Math.sin(th) * r);
+      const sz = e.size * (.6 + .9 * k);
+      sprite('mist', tA, sz * 1.4, sz, { color: MIST, intensity: .8 * e.i, opacity: Math.sin(Math.PI * k) * .7, occ: .12, rot: th * 3 + b * .3 });
+    }
+    return alive;
+  }
+  const mist = (g, n, r0, v, size, life, i = 1, spread = 0, rise = 1) => add({ update: mistFx, g: g.clone(), n, r0, v, size, life, i, spread, rise });
+  /** a floor pool: the disc of water with outward flow and a foamy middle */
+  function pool(g, r, I, seed, foam = .7, flow = .6) {
+    if (I <= .01) return;
+    sprFloor(S.GLOW, g, r * 1.3, GLOWB, .3 * I, .1);
+    mesh('disc', tA.set(g.x, .025, g.z), r, { opacity: .85 * I, intensity: .75, flow, spin: .05, foam, tile: [3, 2.5], seed, occ: .5, colA: [.01, .1, .5], colB: [.25, .62, .9] });
+  }
 
-  /** a jet of water bursting up from the floor at g: H tall, W half-width, stands T s, then falls back as rain.
-   *  Layers: floor flash, column body + bright core, glow, spiral strands, crest blobs, drops racing up, spray off the top, foam, rain, rain rings */
+  /** a column of water bursting up from the floor at g: H tall, W radius, stands T s, then collapses as rain.
+   *  Layers: flash, crown sheets + drops, spray, shader column (outer body + bright core), crest foam, drops racing up, pool, ripples, rain */
   function jetFx(e, dt) {
     const a = e.age - e.delay; if (a < 0) return true;
     const g = e.g, H = e.H, W = e.W, T = e.T, big = e.big;
-    if (!e.go) { // the eruption
+    if (!e.go) {
       e.go = true;
-      flash(tA.set(g.x, .25 + .3 * big, g.z), W * 3.5, 1.6);
-      crown(tA.set(g.x, .05, g.z), 40 + 160 * big, 2.5 + 2.5 * big, .45, true, .04 + .015 * big);
-      blobs(tA.set(g.x, .15, g.z), 3 + 9 * big, 1.5 + 1.5 * big, 3 + 3 * big, .06 + .05 * big);
-      foam(tA.set(g.x, .08, g.z), 6 + 24 * big, W * 3);
-      shake(.15 + .7 * big);
+      flash(tA.set(g.x, .2 + .3 * big, g.z), W * 3.5, 1.3 + .4 * big);
+      crown(tA.set(g.x, .05, g.z), 30 + 120 * big, 2.5 + 2.5 * big, .45, true, .035 + .015 * big);
+      spray(tA.set(g.x, .3, g.z), 4 + 8 * big, 2 + 2 * big, .25 + .25 * big, .7);
+      shake(.12 + .6 * big);
     }
-    const up = 1 - (1 - sc(a, 0, .13 + .05 * big)) ** 3, down = sc(a, T, T + .4), I = 1 - down;
-    const top = H * up * (1 - down * .92);
-    if (top > .05 && I > 0) {
-      const wob = 1 + .07 * Math.sin(a * 23 + e.seed * 9), c = tA.set(g.x + .03 * Math.sin(a * 11), top * .5, g.z);
-      spr(S.GLOW, c, W * 3, top * .6 + .25, 0, 0, GLOWB, .55 * I, .05);
-      spr(S.COLUMN, c, W * wob, top * .5 + .06, 0, e.seed, DEEP, 1.3 * I, -.3);
-      spr(S.COLUMN, c, W * .45, top * .5, 0, e.seed + .5, HI, .3 * I, -.2);
-      // two strands of water spiralling up round the column
-      for (let h = 0; h < 2; h++) {
-        let px = 0, py = 0, pz = 0;
-        const N = 16;
-        for (let i = 0; i <= N; i++) {
-          const u = i / N, y = top * u, th = -a * 9 + u * 7 + h * Math.PI, r = W * (1.25 - .3 * u);
-          const x = g.x + Math.cos(th) * r, z = g.z + Math.sin(th) * r;
-          if (i) seg(px, py, pz, x, y, z, (.012 + .03 * big) * (1 - .5 * u), (.6 + .5 * Math.sin(th * 2)) * I * 1.3, (i + h) % 3 ? DEEP : HI);
-          px = x; py = y; pz = z;
-        }
-      }
-      // the crest: churning blobs and foam at the top
-      if (up > .5) {
+    const up = 1 - (1 - sc(a, 0, .12 + .06 * big)) ** 3, down = sc(a, T, T + .45), I = 1 - down;
+    const top = H * up, bot = H * down * .9; // the collapse eats it from below: the top stays aloft a moment, like water falling
+    crownSheets(tA.set(g.x, .02, g.z), a, .45 + .2 * big, 5, (.6 + .9 * big) * Math.max(.5, W * 3), e.seed);
+    if (top - bot > .05 && I > 0) {
+      const o = { r0: W * 1.1, r1: W * (.7 + .2 * Math.sin(a * 9)), h: top - bot, wob: .14, lean: .06, curve: 1, flow: 3.2, foam: .5 + .3 * big, tile: [2, 1.2 * (top - bot)], seed: e.seed, occ: .7, colA: BODY, colB: LIGHT, erode: .55 * down };
+      mesh('tube', tA.set(g.x, bot, g.z), 1, o);
+      mesh('tube', tA.set(g.x, bot, g.z), 1, { ...o, r0: W * .55, r1: W * .4, foam: .2, intensity: 1.3, opacity: .7, seed: e.seed + .5, flow: 4.5, occ: .3 });
+      spr(S.GLOW, tA.set(g.x, (top + bot) / 2, g.z), W * 3.5, (top - bot) * .7 + .3, 0, 0, GLOWB, .45 * I, .05);
+      if (up > .6 && down < .3) { // the crest: white water boiling over the top
         tB.set(g.x, top, g.z);
-        spr(S.WATER, tB, W * .8 * wob, W * .55, 0, e.seed + .9, DEEP, .9 * I, 6);
-        for (const sx of [-1, 1]) spr(S.WATER, tB.set(g.x + sx * W * (.7 + .15 * Math.sin(a * 7 + sx)), top - W * .45, g.z), W * .6, W * .75, -sx * .5, e.seed + .3 + sx, DEEP, 1.05 * I, 6); // the crest curling over
-        spr(S.GLOW, tB.set(g.x, top + W * .2, g.z), W * 2.2, W * 1.1, 0, 0, FOAM, .35 * I, .2);
+        crownSheets(tB.set(g.x, top - W * .8, g.z), (a * 2.5) % .4, .4, 4, W * 3.2, e.seed + Math.floor(a * 2.5), .9); // water boiling over the top
+        sprite('spray', tB.set(g.x, top, g.z), W * 2.6, W * 2.6, { color: SPR, intensity: .8, opacity: .6 * I, occ: .2, rot: a * 2 });
       }
-      for (let n = take(e, 'u', (120 + 380 * big) * I * Q * dt); n > 0; n--) { // water racing up the column
-        const th = R() * TAU, r = W * .8 * Math.sqrt(R()), life = .35 + .3 * R();
-        emit(g.x + Math.cos(th) * r, .05, g.z + Math.sin(th) * r, Math.cos(th) * .3, top / life * 1.15, Math.sin(th) * .3, life, .035 + .02 * R(), .02, .3, -9,
-          R() < .35 ? HI : DEEP, K.DROP, 1.3, .05, .03, R() * dt);
+      for (let n = take(e, 'u', (80 + 300 * big) * I * Q * dt); n > 0; n--) { // water racing up the column
+        const th = R() * TAU, r = W * .9 * Math.sqrt(R()), life = .35 + .3 * R();
+        emit(g.x + Math.cos(th) * r, bot + .05, g.z + Math.sin(th) * r, Math.cos(th) * .3, (top - bot) / life * 1.1, Math.sin(th) * .3, life, .03 + .02 * R(), .02, .3, -9, R() < .35 ? HI : DEEP, K.DROP, 1.3, .05, .03, R() * dt);
       }
-      for (let n = take(e, 'c', (40 + 160 * big) * I * Q * dt); n > 0; n--) { // spray fanning off the top, raining back
+      for (let n = take(e, 'c', (30 + 140 * big) * I * Q * dt); n > 0; n--) { // spray fanning off the top, raining back
         const th = R() * TAU, v = (1 + 2 * R()) * (.5 + .5 * big);
         emit(g.x + RS(W), top, g.z + RS(W), Math.cos(th) * v, 1 + 2 * R(), Math.sin(th) * v, .8 + .5 * R(), .04, .025, .4, -9.8, R() < .3 ? HI : DEEP, K.DROP, 1.3, .05, .03, R() * dt);
       }
-      for (let n = take(e, 'f', (8 + 30 * big) * I * Q * dt); n > 0; n--) foam(tB.set(g.x, top * R(), g.z), 1, W * 1.5, .6, .28);
     }
-    // the collapse: the column's water comes down as rain, foam rings where it lands
-    if (down > 0 && !e.rained) {
+    if (down > 0 && !e.rained) { // the collapse: the column's water comes down as rain
       e.rained = true;
-      const n = (60 + 380 * big) * Q, h0 = Math.max(.6, H * .8);
+      const n = (60 + 320 * big) * Q, h0 = Math.max(.6, H * .8);
       for (let i = 0; i < n; i++) {
         const th = R() * TAU, r = W * (1 + 4 * Math.sqrt(R())), y = h0 * (.4 + .6 * R());
-        emit(g.x + Math.cos(th) * r * .4, y, g.z + Math.sin(th) * r * .4, Math.cos(th) * r * .8, .5 + R(), Math.sin(th) * r * .8, Math.sqrt(2 * y / 9.8) + .25, .04 + .02 * R(), .03, .2, -9.8,
-          R() < .3 ? HI : DEEP, K.DROP, 1.3, .02, .03, 0);
+        emit(g.x + Math.cos(th) * r * .4, y, g.z + Math.sin(th) * r * .4, Math.cos(th) * r * .8, .5 + R(), Math.sin(th) * r * .8, Math.sqrt(2 * y / 9.8) + .25, .04 + .02 * R(), .03, .2, -9.8, R() < .3 ? HI : DEEP, K.DROP, 1.3, .02, .03, 0);
       }
-      if (big > .5) blobs(tB.set(g.x, H * .7, g.z), 10, 2, .5, .1, 1);
+      mist(g, 6 + 8 * big, W * 2, .8, .5 + .4 * big, 1, .8);
     }
-    if (down > 0 && down < 1 || (down >= 1 && a < T + .9)) for (let n = take(e, 'rr', (6 + 30 * big) * Q * dt); n > 0; n--) {
-      const th = R() * TAU, r = W * (1 + 4.5 * Math.sqrt(R()));
-      ripple(g.x + Math.cos(th) * r, g.z + Math.sin(th) * r, .15 + .25 * R(), .8 + .5 * big, .45);
-    }
-    // the floor round the base: a foam skirt, rings racing out, a glow
-    sprFloor(S.GLOW, g, W * 5, GLOWB, .9 * (1 - sc(a, T, T + .9)), .1);
-    ripples(g, a, 2 + Math.round(3 * big), .15, .8, W * 6, 1.4 + .8 * big, e.seed);
-    for (let n = take(e, 'b', (20 + 50 * big) * I * Q * dt); n > 0; n--) {
-      const th = R() * TAU, r = W * (1.1 + .4 * R());
-      emit(g.x + Math.cos(th) * r, .05, g.z + Math.sin(th) * r, Math.cos(th) * .7, .3 + .5 * R(), Math.sin(th) * .7, .6 + .4 * R(), .12, .4, 2, .1, FOAM, K.GLOW, .3, .2, 0, R() * dt);
-    }
+    pool(g, W * (3 + 2 * big) * (.4 + .6 * up), (1 - sc(a, T + .2, T + 1)) * .9, e.seed);
+    ripples(g, a, 2 + Math.round(3 * big), .15, .8, W * 6, 1.2 + .8 * big, e.seed);
     return a < T + 1.0;
   }
   const jet = (g, H, W, T, big, delay = 0) => add({ update: jetFx, g: new THREE.Vector3(g.x, .02, g.z), H, W, T, big, delay });
 
-  // ======================= 小: Aqua Bullet =======================
+  // ======================= 小: Water Ball =======================
+  // a round ball of water on a slight arc: it rides up to 0.16 m above the line of fire and settles back towards it as it
+  // nears the end of its range; it wobbles like jelly (squash and stretch along the motion), swirls inside, carries bubbles
+  const LIFT_S = tr => .16 * Math.sin(Math.min(Math.PI, tr / 4 * Math.PI)) ** .7;
   function shotS(s, dt) {
-    const dist = track(s), d = s.dir, p = s.pos;
+    const dist = track(s), d = s.dir, t = s.age;
     basis(d);
-    // the stream: the path of the last ~0.16 s, tapering towards the muzzle, wrapped in a spiral wake
+    const p = (s.vp ??= V()).copy(s.pos).addScaledVector(UP, LIFT_S(s.travel));
+    const q = s.vq ??= p.clone(); vel.copy(p).sub(q); if (vel.lengthSq() < 1e-8) vel.copy(d); vel.normalize();
+    const R0 = .15, wob = Math.sin(t * 19 + s.seed * 9), st = 1 + .14 * wob; // jelly: stretched along the motion, squashed across
+    const m = mesh('sphere', p, 1, { flow: 1.4, spin: 1.2, foam: .22, tile: [3, 2], seed: s.seed, occ: .65, colA: BODY, colB: LIGHT, intensity: 1.2 });
+    if (m) { m.scale.set(R0 / Math.sqrt(st), R0 / Math.sqrt(st), R0 * st); m.lookAt(tA.copy(p).add(vel)); m.rotateZ(t * 3); }
+    spr(S.GLOW, p, R0 * 3.5, R0 * 3.5, 0, 0, GLOWB, .45, .05);
+    for (let i = 0; i < 4; i++) { // bubbles drifting inside
+      const f = (t * (.9 + .4 * hash(i)) + hash(i + 7)) % 1, th = hash(i + 3) * TAU + t * 2, rr = R0 * .5 * Math.sqrt(1 - (2 * f - 1) ** 2);
+      sprite('foamRing', tA.copy(p).addScaledVector(pv, R0 * .6 * (2 * f - 1)).addScaledVector(ph, Math.cos(th) * rr).addScaledVector(d, Math.sin(th) * rr * .5), R0 * .28, R0 * .28,
+        { color: [.8, .95, 1], intensity: 1.1, opacity: Math.sin(Math.PI * f) * .8, occ: 0 });
+    }
+    sprite('glint', tA.copy(p).addScaledVector(pv, R0 * .45).addScaledVector(ph, -R0 * .3), R0 * 1.3, R0 * 1.3, { color: [.9, .98, 1], intensity: 1.4, occ: 0, rot: t });
+    // a short trail of droplets and a thin wake of mist
+    for (let k = take(s, 'd', (dist * 45 + dt * 15) * Q); k > 0; k--) {
+      const u = R(); tA.copy(q).lerp(p, u); runit();
+      emit(tA.x + u3[0] * R0 * .7, tA.y + u3[1] * R0 * .7, tA.z + u3[2] * R0 * .7, u3[0] * .5 - d.x * .8, u3[1] * .5 + .4, u3[2] * .5 - d.z * .8,
+        .35 + .3 * R(), .028, .016, .8, -8, R() < .25 ? HI : DEEP, K.DROP, 1.25, .04, .03, (1 - u) * dt);
+    }
     const H = s.wh ??= { pts: [] };
-    H.pts.push({ p: p.clone(), t: s.age });
-    while (H.pts.length > 2 && s.age - H.pts[0].t > .16) H.pts.shift();
-    const n = H.pts.length;
-    for (let i = n - 1; i > 0; i--) {
-      const u = (n - 1 - i) / Math.max(1, n - 1);
-      segV(H.pts[i].p, H.pts[i - 1].p, .045 * (1 - .75 * u), .6 * (1 - u * .7), DEEP);
-    }
-    for (let h = 0; h < 2; h++) {
-      let px = 0, py = 0, pz = 0;
-      for (let i = n - 1; i >= 0; i--) {
-        const q = H.pts[i], age = s.age - q.t, th = q.t * 45 + h * Math.PI, r = .03 + .5 * age;
-        const x = q.p.x + (pv.x * Math.cos(th) + ph.x * Math.sin(th)) * r, y = q.p.y + (pv.y * Math.cos(th) + ph.y * Math.sin(th)) * r, z = q.p.z + (pv.z * Math.cos(th) + ph.z * Math.sin(th)) * r;
-        if (i < n - 1) seg(px, py, pz, x, y, z, .01, 1.3 * (1 - age / .16), h ? HI : FOAM);
-        px = x; py = y; pz = z;
-      }
-    }
-    shed(s, dt, 'd', dist * 70 + dt * 20, .03, .7);
-    // the head: a stretched bead, a pressure cone of foam just behind it
-    const rot = screenRot(d);
-    spr(S.GLOW, p, .26, .26, 0, 0, GLOWB, .45, .1);
-    spr(S.WATER, tA.copy(p).addScaledVector(d, -.05), .09, .19, rot, s.seed, DEEP, 1.4, 3);
-    spr(S.CRESCENT, tA.copy(p).addScaledVector(d, -.02), .11, .11, rot, s.seed, FOAM, .7, .35);
-    spr(S.GLOW, p, .05, .05, 0, 0, FOAM, .8, 1.5);
-    s.prev.copy(p);
+    H.pts.push(p.clone()); if (H.pts.length > 8) H.pts.shift();
+    for (let i = 0; i < H.pts.length - 1; i += 2) sprite('mist', H.pts[i], .12 + .03 * (H.pts.length - i), .1 + .02 * (H.pts.length - i), { color: MIST, intensity: .35, opacity: .5 * i / H.pts.length, occ: .15, rot: i });
+    q.copy(p); s.prev.copy(s.pos);
   }
   function splashSFx(e) {
     const a = e.age, p = e.pos, k = sc(a, 0, .3);
-    spr(S.WATER, p, .16 + .34 * k, .16 * (1 - .6 * k), 0, e.seed, DEEP, 1.3 * (1 - sc(a, .12, .35)), 2); // a blob flattening as it spreads
-    spr(S.RING, p, .1 + .55 * k, .1 + .55 * k, 0, e.seed, HI, 1.2 * (1 - k) ** 1.5, .06);
-    sprFloor(S.WATER, e.g, .55 * (1 - .3 * sc(a, .4, 1.1)), EYE, .6 * (1 - sc(a, .5, 1.1)), 1, e.seed); // the wet patch on the floor
-    ripples(e.g, a, 3, .1, .5, .8, 1.4, e.seed);
+    if (a < .2) mesh('sphere', p, .12 + .3 * k, { opacity: 1 - a / .2, flow: 3, foam: .6 + k, erode: k * .8, tile: [3, 2], seed: e.seed, occ: .5, colA: BODY, colB: LIGHT });
+    crownSheets(p, a, .35, 5, .55, e.seed, 1.1);
+    pool(e.g, .45 + .25 * k, (1 - sc(a, .4, 1.1)) * .8, e.seed, .5);
+    ripples(e.g, a, 3, .1, .5, .8, 1.2, e.seed);
     return a < 1.1;
   }
   function splashS(p0, reason) {
     const floor = reason === 'floor' || p0.y < .35, p = p0.clone(); if (floor) p.y = .03;
-    crown(p, floor ? 80 : 55, floor ? 3.4 : 2.6, floor ? .5 : 1.4, floor);
-    blobs(p, 5, 1.6, 1.2, .05, .55);
-    foam(p, 10, .5);
+    crown(p, floor ? 70 : 50, floor ? 3.2 : 2.6, floor ? .5 : 1.4, floor);
+    spray(p, 6, 2.2, .22, .5);
     flash(p, .45, 1.3, .1);
     add({ update: splashSFx, pos: p, g: new THREE.Vector3(p.x, .02, p.z) });
-    jet(p, .95, .1, .14, .15, .08); // a short spout kicks up from the floor under it
+    if (!floor) mist(tA.set(p.x, Math.max(0, p.y - .3), p.z), 4, .1, .5, .35, .6, .7);
     shake(.18);
   }
 
-  // ======================= 中: Spiral Lance =======================
+  // ======================= 中: Tidal Surge =======================
+  // the head on the floor under the shot; spouts burst up behind it every 0.32 m and fall back
+  const GAP = .32;
+  function spoutFx(e, dt) {
+    const a = e.age, g = e.g, T = .55, H = e.H;
+    const up = 1 - (1 - sc(a, 0, .1)) ** 3, down = sc(a, .18, T), top = H * up * (1 - .35 * down), bot = H * down * .85;
+    if (top - bot > .04) mesh('tube', tA.set(g.x, bot, g.z), 1, { r0: e.W, r1: e.W * .55, h: top - bot, wob: .18, lean: .05, flow: 3.5, foam: .65, tile: [2, 1.2], seed: e.seed, occ: .65, colA: BODY, colB: LIGHT, erode: .6 * down });
+    crownSheets(g, a, .4, 4, .55 * e.H + .25, e.seed, .9);
+    if (!e.go) { e.go = true; crown(tA.set(g.x, .05, g.z), 26, 2.6, .5, true, .035); }
+    for (let n = take(e, 'u', 90 * (1 - down) * Q * dt); n > 0; n--) {
+      const th = R() * TAU;
+      emit(g.x + Math.cos(th) * e.W * .6, top * .8, g.z + Math.sin(th) * e.W * .6, Math.cos(th) * .9 + e.d.x * 1.2, 1 + 1.5 * R(), Math.sin(th) * .9 + e.d.z * 1.2, .5 + .3 * R(), .035, .02, .4, -9.5, R() < .3 ? HI : DEEP, K.DROP, 1.3, .05, .03, R() * dt);
+    }
+    return a < T + .1;
+  }
+  function wakeFx(e) { // the wet track behind the surge: a long pool strip, foam, ring waves
+    const a = e.age, I = 1 - sc(a, .5, 1.4);
+    pool(e.g, .42, I * .75, e.seed, .55, .9);
+    ripples(e.g, a, 2, .12, .7, .7, 1, e.seed);
+    return a < 1.4;
+  }
   function shotM(s, dt) {
-    const dist = track(s), d = s.dir, p = s.pos, t = s.age;
-    basis(d);
-    const L = Math.min(.3 + s.travel, .75), rot = screenRot(d);
-    // the lance: a long body of water pointing along the flight, a sharp bright point
-    spr(S.GLOW, tA.copy(p).addScaledVector(d, -L * .4), .7, .7, 0, 0, GLOWB, .6, .05);
-    spr(S.WATER, tA.copy(p).addScaledVector(d, -L * .45), .15, L * .6, rot, s.seed, DEEP, 1.4, 4);
-    spr(S.CRESCENT, tA.copy(p).addScaledVector(d, -.06), .2, .2, rot, s.seed, FOAM, .9, .35); // the pressure cone at the point
-    spr(S.WATER, tA.copy(p).addScaledVector(d, -.05), .07, .13, rot, s.seed + .4, HI, .6, 6);
-    segV(p, tA.copy(p).addScaledVector(d, -L * .5), .018, 1.6, FOAM);
-    // three strands spiralling round it, tightening to the point
-    for (let h = 0; h < 3; h++) {
-      let px = 0, py = 0, pz = 0;
-      const N = 14;
-      for (let i = 0; i <= N; i++) {
-        const u = i / N, th = -t * 22 + u * 10 + h * TAU / 3, r = .04 + .2 * u ** .7;
-        tA.copy(p).addScaledVector(d, -L * 1.2 * u).addScaledVector(pv, Math.cos(th) * r).addScaledVector(ph, Math.sin(th) * r);
-        if (i) seg(px, py, pz, tA.x, tA.y, tA.z, .026 * (1 - .5 * u), 1.4 * (1 - u * .8), (i + h) % 3 ? DEEP : HI);
-        px = tA.x; py = tA.y; pz = tA.z;
-      }
+    const dist = track(s), d = s.dir, p = s.pos;
+    const G = tC.set(p.x, .02, p.z), fwd = vel.set(d.x, 0, d.z); if (fwd.lengthSq() < 1e-4) fwd.set(1, 0, 0); fwd.normalize();
+    const head = Math.max(.6, p.y + .15); // the crest reaches the shot's height, so the target is hit where the game says
+    s.sg ??= { last: s.travel - GAP, from: new THREE.Vector3(s.from.x, .02, s.from.z) };
+    while (s.travel - s.sg.last >= GAP) { // the row of spouts left behind the head, rising towards it
+      s.sg.last += GAP;
+      const back = s.travel - s.sg.last, g = new THREE.Vector3(p.x, .02, p.z).addScaledVector(fwd, -back);
+      const k = sat(s.sg.last / 2.5);
+      add({ update: spoutFx, g, H: .45 + .75 * k + .25 * R(), W: .14 + .06 * k, d: fwd.clone() });
+      add({ update: wakeFx, g: g.clone() });
     }
-    // pressure rings sliding back down the lance
-    for (let j = 0; j < 2; j++) {
-      const ph0 = (t * 3.5 + j * .5) % 1, c = tB.copy(p).addScaledVector(d, -L * ph0), r = .07 + .14 * ph0;
-      let px = 0, py = 0, pz = 0;
-      for (let i = 0; i <= 14; i++) {
-        const th = i / 14 * TAU; tA.copy(c).addScaledVector(pv, Math.cos(th) * r).addScaledVector(ph, Math.sin(th) * r);
-        if (i) seg(px, py, pz, tA.x, tA.y, tA.z, .01, 1.2 * (1 - ph0), HI);
-        px = tA.x; py = tA.y; pz = tA.z;
-      }
+    // the crest at the head: a leaning wall of water with white water on top
+    const t = s.age;
+    mesh('tube', G, 1, { r0: .3, r1: .2, h: head, wob: .25, lean: .12, curve: .7, flow: 4, foam: .75, tile: [2, 1.4], seed: s.seed, occ: .7, colA: BODY, colB: LIGHT });
+    mesh('helix', tA.copy(G), 1, { r0: .42, r1: .2, h: head, turns: 1.4, width: .16, phase: -t * 12, flow: 2.5, foam: .4, tile: [3, 1], seed: s.seed + .3, occ: .4, colA: BODY, colB: LIGHT, opacity: .9 });
+    tA.copy(G).addScaledVector(fwd, .1); tA.y = head;
+    sprite('mist', tA, .8, .55, { color: [.85, .95, 1], intensity: .6, opacity: .7, occ: .3, rot: t * 2 });
+    crownSheets(tB.copy(G).addScaledVector(fwd, .2), (t * 3.5) % 1 * .4, .4, 3, .7, s.seed + Math.floor(t * 3.5), 1);
+    for (let n = take(s, 'sp', (dist * 50 + dt * 30) * Q); n > 0; n--) { // spray thrown forward and sideways off the crest
+      const side = R() < .5 ? -1 : 1, v = 1.5 + 2 * R();
+      emit(G.x + RS(.2), .1 + R() * head, G.z + RS(.2), fwd.x * v * .8 - fwd.z * side * v * .6, 1 + 2 * R(), fwd.z * v * .8 + fwd.x * side * v * .6, .5 + .3 * R(), .04, .02, .4, -9.5, R() < .3 ? HI : DEEP, K.DROP, 1.3, .05, .03, R() * dt);
     }
-    shed(s, dt, 'd', dist * 60, .12, .6, .034);
+    sprFloor(S.GLOW, G, 1.1, GLOWB, .8, .1);
     s.prev.copy(p);
   }
-  function lanceFx(e) {
-    const a = e.age, p = e.pos, g = e.g, k = sc(a, 0, .2);
-    const sz = (.25 + .45 * (1 - (1 - k) ** 2)) * e.k;
-    spr(S.WATER, p, sz, sz * (1 - .35 * k), 0, e.seed, DEEP, 1.3 * (1 - sc(a, .03, .22)), 4); // the lance's water bursting on the target
-    for (let i = 0; i < 2; i++) {
-      const kk = sc(a, i * .08, .45 + i * .08), rr = (.25 + 1.1 * (1 - (1 - kk) ** 3)) * e.k;
-      if (kk > 0 && kk < 1) spr(S.RING, p, rr, rr, i, e.seed + i, i ? DEEP : HI, 1.1 * (1 - kk) ** 1.5, .05 + .03 * i);
-    }
-    // the whirlpool opening on the floor under the target, the column comes out of it at .18 s
-    const open = 1 - (1 - sc(a, .02, .25)) ** 2, close = sc(a, .7, 1.3);
-    sprFloor(S.VORTEX, g, (.3 + .8 * open) * (1 - .3 * close) * e.k, DEEP, 1.2 * open * (1 - close), 1.5 + 2 * open, e.seed);
-    if (a < .2) for (let i = 0; i < 2; i++) { const kk = sc(a, i * .06, .2 + i * .06); sprFloor(S.RING, g, (1.4 - 1.1 * kk) * e.k, HI, 1.3 * kk * (1 - kk) * 3, .05, e.seed + i); } // pulled in
-    return a < 1.3;
-  }
-  function lance(p0, reason) {
-    const big = reason === 'hit', k = big ? 1 : .75, p = p0.clone();
-    if (reason === 'floor') p.y = .15;
-    splashBurst(p, .9 * k, 200 * k, 1.1, .6);
-    blobs(p, 6 * k, 2, 1, .07, .6);
-    foam(p, 14 * k, .8);
-    flash(p, .8 * k, 1.5, .12);
-    const g = new THREE.Vector3(p.x, .02, p.z);
-    add({ update: lanceFx, pos: p, g, k });
-    jet(g, 2.1 * k, .3 * k, .4, .45 * k, .18);
+  function surgeLand(p0, reason) {
+    const big = reason === 'hit', k = big ? 1 : .7, g = new THREE.Vector3(p0.x, .02, p0.z);
+    flash(tA.set(p0.x, Math.max(.4, p0.y), p0.z), .8 * k, 1.5, .12);
+    jet(g, 2.3 * k, .42 * k, .5, .7 * k);
+    mist(g, 8, .4, .9, .6, 1.1, .9, .3);
     shake(big ? .45 : .28);
   }
 
-  // ======================= 大: Maelstrom Geyser =======================
+  // ======================= 大: Cataract =======================
+  // the orb arcs up: it rides LIFT(travel) above the line of fire, which is where the circle opens on contact
+  const LIFT = tr => 1.25 * (1 - Math.exp(-tr / 1.1));
   function shotL(s, dt) {
-    const dist = track(s), d = s.dir, p = s.pos, t = s.age;
+    const dist = track(s), d = s.dir, t = s.age;
     basis(d);
-    const R0 = .28, L = Math.min(.25 + s.travel, 1.2);
-    for (let h = 0; h < 2; h++) { // a double helix of water trailing the orb, drilling
-      const N = 18; let px = 0, py = 0, pz = 0;
-      for (let i = 0; i <= N; i++) {
-        const u = i / N, th = t * 14 + u * 9 + h * Math.PI, r = R0 * (1.25 - .55 * u);
-        tA.copy(p).addScaledVector(d, -L * u).addScaledVector(pv, Math.cos(th) * r).addScaledVector(ph, Math.sin(th) * r);
-        if (i) seg(px, py, pz, tA.x, tA.y, tA.z, .04 * (1 - .7 * u), 1.1 * (1 - u), (i + h) % 4 ? DEEP : HI);
-        px = tA.x; py = tA.y; pz = tA.z;
-      }
+    const p = tB.copy(s.pos).addScaledVector(UP, LIFT(s.travel));
+    const H = s.wh ??= { pts: [] };
+    H.pts.push({ p: p.clone(), t: s.age }); while (H.pts.length > 2 && s.age - H.pts[0].t > .3) H.pts.shift();
+    const n = H.pts.length;
+    for (let i = n - 1; i > 0; i--) { // the arc it leaves: a thick tapering stream
+      const u = (n - 1 - i) / Math.max(1, n - 1);
+      segV(H.pts[i].p, H.pts[i - 1].p, .12 * (1 - .8 * u), .5 * (1 - u), DEEP);
+      if (i % 3 === 0) sprite('mist', H.pts[i].p, .25 + .5 * u, .25 + .5 * u, { color: MIST, intensity: .4, opacity: (1 - u) * .6, occ: .25, rot: i });
     }
-    shed(s, dt, 'd', dist * 110 + dt * 40, .2, .9, .038);
-    foam(tA.copy(p).addScaledVector(d, -.2), dt * 20, .3, .4);
-    spr(S.GLOW, p, R0 * 3.8, R0 * 3.8, 0, 0, GLOWB, .5, .05);
-    spr(S.WATER, p, R0, R0, 0, s.seed, DEEP, 1.35, 4);
-    spr(S.WATER, p, R0 * .6, R0 * .6, 0, s.seed + .3, HI, .35, 6);
-    spr(S.RING, p, R0 * 1.3, R0 * 1.3, t * 3, s.seed, HI, .7, .06);
-    // the floor answers from below: a wake of ripples under the orb's path
-    if ((s.rip = (s.rip ?? 0) - dt) <= 0 && p.y < 2.2) { s.rip = .07; ripple(p.x + RS(.1), p.z + RS(.1), .5 + .3 * R(), .9, .6); }
-    s.prev.copy(p);
+    const R0 = .27, pulse = 1 + .05 * Math.sin(t * 13);
+    mesh('sphere', p, R0 * pulse, { flow: 1.6, spin: .4, foam: .3, tile: [3, 2], seed: s.seed, occ: .7, colA: BODY, colB: LIGHT, intensity: 1.2 });
+    for (let h = 0; h < 3; h++) { // ribbons of water wound round the orb, trailing
+      const m = mesh('helix', p, 1, { r0: R0 * 1.25, r1: R0 * 1.25, h: 0, turns: .8, width: .1, phase: t * 7 + h * TAU / 3, flow: 3, foam: .5, tile: [2, 1], seed: s.seed + h, occ: .4, colA: BODY, colB: LIGHT, opacity: .9 });
+      if (m) m.rotation.set(h * 1.1 + t * 2, h * .7, t * 1.3);
+    }
+    spr(S.GLOW, p, R0 * 4, R0 * 4, 0, 0, GLOWB, .55, .05);
+    sprite('glint', tA.copy(p).addScaledVector(pv, R0 * .4).addScaledVector(ph, -R0 * .3), .3, .3, { color: [.85, .97, 1], intensity: 1.5, occ: 0, rot: t });
+    for (let k = take(s, 'd', (dist * 70 + dt * 30) * Q); k > 0; k--) { runit(); emit(p.x + u3[0] * R0, p.y + u3[1] * R0, p.z + u3[2] * R0, u3[0] * .8 - d.x, u3[1] * .5, u3[2] * .8 - d.z, .5 + .4 * R(), .035, .02, .5, -9, R() < .3 ? HI : DEEP, K.DROP, 1.3, .05, .03, R() * dt); }
+    s.prev.copy(s.pos);
   }
-  const ERUPT = .45, GH = 3;
-  function maelstromFx(e, dt) {
-    const a = e.age, g = e.g;
-    // the maelstrom: widens and speeds up until the eruption, then slowly closes
-    const open = 1 - (1 - sc(a, 0, ERUPT)) ** 2, close = sc(a, 1.6, 2.6), I = Math.min(1, a / .08) * (1 - close);
-    const rad = (.4 + 1.8 * open) * (1 - .25 * close);
-    sprFloor(S.GLOW, g, rad * 1.5, GLOWB, (.6 + .8 * open) * I, .1);
-    sprFloor(S.VORTEX, g, rad, DEEP, 1.4 * I, 1 + 3 * open, e.seed);
-    sprFloor(S.VORTEX, g, rad * .6, EYE, .9 * I, -(1.5 + 3 * open), e.seed + .5); // an inner counter-turning layer: depth
-    if (a < ERUPT + .05) { // rings contracting inward: the floor is being pulled down
-      for (let i = 0; i < 3; i++) {
-        const ph0 = ((a * 2.6 + i / 3) % 1), rr = rad * (1.6 - 1.3 * ph0);
-        sprFloor(S.RING, g, rr, i ? DEEP : FOAM, 1.4 * Math.sin(Math.PI * ph0) * open, .05, e.seed + i);
-      }
-      for (let n = take(e, 's', 220 * Q * dt); n > 0; n--) { // foam flecks swirling in over the floor
-        const th = R() * TAU, r = rad * (.7 + .6 * R()), c = Math.cos(th), sn = Math.sin(th), w = 2.5 + 2 * open;
-        emit(g.x + c * r, .04, g.z + sn * r, -sn * w - c * 1.2, .05, c * w - sn * 1.2, .35 + .2 * R(), .05, .02, .5, 0, R() < .5 ? FOAM : HI, K.SPARK, 1.6, .05, .06, R() * dt);
-      }
-      for (let n = take(e, 'b', 60 * Q * dt); n > 0; n--) { const th = R() * TAU, r = rad * .5 * R(); drop(g.x + Math.cos(th) * r, .03, g.z + Math.sin(th) * r, RS(.3), 1 + 1.5 * R(), RS(.3), .3, .03); }
-      if ((e.rumble = (e.rumble ?? 0) - dt) <= 0) { e.rumble = .1; shake(.12 + .2 * open); }
+  // the magic circle lying flat at height y: double ring, rune ticks, a hexagram and an inner ring, opening out, turning
+  function skyCircle(c, R1, I, spin) {
+    if (I <= .01) return;
+    const ring = (r, w, it, col, n = 48) => { let px = c.x + r, pz = c.z; for (let i = 1; i <= n; i++) { const a = i / n * TAU, x = c.x + Math.cos(a) * r, z = c.z + Math.sin(a) * r; seg(px, c.y, pz, x, c.y, z, w, it, col); px = x; pz = z; } };
+    ring(R1, .035, 1.4 * I, HI); ring(R1 * .9, .016, I, FOAM);
+    for (let i = 0; i < 24; i++) { const th = spin + i / 24 * TAU, l = i % 3 === 0; seg(c.x + Math.cos(th) * R1 * .91, c.y, c.z + Math.sin(th) * R1 * .91, c.x + Math.cos(th) * R1 * (l ? .99 : .96), c.y, c.z + Math.sin(th) * R1 * (l ? .99 : .96), l ? .02 : .012, (l ? 1.2 : .7) * I, FOAM); }
+    for (let tri = 0; tri < 2; tri++) for (let i = 0; i < 3; i++) {
+      const a0 = -spin * 1.3 + tri * Math.PI / 3 + i * TAU / 3, a1 = a0 + TAU / 3;
+      seg(c.x + Math.cos(a0) * R1 * .84, c.y, c.z + Math.sin(a0) * R1 * .84, c.x + Math.cos(a1) * R1 * .84, c.y, c.z + Math.sin(a1) * R1 * .84, .02, 1.1 * I, HI);
     }
-    if (!e.erupted && a >= ERUPT) { // the eruption: one main geyser, two smaller jets beside it a moment later
-      e.erupted = true;
-      jet(g, GH, .55, .95, 1);
-      for (const [d0, th] of [[.17, e.seed * TAU], [.35, e.seed * TAU + 2.4]]) jet(tA.set(g.x + Math.cos(th) * .85, 0, g.z + Math.sin(th) * .85), 1.9, .22, .35, .45, d0);
-      flash(tA.set(g.x, .9, g.z), 1.5, 1.5, .18);
-      sprFloor(S.GLOW, g, 3, FOAM, 1, .5);
+    ring(R1 * .42, .018, I, HI, 32);
+    spr(S.GLOW, c, R1 * 2.6, R1 * 1.1, 0, 0, GLOWB, .6 * I, .1);
+  }
+  const OPEN = .28, POUR = .3, STOP = 1.75;
+  function cataractFx(e, dt) {
+    const a = e.age, g = e.g, c = e.c, top = c.y - .05, t = kit.time;
+    const open = 1 - (1 - sc(a, 0, OPEN)) ** 3, close = sc(a, STOP + .2, STOP + .7);
+    const R1 = (.35 + 1.05 * open) * (1 - .3 * close);
+    skyCircle(c, R1, (1.2 + .6 * (1 - sc(a, 0, .4))) * (1 - close), a * 1.6);
+    if (a < OPEN) { // the orb is pulled into the circle and churns there
+      mesh('sphere', tA.copy(c).addScaledVector(UP, -.15 * (1 - open)), .27 * (1 - .6 * open), { flow: 3, foam: .5, tile: [3, 2], seed: e.seed, occ: .7, colA: BODY, colB: LIGHT });
     }
-    const b = a - ERUPT;
+    // underside of the circle: a churning disc of water the fall comes out of
+    if (a > .1 && close < 1) {
+      const m = mesh('disc', tA.set(c.x, c.y - .02, c.z), R1 * .85, { opacity: (1 - close) * sc(a, .1, .35), flow: -.8, spin: .3, twist: .6, foam: .6, tile: [4, 2], seed: e.seed, occ: .6, colA: BODY, colB: LIGHT });
+      if (m) m.rotation.x = Math.PI;
+    }
+    // the waterfall: its front falls under gravity from the circle; once it stops pouring the tail falls after it
+    const b = a - POUR;
     if (b > 0) {
-      for (let i = 0; i < 2; i++) { // shock rings over the floor
-        const k = sc(b, i * .1, .6 + i * .1), rr = .5 + (3.2 - .8 * i) * (1 - (1 - k) ** 3);
-        if (k > 0 && k < 1) sprFloor(S.RING, g, rr, i ? HI : FOAM, 2.2 * (1 - k) ** 1.5, .04, e.seed + 3 + i);
+      const fall = top, front = Math.min(fall, 1.2 * b + 4.9 * b * b), bs = a - STOP, tail = bs > 0 ? Math.min(fall, 1.5 * bs + 4.9 * bs * bs) : 0;
+      const y1 = top - tail, y0 = Math.max(0, top - front), h = y1 - y0;
+      const landed = front >= fall, thick = .5 * (1 - .45 * sc(a, STOP - .3, STOP + .2));
+      if (h > .03) {
+        const base = { r0: thick * 1.05, r1: thick * .8, h, wob: .1, lean: .03, curve: .6, flow: -5.5, foam: .55, tile: [2.5, 1 * h], seed: e.seed, occ: .75, colA: BODY, colB: LIGHT };
+        mesh('tube', tA.set(c.x, y0, c.z), 1, base); // the body
+        mesh('tube', tA.set(c.x, y0, c.z), 1, { ...base, r0: thick * .55, r1: thick * .45, flow: -7.5, foam: .3, intensity: 1.4, opacity: .75, seed: e.seed + .4, occ: .3 }); // a bright fast core
+        mesh('tube', tA.set(c.x, y0, c.z), 1, { ...base, r0: thick * 1.5, r1: thick * 1.05, flow: -4, foam: .9, opacity: .45, erode: .45, seed: e.seed + .8, wob: .2, occ: .25 }); // a ragged white sheath
+        spr(S.GLOW, tA.set(c.x, (y0 + y1) / 2, c.z), thick * 4, h * .7 + .4, 0, 0, GLOWB, .5, .05);
+        // the leading edge while falling: white water
+        if (!landed) { tA.set(c.x, y0, c.z); sprite('spray', tA, thick * 3.5, thick * 3.5, { color: SPR, intensity: 1.4, opacity: .9, occ: .3, rot: a * 4 }); spr(S.GLOW, tA, thick * 2.5, thick * 2, 0, 0, FOAM, .5, .3); }
       }
-      const kc = sc(b, 0, .35); if (kc < 1) spr(S.RING, tA.set(g.x, 1.3, g.z), .6 + 2.2 * (1 - (1 - kc) ** 3), .6 + 2.2 * (1 - (1 - kc) ** 3), 0, e.seed, HI, 1.6 * (1 - kc) ** 1.5, .04);
-      if (b > 1.1) for (let n = take(e, 'm', 40 * (1 - sc(b, 1.8, 2.3)) * Q * dt); n > 0; n--) { // lingering mist over the wet floor
-        const th = R() * TAU, r = 1.6 * Math.sqrt(R());
-        emit(g.x + Math.cos(th) * r, .1 + R() * .6, g.z + Math.sin(th) * r, RS(.2), .1 + .15 * R(), RS(.2), 1.2 + .6 * R(), .3, .9, 1, 0, FOAM, K.GLOW, .16, .2, 0, R() * dt);
+      if (landed && !e.hitFloor) { // the impact on the floor (and the target)
+        e.hitFloor = true; e.tl = a;
+        flash(tA.set(g.x, .4, g.z), 1, 1.1, .14);
+        crown(tA.set(g.x, .05, g.z), 220, 4.5, .6, true, .05);
+        spray(tA.set(g.x, .4, g.z), 14, 3.5, .5, .8);
+        shake(.8);
+      }
+      if (e.hitFloor) { // the impact zone while it pours
+        const pouring = 1 - sc(a, STOP + .1, STOP + .5), b2 = a - e.tl;
+        crownSheets(tA.set(g.x, .02, g.z), b2 % .3, .3, 6, 1.2 * pouring + .2, e.seed + Math.floor(b2 / .3), pouring);
+        for (let n = take(e, 'sp', 260 * pouring * Q * dt); n > 0; n--) { // spray thrown out low and wide
+          const th = R() * TAU, v = 2 + 3.5 * R(), r = thick * (.8 + .4 * R());
+          emit(g.x + Math.cos(th) * r, .1 + .3 * R(), g.z + Math.sin(th) * r, Math.cos(th) * v, 1 + 2.5 * R(), Math.sin(th) * v, .45 + .35 * R(), .04, .025, .5, -9.5, R() < .35 ? HI : DEEP, K.DROP, 1.3, .05, .03, R() * dt);
+        }
+        if ((e.mt = (e.mt ?? 0) - dt) <= 0 && pouring > .2) { e.mt = .12; mist(g, 3, thick, 1.4, .7, 1.2, .9); }
+        if ((e.rumble = (e.rumble ?? 0) - dt) <= 0 && pouring > .3) { e.rumble = .14; shake(.2); }
+        // white water boiling at the foot of the fall
+        mesh('sphere', tA.set(g.x, .02, g.z), 1, { opacity: .8 * pouring, flow: 3, foam: 1.4, erode: .35, tile: [5, 3], seed: e.seed + .2, occ: .45, colA: BODY, colB: LIGHT })?.scale.set(thick * 1.9, .2 * pouring + .03, thick * 1.9);
       }
     }
-    sprFloor(S.WATER, g, 1.9 * open, EYE, .5 * sc(a, .5, .8) * (1 - sc(a, 2, 2.8)), 1, e.seed); // the wet floor
-    return a < 2.8;
+    // the pool spreading under it, ring waves running out over the floor
+    if (e.hitFloor) {
+      const b2 = a - e.tl, I = 1 - sc(a, STOP + .5, 3);
+      pool(g, .6 + 1.5 * (1 - Math.exp(-b2 * 2.5)), I, e.seed, .8, .9);
+      for (let i = 0; i < 5; i++) { // a new ring wave every 0.28 s while it pours
+        const ph0 = (b2 / .28 - i) ; if (ph0 < 0) continue;
+        const k = (b2 - i * .28) / 1.1; if (k > 1 || a - i * .28 > STOP + 1) continue;
+        sprFloor(S.RING, g, .4 + 2.6 * (1 - (1 - k) ** 2), i & 1 ? HI : FOAM, 1.1 * (1 - k) ** 1.4, .035, e.seed + i);
+      }
+    }
+    return a < 3.1;
   }
-  function maelstrom(p0, reason) {
-    const p = p0.clone(), g = new THREE.Vector3(p.x, .02, p.z);
-    splashBurst(p, 1, 140, 1.1, .6); // the orb bursting on the target
-    blobs(p, 6, 2, 1, .08, .6);
-    flash(p, 1, 1.6, .14);
-    add({ update: maelstromFx, g });
-    shake(reason === 'hit' ? .6 : .45);
+  function cataract(p0, reason) {
+    const g = new THREE.Vector3(p0.x, .02, p0.z);
+    const c = new THREE.Vector3(p0.x, Math.max(2.5, p0.y + (reason === 'hit' ? 1.35 : 1.6)), p0.z);
+    flash(c, 1, 1.4, .16);
+    add({ update: cataractFx, g, c });
+    shake(.35);
   }
 
   const SHOT = { s: shotS, m: shotM, l: shotL };
-  const LAND = { s: splashS, m: lance, l: maelstrom };
+  const LAND = { s: splashS, m: surgeLand, l: cataract };
   const tierOf = t => SHOT[t] ? t : 'm'; // no tier (an old caller): the middle move, never the classic fallback (it routes back here)
+  const last = new Map(); // tier -> the last shot drawn: the 小 ball bursts where it is drawn (a little above the line of fire)
   return {
-    shot(s, dt) { SHOT[tierOf(s.tier)](s, dt); },
-    end(s, reason) { if (reason !== 'hit') LAND[tierOf(s.tier)](s.pos, reason); }, // a hit was drawn by hit() just before
-    hit(pos, tier) { LAND[tierOf(tier)](pos, 'hit'); },
+    shot(s, dt) { SHOT[tierOf(s.tier)](s, dt); last.set(tierOf(s.tier), s); },
+    end(s, reason) { if (reason !== 'hit') LAND[tierOf(s.tier)](reason === 'timeout' && s.vp ? s.vp : s.pos, reason); }, // a hit was drawn by hit() just before
+    hit(pos, tier) { const t = tierOf(tier), s = last.get(t); LAND[t](s?.vp && s.pos.distanceTo(pos) < .5 ? s.vp : pos, 'hit'); },
   };
 }

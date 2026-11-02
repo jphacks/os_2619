@@ -24,6 +24,15 @@ for (const [file, table] of [['fx-smash-charge.js', 'const PAL = {'], ['fx-smash
   for (const el of (file === 'field3d.js' ? ['fire', 'water', 'wind'] : ELEMENTS)) assert.match(body, new RegExp(`\\b${el}\\s*:`), `${file} ${table} has ${el}`);
 }
 
+// fx-ww-layer.js: every water / wind texture it loads is in its assets folder, and both shader parts are there
+{ const s = src('fx-ww-layer.js');
+  for (const [table, dir] of [['WATER_TEX', 'water'], ['WIND_TEX', 'wind']]) {
+    const i = s.indexOf(`const ${table} = [`), body = s.slice(i, s.indexOf('];', i)), files = [...body.matchAll(/'([\w-]+\.png)'/g)].map(m => m[1]);
+    assert.ok(files.length >= 8, `${table} lists its textures`);
+    for (const f of files) assert.ok(existsSync(new URL(`./public/assets/${dir}/${f}`, import.meta.url)), `assets/${dir}/${f}`);
+  }
+  for (const k of ['uniform sampler2D tFlow, tFoam, tStreak', 'texture2D(tFlow', 'texture2D(tStreak', 'pow(rim']) assert.ok(s.includes(k), `fx-ww-layer shader: ${k}`);
+}
 // a kit of stubs that counts what gets drawn
 const V = () => new THREE.Vector3();
 let drawn = 0, time = 0, seed = 1; const kinds = new Set();
@@ -43,6 +52,13 @@ const kit = {
   take: (st, k, n) => { const v = (st.acc[k] ?? 0) + n, f = Math.floor(v); st.acc[k] = v - f; return f; },
   flick: () => 1, sc: (k, a, b) => Math.min(1, Math.max(0, (k - a) / (b - a))), shake: () => {},
   fireBurst: () => {}, sparkBurst: () => {}, splashBurst: () => { drawn++; }, gustBurst: () => { drawn++; }, trailFire: () => {}, headFire: () => {}, screenRot: () => .3,
+  ww: { // fx-ww-layer.js: shader meshes and textured sprites
+    mesh: (el, shape, p, sc, o = {}) => { assert.ok(['water', 'wind'].includes(el) && ['tube', 'helix', 'sphere', 'disc'].includes(shape), `ww.mesh ${el} ${shape}`);
+      assert.ok(Number.isFinite(p.x + p.y + p.z + sc) && Object.values(o).every(v => typeof v !== 'number' || Number.isFinite(v)), 'ww.mesh: finite'); drawn++; kinds.add('M' + shape); return new THREE.Object3D(); },
+    water: { sprite: (tex, p, w, h) => { assert.ok(Number.isFinite(p.x + p.y + p.z + w + h), 'ww sprite: finite'); drawn++; kinds.add('T' + tex); } },
+    wind: { sprite: (tex, p, w, h) => { assert.ok(Number.isFinite(p.x + p.y + p.z + w + h), 'ww sprite: finite'); drawn++; kinds.add('T' + tex); } },
+    RAMP: { tint: 0 },
+  },
   add: e => { e.age = 0; e.seed = R(); e.acc = {}; e.bolts ??= []; live.push(e); return e; }, classic, camera: new THREE.PerspectiveCamera(), get time() { return time; },
 };
 const style = createSmashStyle(kit);
@@ -61,8 +77,8 @@ for (const el of NEW) {
     runLive();
     assert.ok(drawn > 20, `${el} ${tier} ${how} landing draws`);
   }
-  // the signature layers: water rises from a whirlpool as a column, wind spins a funnel and throws leaves
-  for (const k of el === 'water' ? ['S9', 'S10', 'K5'] : ['S10', 'S8', 'K6']) assert.ok(kinds.has(k), `${el} landings draw ${k}`);
+  // the signature layers: water = shader columns / waterfall, orb, floor pool, painted splash, drops; wind = shader funnel, wound bands, leaves
+  for (const k of el === 'water' ? ['Mtube', 'Msphere', 'Mdisc', 'Tsplash', 'K5'] : ['Mtube', 'Mhelix', 'Mdisc', 'Ttwirl', 'K6']) assert.ok(kinds.has(k), `${el} landings draw ${k}`);
   assert.equal(live.length, 0, `${el} landing effects end`);
   // charge (tip), aura (stick + body + magic circle), guard and block
   const c = { el, tip: new THREE.Vector3(0, 1.4, 0), v: 0, acc: {}, regen: 0, seed: .4, bolts: Array.from({ length: 10 }, () => new Bolt(96)), opt: {} };

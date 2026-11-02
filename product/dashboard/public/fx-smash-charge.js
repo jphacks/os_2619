@@ -4,14 +4,17 @@
 //                 flickering brighter with the tier; a flash and an expanding ring when the tier becomes 中 (small) and 大 (big)
 //   charge(c, dt) a Spark-Kirby-like electric sphere at the stick tip: a bright core, arcs crawling over the surface, short arcs
 //                 jumping outward; it grows with the level (0.07 m -> 0.3 m) and pulses at 大. Fire = orange plasma, thunder = blue-white
-//                 water: a ball of water instead (caustic orb held by two spinning rings of water, drops drawn into it)
-//                 wind:  a little cyclone instead (crescents whirling round a pale vortex, stacked rings of air, air drawn in)
-//   body extras per element: fire flame tongues and embers, thunder arcs, water bubbles rising and a rippling ring,
-//                 wind an updraft (streak lines spiralling up the cylinder) and dust skirting the floor
-//                 water also gathers UP FROM THE FLOOR into the stick tip (a whirlpool at the feet, strands and drops rising to the tip);
-//                 wind also spirals IN FROM AROUND (pressure rings contracting on the caster, streaks and leaves drawn in)
+//                 water: a shader sphere of water instead (flowing value ramp, fresnel rim, glint), bubbles inside, a ring of
+//                        orbiting droplets, drops drawn in; wind: a ball of compressed air (shader streak sphere, painted twirls)
+//   body extras per element: fire flame tongues and embers, thunder arcs
+//   water and wind have their own body instead of the Limit Charge look (BODY): water = ribbons of water spiralling up round
+//                 the body, a whirlpool disc on the floor, drops lifting, mist, water drawn up into the tip; wind = bands of wind
+//                 wound round the body, a dust swirl, dust and leaves pulled in, pressure rings contracting; both pulse at full charge
 export function createChargeMoves(kit) {
   const { THREE, K, S, COL, TAU, Q, R, RS, emit, spr, sprFloor, seg, Bolt, gen, drawBolt, runit, u3, take, flick, add, classic } = kit;
+  const WW = kit.ww, wmesh = (el, shape, p, sc, o) => WW?.mesh(el, shape, p, sc, o), wspr = (el, tex, p, w, h, o) => WW?.[el].sprite(tex, p, w, h, o);
+  const hash = i => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+  const WB = { a: [.02, .17, .78], b: [.38, .86, 1] }, AW = { a: [.5, .66, .68], b: [.95, 1, 1] }, AD = { a: [.36, .33, .28], b: [.7, .65, .56] };
   const V = () => new THREE.Vector3();
   const tA = V(), tB = V(), tC = V(), tD = V(), UP = new THREE.Vector3(0, 1, 0);
   const TIER_K = { s: .32, m: .64, l: 1 };
@@ -100,6 +103,7 @@ export function createChargeMoves(kit) {
     const k = a.lk;
     if (k < .02 || !F) return;
     const t = now(), full = tier === 'l' && o.charging, fl = flick(a.seed, fire ? 17 : 31);
+    if (a.el === 'water' || a.el === 'wind') { BODY[a.el](a, F, k, dt, full); return; } // their own charge scenes, not the Limit Charge look
     const spike = full && R() < .1 ? 1.5 : 1;
 
     // floor: a soft pool of light, a ring that breathes, rings pulsing outward
@@ -155,7 +159,6 @@ export function createChargeMoves(kit) {
       emit(F.x + cx * r0, y0, F.z + cz * r0, cx * (r1 - r0) / life - cz * .4, (y1 - y0) / life, cz * (r1 - r0) / life + cx * .4, life, .014, .006, 0, 0,
         P.mote, fire ? K.EMBER : K.SPARK, 1.6 + 1.2 * k, 0, .05, R() * dt);
     }
-    BODY[a.el]?.(a, F, k, dt);
     // thunder: small arcs crackling over the body (bolts 4..9; 0..3 belong to the classic stick)
     if (a.el === 'thunder') {
       const nb = Math.min(6, Math.round(1 + 5 * k * k) + (full ? 1 : 0));
@@ -181,63 +184,69 @@ export function createChargeMoves(kit) {
     }
   }
 
-  // body extras of the elements without flames or arcs
+  // the bodies of water and wind: their own charge scenes (not the Limit Charge light pillar in another colour)
+  //   water: ribbons of water spiralling up round the body (shader helices), a whirlpool on the floor, drops and bubbles lifting
+  //          off it, mist at the feet; water drawn up from the floor into the stick tip; at full charge the ribbons swell in a
+  //          pulse and ring waves run out over the floor
+  //   wind:  bands of wind wound round the body, a dust swirl on the floor, painted dust and leaves pulled in along the floor,
+  //          pressure rings contracting on the caster, air streaming in; at full charge the bands spin up in a pulse
   const BODY = {
-    water(a, F, k, dt) { // bubbles rising round the body, a wobbling ring of water on the floor
-      for (let n = take(a, 'lcB', (10 + 70 * k) * Q * dt); n > 0; n--) {
-        const th = R() * TAU, r = COL_R * (.6 + .5 * R());
-        emit(F.x + Math.cos(th) * r, R() * .4, F.z + Math.sin(th) * r, RS(.1), .6 + 1.2 * R() * (.5 + k), RS(.1), .9 + .6 * R(), .018 + .014 * R(), .03, .8, .6,
-          R() < .3 ? COL.waterHi : COL.water, K.DROP, 1.1 + .4 * k, .35, 0, R() * dt);
+    water(a, F, k, dt, full) {
+      const t = now(), T = a.tip, on = Math.min(1, k * 2.2), pulse = full ? .5 + .5 * Math.sin(t * 9) : 0;
+      sprFloor(S.GLOW, tA.set(F.x, .03, F.z), 1.1 + .4 * k, COL.waterGlow, .5 + .5 * k, .1);
+      wmesh('water', 'disc', tA.set(F.x, .025, F.z), .55 + .55 * k, { opacity: .5 + .5 * on, twist: 1.6, spin: .5 + 1.2 * k, flow: -.5, foam: .5 + .3 * k, tile: [5, 2], seed: a.seed, occ: .5, colA: WB.a, colB: WB.b });
+      const nr = k > .55 ? 3 : 2;
+      for (let i = 0; i < nr; i++) // ribbons of water spiralling up round the body
+        wmesh('water', 'helix', tA.set(F.x, .03, F.z), 1, { r0: .62 + .1 * pulse, r1: .3 + .08 * pulse, h: (.9 + .9 * k) * (.95 + .05 * Math.sin(t * 3 + i)), turns: 1.25, width: .08 + .1 * k + .05 * pulse,
+          phase: t * (2.2 + 3 * k) + i * TAU / nr, flow: 2 + 2.5 * k, foam: .3 + .2 * pulse, tile: [3, 1], seed: a.seed + i, occ: .3, opacity: on, intensity: 1.5 + .5 * pulse, erode: .35 * (1 - k), colA: WB.a, colB: WB.b });
+      for (let n = take(a, 'lcB', (12 + 60 * k) * Q * dt); n > 0; n--) { // drops lifting off the floor, slowly, as if the water defied gravity
+        const th = R() * TAU, r = .35 + .4 * R();
+        emit(F.x + Math.cos(th) * r, .05, F.z + Math.sin(th) * r, -Math.sin(th) * .6, .5 + 1.1 * R() * (.5 + k), Math.cos(th) * .6, .9 + .6 * R(), .022 + .016 * R(), .012, .8, .4,
+          R() < .3 ? COL.waterHi : COL.water, K.DROP, 1.2 + .3 * k, .25, .02, R() * dt);
       }
-      floorRing(F, COL_R + .05, .025 + .02 * k, .5 + .6 * k, COL.waterHi, .06 + .04 * k, a.seed + .7);
-      // water gathered up from the floor into the tip: a whirlpool round the feet, three strands and drops rising to the tip
-      const T = a.tip, t = now(); if (!T) return;
-      sprFloor(S.VORTEX, tA.set(F.x, .02, F.z), .55 + .55 * k, COL.water, .4 + .8 * k, 1 + 3 * k, a.seed);
-      for (let h = 0; h < 3; h++) {
-        let px = 0, py = 0, pz = 0;
-        for (let i = 0; i <= 12; i++) {
-          const u = i / 12, th = h * TAU / 3 + t * 5 + u * 5, r = (.7 + .2 * k) * (1 - u) ** 1.3, w = u ** 1.6;
-          const x = F.x + Math.cos(th) * r + (T.x - F.x) * w, y = .03 + (T.y - .03) * u, z = F.z + Math.sin(th) * r + (T.z - F.z) * w;
-          const fl = .5 + .5 * Math.sin(u * 14 - t * 16 + h * 2);
-          if (i) seg(px, py, pz, x, y, z, .01 + .012 * k * (1 - u * .5), (.3 + .9 * k) * fl * Math.sin(Math.PI * Math.min(1, u * 1.1)), fl > .75 ? COL.waterHi : COL.water);
-          px = x; py = y; pz = z;
-        }
+      for (let i = 0; i < 4; i++) { // mist breathing at the feet
+        const ph = (t * .5 + i / 4) % 1, th = i * 1.7 + a.seed * 9;
+        wspr('water', 'mist', tA.set(F.x + Math.cos(th) * .45, .12 + .15 * ph, F.z + Math.sin(th) * .45), .5 + .4 * ph, .35 + .3 * ph,
+          { color: [.6, .8, .95], intensity: .4 + .3 * k, opacity: Math.sin(Math.PI * ph) * (.3 + .5 * k), occ: .25, rot: th + t * .2 });
       }
-      for (let n = take(a, 'lcU', (15 + 120 * k) * Q * dt); n > 0; n--) {
-        const th = R() * TAU, r = .5 + .45 * R(), x = F.x + Math.cos(th) * r, z = F.z + Math.sin(th) * r, life = .35 + .25 * R();
-        emit(x, .03, z, (T.x - x) / life, (T.y - .03) / life, (T.z - z) / life, life, .028, .012, 0, 0, R() < .4 ? COL.waterHi : COL.water, K.DROP, 1.3, .2, .03, R() * dt);
+      if (full) for (let j = 0; j < 2; j++) { // ring waves running out at full charge
+        const ph = (t * 1.4 + j * .5) % 1;
+        sprFloor(S.RING, tA.set(F.x, .03, F.z), .5 + 1.4 * ph, j ? COL.waterHi : COL.foam, 1.3 * (1 - ph) ** 1.5, .05, a.seed + j);
+      }
+      if (!T) return;
+      for (let n = take(a, 'lcU', (8 + 50 * k) * Q * dt); n > 0; n--) { // water drawn up from the floor into the tip
+        const th = R() * TAU, r = .45 + .35 * R(), x = F.x + Math.cos(th) * r, z = F.z + Math.sin(th) * r, life = .4 + .25 * R();
+        emit(x, .05, z, (T.x - x) / life, (T.y - .05) / life, (T.z - z) / life, life, .026, .012, 0, 0, R() < .4 ? COL.waterHi : COL.water, K.DROP, 1.2, .25, .03, R() * dt);
       }
     },
-    wind(a, F, k, dt) { // an updraft: streak lines spiralling up the cylinder, dust skirting the floor
-      const t = now(), nl = Math.round(3 + 6 * k);
-      for (let i = 0; i < nl; i++) {
-        const ph = (t * (.6 + .5 * k) + i / nl) % 1, th0 = i / nl * TAU + t * (2 + 3 * k), r = COL_R * (1 - .25 * ph);
-        let px = 0, py = 0, pz = 0;
-        for (let j = 0; j <= 6; j++) {
-          const u = j / 6, th = th0 + u * 1.4, y = (ph * COL_TOP + u * .45) % (COL_TOP + .3);
-          const x = F.x + Math.cos(th) * r, z = F.z + Math.sin(th) * r;
-          if (j && y > py) seg(px, py, pz, x, y, z, .008 + .006 * k, (.4 + .9 * k) * Math.sin(Math.PI * u) * (1 - .5 * ph), j & 1 ? COL.wind : COL.windHi);
-          px = x; py = y; pz = z;
-        }
+    wind(a, F, k, dt, full) {
+      const t = now(), on = Math.min(1, k * 2.2), pulse = full ? .5 + .5 * Math.sin(t * 11) : 0;
+      wmesh('wind', 'disc', tA.set(F.x, .02, F.z), .7 + .6 * k, { opacity: .55 + .45 * on, twist: 2, spin: -(1 + 1.5 * k), flow: -.6, tile: [5, 2], seed: a.seed, occ: .15, colA: AD.a, colB: AD.b, intensity: 1.1 });
+      const nb = k > .55 ? 4 : 3;
+      for (let i = 0; i < nb; i++) // bands of wind wound round the body, rising
+        wmesh('wind', 'helix', tA.set(F.x, .05, F.z), 1, { r0: .6 + .1 * pulse, r1: .4, h: 1.3 + .7 * k, turns: 1.1, width: .26 + .16 * k + .08 * pulse,
+          phase: t * (4 + 6 * k + 3 * pulse) + i * TAU / nb, flow: 3 + 3 * k, tile: [1.5, .6], seed: a.seed + i, occ: .04, opacity: on, intensity: 3.2 + .8 * k + .8 * pulse, colA: AW.a, colB: AW.b });
+      wmesh('wind', 'tube', tA.set(F.x, 0, F.z), 1, { r0: .5, r1: .38, h: 1.6 + .4 * k, curve: 1, spin: 2 + 2 * k, twist: 1.5, tile: [3, 1.2], seed: a.seed + .7, occ: .03, opacity: .6 * on, intensity: 1.8, colA: AW.a, colB: AW.b });
+      // painted dust clumps and leaves pulled in along the floor
+      for (let i = 0; i < 7; i++) {
+        const ph = (t * (.5 + .4 * k) + i / 7) % 1, th = i * 2.4 + a.seed * 7 + ph * 2.5, r = 1.7 * (1 - ph) + .45;
+        wspr('wind', 'dust', tA.set(F.x + Math.cos(th) * r, .1 + .1 * ph, F.z + Math.sin(th) * r), .45 + .2 * hash(i), .35 + .2 * hash(i + 3),
+          { color: [.62, .58, .5], intensity: .8, opacity: Math.sin(Math.PI * ph) * (.3 + .6 * k), occ: .5, rot: th * 2 });
       }
-      for (let n = take(a, 'lcD', (6 + 30 * k) * Q * dt); n > 0; n--) {
-        const th = R() * TAU, c = Math.cos(th), sn = Math.sin(th), r = COL_R * (.9 + .6 * R());
-        emit(F.x + c * r, .04, F.z + sn * r, -sn * 1.6 + c * .5, .1 + .3 * R(), c * 1.6 + sn * .5, .7 + .5 * R(), .18, .7, 1.5, .1, COL.dust, K.SMOKE, .22, .6, 0, R() * dt);
+      for (let n = take(a, 'lcL', (3 + 10 * k) * Q * dt); n > 0; n--) {
+        const th = R() * TAU, c = Math.cos(th), sn = Math.sin(th), r = 1.8;
+        emit(F.x + c * r, .05 + R() * .5, F.z + sn * r, -c * 1.8 - sn * 2, .5, -sn * 1.8 + c * 2, .8, .055, .04, .3, -.3, COL.leaf ?? COL.dust, K.LEAF, 1, .3, RS(9), R() * dt);
       }
-      // air spiralling in from all round: pressure rings contracting on the caster (floor and chest height), streaks and leaves drawn in
+      // pressure rings contracting on the caster, air streaming in from all round
       for (let j = 0; j < 2; j++) {
         const ph = (t * (.7 + .8 * k) + j * .5 + a.seed) % 1, f = Math.sin(Math.PI * ph) * k;
-        floorRing(F, 2.1 * (1 - ph) + COL_R + .1, .02 + .015 * k, 1.1 * f, j ? COL.wind : COL.windHi, .02, a.seed + j);
-        if (k > .4) floorRing(F, 1.5 * (1 - ph) + COL_R + .05, .012 + .01 * k, .8 * f, COL.wind, .04, a.seed + j + .5, .9 + .3 * j);
+        floorRing(F, 2.1 * (1 - ph) + COL_R + .1, .02 + .015 * k, .9 * f, j ? COL.wind : COL.windHi, .02, a.seed + j);
       }
-      for (let n = take(a, 'lcI', (20 + 140 * k) * Q * dt); n > 0; n--) {
+      for (let n = take(a, 'lcI', (15 + 90 * k) * Q * dt); n > 0; n--) {
         const th = R() * TAU, c = Math.cos(th), sn = Math.sin(th), r = 1.5 + .8 * R(), v = 3 + 3 * R(), life = (r - COL_R) / v;
         emit(F.x + c * r, .1 + R() * 1.8, F.z + sn * r, -c * v - sn * v * .6, .2, -sn * v + c * v * .6, life, .008, .004, 0, 0, R() < .4 ? COL.windHi : COL.wind, K.SPARK, 1.7, .05, .07, R() * dt);
       }
-      for (let n = take(a, 'lcL', 8 * k * Q * dt); n > 0; n--) {
-        const th = R() * TAU, c = Math.cos(th), sn = Math.sin(th), r = 1.8, life = .8;
-        emit(F.x + c * r, .1 + R() * 1.2, F.z + sn * r, -c * 1.8 - sn * 2, .3, -sn * 1.8 + c * 2, life, .055, .04, .3, -.3, COL.leaf ?? COL.dust, K.LEAF, 1, .3, RS(9), R() * dt);
-      }
+      if (full && (a.gp = (a.gp ?? 0) - dt) <= 0) { a.gp = .45; for (let i = 0; i < 2; i++) wspr('wind', 'twirl', tA.set(F.x, 1, F.z), 2, 2, { rot: t * 3 + i * Math.PI, color: [.9, 1, 1], intensity: .8, occ: 0 }); }
     },
   };
 
@@ -348,52 +357,41 @@ export function createChargeMoves(kit) {
     }
   }
 
-  // water: a ball of water swelling at the stick tip, held by two rings of water spinning round it, drops drawn in
+  // water: a sphere of water at the stick tip (shader: flowing value ramp, fresnel rim, a specular glint), bubbles rising
+  // inside it, a ring of droplets orbiting it, drops drawn in; at full charge it pulses and throws ring waves
   function waterSphere(c, dt) {
     const L = c.v, p = c.tip, full = c.opt?.tier === 'l' || L >= .999, t = now();
-    const r = (.07 + .23 * L) * (full ? 1 + .06 * Math.sin(t * 13) : 1);
-    spr(S.GLOW, p, r * 3, r * 3, 0, 0, COL.waterGlow, .45 + .4 * L, .05);
-    spr(S.WATER, p, r, r, 0, c.seed, COL.water, 1.2 + .3 * L, 2 + 3 * L);
-    for (let ring = 0; ring < 2; ring++) {
-      const tilt = ring ? 1 : -1, spin = t * (4 + 5 * L) * (ring ? -1 : 1), N = 20;
-      let px = 0, py = 0, pz = 0;
-      for (let i = 0; i <= N; i++) {
-        const th = i / N * TAU;
-        tA.set(Math.cos(th), Math.sin(th) * Math.cos(tilt), Math.sin(th) * Math.sin(tilt)).applyAxisAngle(UP, spin).multiplyScalar(r * 1.45).add(p);
-        const sh = .55 + .45 * Math.sin(th * 3 - t * 15 + ring);
-        if (i) seg(px, py, pz, tA.x, tA.y, tA.z, .01 + .012 * L, (.4 + .5 * L) * (.5 + .7 * sh), sh > .8 ? COL.waterHi : COL.water);
-        px = tA.x; py = tA.y; pz = tA.z;
-      }
+    const r = (.07 + .21 * L) * (full ? 1 + .07 * Math.sin(t * 9) : 1);
+    spr(S.GLOW, p, r * 3.2, r * 3.2, 0, 0, COL.waterGlow, .4 + .35 * L, .05);
+    wmesh('water', 'sphere', p, r, { flow: 1.2 + L, spin: .5, foam: .2 + .2 * L, tile: [3, 2], seed: c.seed, occ: .65, intensity: 1.15, colA: WB.a, colB: WB.b });
+    for (let i = 0; i < 6; i++) { // bubbles rising inside
+      const ph = (t * (.6 + .3 * hash(i)) + hash(i + 9)) % 1, th = hash(i + 4) * TAU + t, rr = r * .55 * Math.sqrt(1 - (2 * ph - 1) ** 2);
+      wspr('water', 'foamRing', tA.set(p.x + Math.cos(th) * rr, p.y + r * .7 * (2 * ph - 1), p.z + Math.sin(th) * rr), r * .22, r * .22,
+        { color: [.8, .95, 1], intensity: 1.2, opacity: Math.sin(Math.PI * ph) * (.4 + .6 * L), occ: 0 });
     }
-    for (let n = take(c, 'in', (30 + 150 * L) * Q * dt); n > 0; n--) {
+    const nd = Math.round(5 + 5 * L), sp = t * (3 + 3 * L);
+    for (let i = 0; i < nd; i++) { // a tilted ring of orbiting droplets
+      const th = sp + i / nd * TAU, ox = Math.cos(th), oz = Math.sin(th);
+      tA.set(ox, oz * .35, oz * .94).multiplyScalar(r * 1.6).add(p); tB.set(-oz, ox * .35, ox * .94); // tangent
+      wspr('water', 'drop', tA, r * .22 + .015, r * .5 + .03, { axis: tB, color: [.45, .8, 1], intensity: 1.1, occ: .3 });
+    }
+    wspr('water', 'glint', tB.set(p.x - r * .35, p.y + r * .4, p.z + r * .3), r * 1.1, r * 1.1, { color: [.9, .98, 1], intensity: 1.3, occ: 0, rot: t * .5 });
+    for (let n = take(c, 'in', (20 + 90 * L) * Q * dt); n > 0; n--) {
       runit(); const r0 = r * (2 + 1.2 * R()) + .08, life = .2 + .12 * R(), v = (r0 - r * .4) / life;
       emit(p.x + u3[0] * r0, p.y + u3[1] * r0, p.z + u3[2] * r0, -u3[0] * v, -u3[1] * v, -u3[2] * v, life, .014, .01, 0, 0, COL.waterHi, K.DROP, 1.2, 0, .03, R() * dt);
     }
-    if (full) {
-      const ph = (t * 2.2) % 1; spr(S.RING, p, r * (1.2 + ph) / .8, r * (1.2 + ph) / .8, 0, c.seed, COL.waterHi, 1.2 * (1 - ph) ** 1.5, .06);
-      for (let n = take(c, 'dr', 30 * Q * dt); n > 0; n--) { runit(); emit(p.x + u3[0] * r, p.y + u3[1] * r, p.z + u3[2] * r, u3[0] * 1.2, u3[1] * 1.2 + .5, u3[2] * 1.2, .4 + .3 * R(), .016, .01, .5, -8, COL.water, K.DROP, 1.2, 0, .03, R() * dt); }
-    }
+    if (full) { const ph = (t * 1.6) % 1; spr(S.RING, p, r * (1.2 + 1.2 * ph) / .8, r * (1.2 + 1.2 * ph) / .8, 0, c.seed, COL.waterHi, 1.1 * (1 - ph) ** 1.5, .05); }
   }
-  // wind: a little cyclone: crescents whirling round a pale vortex, rings of air turning at different rates, air drawn in
+  // wind: a ball of compressed air: a shader sphere of streaks swirling round, painted twirls spinning about it, air drawn in
   function windSphere(c, dt) {
     const L = c.v, p = c.tip, full = c.opt?.tier === 'l' || L >= .999, t = now();
-    const r = (.08 + .24 * L) * (full ? 1 + .05 * Math.sin(t * 17) : 1), spin = t * (8 + 10 * L);
+    const r = (.08 + .22 * L) * (full ? 1 + .06 * Math.sin(t * 13) : 1), spin = t * (8 + 10 * L);
     spr(S.GLOW, p, r * 2.4, r * 2.4, 0, 0, COL.windGlow, .25 + .25 * L, .3);
-    spr(S.SWIRL, p, r * 1.4, r * 1.4, 0, c.seed, COL.wind, .6 + .6 * L);
-    const nc = full ? 4 : 3;
-    for (let i = 0; i < nc; i++) spr(S.CRESCENT, p, r, r, -spin + i * TAU / nc, c.seed + i * .2, COL.wind, .7 + .6 * L, .24);
-    for (let j = 0; j < 3; j++) {
-      const y = (j - 1) * r * .55, rr = r * (1.05 + .2 * j), sp = spin * (1.3 - .25 * j) + j;
-      for (let i = 0; i < 2; i++) {
-        let px = 0, py = 0, pz = 0;
-        for (let q = 0; q <= 7; q++) {
-          const th = sp + i * Math.PI + q / 7 * 1.9, x = p.x + Math.cos(th) * rr, z = p.z + Math.sin(th) * rr;
-          if (q) seg(px, py, pz, x, p.y + y, z, .006 + .008 * L, (.5 + .7 * L) * Math.sin(Math.PI * q / 7), (i + j) % 2 ? COL.wind : COL.windHi);
-          px = x; py = p.y + y; pz = z;
-        }
-      }
-    }
-    for (let n = take(c, 'in', (40 + 200 * L) * Q * dt); n > 0; n--) {
+    wmesh('wind', 'sphere', p, r, { spin: 2 + 2 * L, twist: .6, tile: [2, 2], seed: c.seed, occ: .05, intensity: 1.4 + .4 * L, colA: AW.a, colB: AW.b });
+    wmesh('wind', 'sphere', p, r * .7, { spin: -3 - 2 * L, twist: -.4, tile: [3, 2], seed: c.seed + .5, occ: .05, intensity: 1.2, opacity: .8, colA: AW.a, colB: AW.b });
+    const nc = full ? 3 : 2;
+    for (let i = 0; i < nc; i++) wspr('wind', 'twirl', p, r * 2.3, r * 2.3, { rot: -spin + i * TAU / nc, color: [.88, .98, 1], intensity: .9 + .6 * L, occ: .02 });
+    for (let n = take(c, 'in', (40 + 160 * L) * Q * dt); n > 0; n--) {
       runit(); const r0 = r * 2.2 + .12 * R(), life = .15 + .1 * R(), v = r0 / life; tA.set(u3[0], u3[1], u3[2]); tB.crossVectors(tA, UP);
       emit(p.x + u3[0] * r0, p.y + u3[1] * r0, p.z + u3[2] * r0, -u3[0] * v + tB.x * v, -u3[1] * v, -u3[2] * v + tB.z * v, life, .007, .004, 0, 0, COL.wind, K.SPARK, 1.8, 0, .06, R() * dt);
     }
