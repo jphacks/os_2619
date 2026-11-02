@@ -109,7 +109,8 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
     const time = performance.now() / 1000, target = slot === 'A' ? 'B' : 'A';
     const tier = finalChargeTier(secondsAt(s, time)), from = game.players[slot], to = game.players[target];
     if (from.element === 'fire') { stage.fx.previewFire(tier, from.tip, to.chest, vsrc.dummy ? () => game.players[target].chest : null); $('#firePause').textContent = '炎を停止'; }
-    else { stage.fx.previewThunder(tier, from.tip, to.chest, vsrc.dummy ? () => game.players[target].chest : null); $('#thunderPause').textContent = '電気を停止'; }
+    else if (from.element === 'thunder') { stage.fx.previewThunder(tier, from.tip, to.chest, vsrc.dummy ? () => game.players[target].chest : null); $('#thunderPause').textContent = '電気を停止'; }
+    else stage.fx.hit(from.element, to.chest.clone(), 1, { tier: { small: 's', medium: 'm', large: 'l' }[tier] }); // water / wind have no textured preview: show the landing
     s.seconds = 0; s.startedAt = time; s.held = false;
   });
 

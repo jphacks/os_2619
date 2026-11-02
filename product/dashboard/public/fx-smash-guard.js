@@ -6,7 +6,7 @@
 //                    pops open (0.12 s, overshooting), front hexagon with a soft halo, a counter-turning inner hexagon, faint
 //                    spokes, a light running round the rim, sparks off the corners, a flickering fill
 //   block(el, pos)   a shot met the barrier: the barrier flares, a hexagon ripple spreads out in its plane, a flash and sparks
-// Fire tints it amber, thunder cyan.
+// Fire tints it amber, thunder cyan, water deep blue with a pale rim, wind white-silver.
 export function createGuardMoves(kit) {
   const { THREE, K, S, COL, TAU, Q, R, RS, emit, spr, seg, take, flick, add, shake } = kit;
   const V = () => new THREE.Vector3();
@@ -15,9 +15,11 @@ export function createGuardMoves(kit) {
   const PAL = {
     fire: { edge: [1, .62, .16], core: [1, .9, .6], fill: [1, .42, .08], spark: COL.ember },
     thunder: { edge: [.3, .78, 1], core: [.82, .97, 1], fill: COL.elecGlow, spark: COL.spark },
+    water: { edge: [.12, .45, 1], core: [.7, .92, 1], fill: COL.waterGlow, spark: COL.waterHi },
+    wind: { edge: [.85, .97, .97], core: [1, 1, 1], fill: [.3, .48, .5], spark: COL.wind },
   };
-  const blockAt = { fire: -9, thunder: -9 };
-  const facing = { fire: new THREE.Vector3(1, 0, 0), thunder: new THREE.Vector3(-1, 0, 0) }; // last seen, for block()
+  const blockAt = {}, facing = {}; // per element: when a shot last met the barrier; the last facing seen, for block()
+  for (const el in PAL) { blockAt[el] = -9; facing[el] = new THREE.Vector3(el === 'fire' ? 1 : -1, 0, 0); }
   const now = () => kit.time;
 
   /** The panel's frame: n = facing (horizontal), right = horizontal across it, up = world up. */
@@ -40,7 +42,7 @@ export function createGuardMoves(kit) {
     const P = PAL[g.el] ?? PAL.thunder, t = now(), B = frame(g.el, g);
     g.born ??= t; // the map entry is dropped when the guard is lowered, so a new one starts the pop again
     const age = t - g.born, open = age < .12 ? .6 + .55 * Math.sin(age / .12 * Math.PI / 2) : 1 + .04 * Math.exp(-(age - .12) * 12); // overshoot, settle
-    const hitBoost = Math.max(0, 1 - (t - blockAt[g.el]) / .25), fl = flick(g.seed, 13), pulse = .85 + .15 * Math.sin(t * 9);
+    const hitBoost = Math.max(0, 1 - (t - (blockAt[g.el] ?? -9)) / .25), fl = flick(g.seed, 13), pulse = .85 + .15 * Math.sin(t * 9);
     const v = g.v * (age < .12 ? .7 + 2 * (1 - age / .12) : 1), r = RAD * open;
     const c = tC.copy(g.tip).addScaledVector(B.n, .1), back = V().copy(c).addScaledVector(B.n, -DEPTH); // a little ahead of the stick
     // fill: a translucent sheen with a hot centre

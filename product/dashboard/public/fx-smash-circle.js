@@ -11,6 +11,8 @@ export function createMagicCircle(kit) {
   const PAL = {
     fire: { main: [1, .45, .1], hot: [1, .8, .45], dim: [1, .3, .05] },
     thunder: { main: [.3, .7, 1], hot: [.8, .95, 1], dim: [.16, .38, 1] },
+    water: { main: [.08, .36, 1], hot: [.55, .88, 1], dim: [.03, .16, .75] },
+    wind: { main: [.8, .95, .95], hot: [1, 1, 1], dim: [.4, .6, .62] },
   };
   const tA = new THREE.Vector3();
   const now = () => kit.time;

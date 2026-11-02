@@ -11,6 +11,10 @@ const PALETTE = {
     shell: [1, .32, .04], rim: [1, .82, .4], bolt: [1, .68, .1], core: [1, .95, .75] },
   thunder: { pillar: [[1, .85, .12], [.15, .75, 1], [.75, 1, 1]], wisp: [.3, .65, 1], glow: [.55, .85, 1],
     shell: [.2, .78, 1], rim: [.82, 1, 1], bolt: [.85, 1, .25], core: [1, 1, 1] },
+  water: { pillar: [[.12, .45, 1], [.05, .22, .85], [.6, .9, 1]], wisp: [.1, .42, 1], glow: [.15, .45, 1],
+    shell: [.04, .25, .9], rim: [.55, .88, 1], bolt: [.4, .8, 1], core: [.85, .97, 1] },
+  wind: { pillar: [[.85, .95, .96], [.55, .85, .88], [1, 1, 1]], wisp: [.75, .92, .92], glow: [.6, .82, .85],
+    shell: [.5, .75, .78], rim: [.95, 1, 1], bolt: [.9, .97, 1], core: [1, 1, 1] },
 };
 const SVS = `varying vec3 vP,vN,vEye;void main(){vP=position;vec4 p=modelViewMatrix*vec4(position,1.);vN=normalize(normalMatrix*normal);vEye=normalize(-p.xyz);gl_Position=projectionMatrix*p;}`;
 // Spark ball shell: see-through tint inside, a bright rim, faint moving bands

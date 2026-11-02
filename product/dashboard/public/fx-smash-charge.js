@@ -4,6 +4,10 @@
 //                 flickering brighter with the tier; a flash and an expanding ring when the tier becomes 中 (small) and 大 (big)
 //   charge(c, dt) a Spark-Kirby-like electric sphere at the stick tip: a bright core, arcs crawling over the surface, short arcs
 //                 jumping outward; it grows with the level (0.07 m -> 0.3 m) and pulses at 大. Fire = orange plasma, thunder = blue-white
+//                 water: a ball of water instead (caustic orb held by two spinning rings of water, drops drawn into it)
+//                 wind:  a little cyclone instead (crescents whirling round a pale vortex, stacked rings of air, air drawn in)
+//   body extras per element: fire flame tongues and embers, thunder arcs, water bubbles rising and a rippling ring,
+//                 wind an updraft (streak lines spiralling up the cylinder) and dust skirting the floor
 export function createChargeMoves(kit) {
   const { THREE, K, S, COL, TAU, Q, R, RS, emit, spr, seg, Bolt, gen, drawBolt, runit, u3, take, flick, add, classic } = kit;
   const V = () => new THREE.Vector3();
@@ -12,6 +16,8 @@ export function createChargeMoves(kit) {
   const PAL = {
     fire: { main: COL.fire, hot: COL.hot, glow: COL.fire, mote: COL.ember, streak: COL.ember, flash: COL.hot, arc: COL.fire, arc2: COL.hot },
     thunder: { main: COL.elec, hot: COL.white, glow: COL.elecGlow, mote: COL.spark, streak: COL.spark, flash: COL.white, arc: COL.elec, arc2: COL.spark },
+    water: { main: COL.water, hot: COL.waterHi, glow: COL.waterGlow, mote: COL.waterHi, streak: COL.water, flash: COL.waterHi, arc: COL.water, arc2: COL.waterHi, si: .45 },
+    wind: { main: COL.wind, hot: COL.wind, glow: COL.windGlow, mote: COL.wind, streak: COL.windGlow, flash: COL.windHi, arc: COL.wind, arc2: COL.windHi, si: .45 },
   };
   const now = () => kit.time;
   // a glowing ring lying on the floor, drawn as a loop of segments (floor-oriented sprites are back-face culled from above)
@@ -67,6 +73,14 @@ export function createChargeMoves(kit) {
       const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th);
       emit(F.x + cx * .3, .1, F.z + cz * .3, cx * 2.2, .4 + R(), cz * 2.2, .45 + .2 * R(), .18, .4, 3.5, 0, P.glow, K.GLOW, .7, .1, 0, 0);
     }
+    if (a.el === 'water') for (let i = 0; i < 80 * Q * big; i++) { // a ring of water thrown up from the feet
+      const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.8 + .3 * R()), v = 2.5 + 2.5 * R();
+      emit(F.x + cx * r, .05, F.z + cz * r, cx * .9, v, cz * .9, .5 + .3 * R(), .02, .012, .5, -9, R() < .3 ? COL.waterHi : COL.water, K.DROP, 1.3, 0, .03, 0);
+    }
+    if (a.el === 'wind') for (let i = 0; i < 40 * Q * big; i++) { // dust blown out flat from the feet
+      const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), v = 2 + 2 * R();
+      emit(F.x + cx * .3, .06, F.z + cz * .3, cx * v - cz, .2 + .4 * R(), cz * v + cx, .6 + .4 * R(), .12, .5, 2.5, .2, COL.dust, K.SMOKE, .8, .3, 0, 0);
+    }
     if (fire) for (let i = 0; i < 60 * Q * big; i++) {
       const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.7 + .4 * R());
       emit(F.x + cx * r, .05, F.z + cz * r, cx * .6, 2 + 2.5 * R(), cz * .6, .4 + .3 * R(), .1 + .06 * R(), .03, 1.5, 1.5, COL.one, K.FLAME, 1.1, .3, 0, 0);
@@ -108,7 +122,7 @@ export function createChargeMoves(kit) {
       const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.75 + .4 * R()), y = R() * .5;
       const up = 2.2 + 2.8 * R() * (.5 + k), sw = .5 + .6 * k;
       emit(F.x + cx * r, y, F.z + cz * r, -cx * .25 - cz * sw, up, -cz * .25 + cx * sw, .4 + .35 * R(), .016 + .008 * k, .006, .6, 1.2,
-        R() < .3 ? P.hot : P.streak, K.SPARK, 2.2 + 1.6 * k, .15, .1 + .06 * k, R() * dt);
+        R() < .3 ? P.hot : P.streak, K.SPARK, (2.2 + 1.6 * k) * (P.si ?? 1), .15, .1 + .06 * k, R() * dt);
     }
     // light streaks shooting up the cylinder (segments: crisp lines that read at any distance)
     const ls = a.lcLines ??= Array.from({ length: 20 }, () => ({ th: R() * TAU, y: R() * COL_TOP, sp: 2, len: .3 }));
@@ -118,7 +132,7 @@ export function createChargeMoves(kit) {
       l.y += l.sp * dt;
       if (l.y - l.len > COL_TOP) { l.th = R() * TAU; l.y = R() * .3; l.sp = (2.5 + 2.5 * R()) * (.6 + .6 * k); l.len = .2 + .35 * R() * (.5 + k); l.r = COL_R * (.85 + .3 * R()); }
       const r = l.r ?? COL_R, x = F.x + Math.cos(l.th) * r, z = F.z + Math.sin(l.th) * r, y0 = Math.max(0, l.y - l.len), y1 = Math.min(COL_TOP + .2, l.y);
-      if (y1 > y0) seg(x, y0, z, x, y1, z, .008 + .006 * k, (.35 + .9 * k) * (1 - .5 * l.y / COL_TOP) * fl, i & 1 ? P.main : P.streak);
+      if (y1 > y0) seg(x, y0, z, x, y1, z, .008 + .006 * k, (.35 + .9 * k) * (1 - .5 * l.y / COL_TOP) * fl * (P.si ?? 1), i & 1 ? P.main : P.streak);
     }
     // translucent wisps: fire = flame tongues licking up from the ring, thunder = pale glow puffs
     if (fire) {
@@ -139,8 +153,9 @@ export function createChargeMoves(kit) {
       emit(F.x + cx * r0, y0, F.z + cz * r0, cx * (r1 - r0) / life - cz * .4, (y1 - y0) / life, cz * (r1 - r0) / life + cx * .4, life, .014, .006, 0, 0,
         P.mote, fire ? K.EMBER : K.SPARK, 1.6 + 1.2 * k, 0, .05, R() * dt);
     }
+    BODY[a.el]?.(a, F, k, dt);
     // thunder: small arcs crackling over the body (bolts 4..9; 0..3 belong to the classic stick)
-    if (!fire) {
+    if (a.el === 'thunder') {
       const nb = Math.min(6, Math.round(1 + 5 * k * k) + (full ? 1 : 0));
       if ((a.lcRegen = (a.lcRegen ?? 0) - dt) <= 0) {
         a.lcRegen = .05 + .04 * R();
@@ -155,7 +170,7 @@ export function createChargeMoves(kit) {
         }
       }
       for (let i = 0; i < 6; i++) drawBolt(a.bolts[4 + i], .016, 1.5 * Math.min(1, k * 1.4), COL.elec);
-    } else if (k > .55) { // fire at 中/大: embers flying up off the body
+    } else if (fire && k > .55) { // fire at 中/大: embers flying up off the body
       for (let n = take(a, 'lcE', 70 * (k - .3) * Q * dt); n > 0; n--) {
         const th = R() * TAU, r = COL_R * R();
         emit(F.x + Math.cos(th) * r, .2 + R() * 1.4, F.z + Math.sin(th) * r, RS(.5), 1 + 1.5 * R(), RS(.5), .6 + .5 * R(), .012, .006, 1.2, .4,
@@ -163,6 +178,35 @@ export function createChargeMoves(kit) {
       }
     }
   }
+
+  // body extras of the elements without flames or arcs
+  const BODY = {
+    water(a, F, k, dt) { // bubbles rising round the body, a wobbling ring of water on the floor
+      for (let n = take(a, 'lcB', (10 + 70 * k) * Q * dt); n > 0; n--) {
+        const th = R() * TAU, r = COL_R * (.6 + .5 * R());
+        emit(F.x + Math.cos(th) * r, R() * .4, F.z + Math.sin(th) * r, RS(.1), .6 + 1.2 * R() * (.5 + k), RS(.1), .9 + .6 * R(), .018 + .014 * R(), .03, .8, .6,
+          R() < .3 ? COL.waterHi : COL.water, K.DROP, 1.1 + .4 * k, .35, 0, R() * dt);
+      }
+      floorRing(F, COL_R + .05, .025 + .02 * k, .5 + .6 * k, COL.waterHi, .06 + .04 * k, a.seed + .7);
+    },
+    wind(a, F, k, dt) { // an updraft: streak lines spiralling up the cylinder, dust skirting the floor
+      const t = now(), nl = Math.round(3 + 6 * k);
+      for (let i = 0; i < nl; i++) {
+        const ph = (t * (.6 + .5 * k) + i / nl) % 1, th0 = i / nl * TAU + t * (2 + 3 * k), r = COL_R * (1 - .25 * ph);
+        let px = 0, py = 0, pz = 0;
+        for (let j = 0; j <= 6; j++) {
+          const u = j / 6, th = th0 + u * 1.4, y = (ph * COL_TOP + u * .45) % (COL_TOP + .3);
+          const x = F.x + Math.cos(th) * r, z = F.z + Math.sin(th) * r;
+          if (j && y > py) seg(px, py, pz, x, y, z, .008 + .006 * k, (.4 + .9 * k) * Math.sin(Math.PI * u) * (1 - .5 * ph), j & 1 ? COL.wind : COL.windHi);
+          px = x; py = y; pz = z;
+        }
+      }
+      for (let n = take(a, 'lcD', (6 + 30 * k) * Q * dt); n > 0; n--) {
+        const th = R() * TAU, c = Math.cos(th), sn = Math.sin(th), r = COL_R * (.9 + .6 * R());
+        emit(F.x + c * r, .04, F.z + sn * r, -sn * 1.6 + c * .5, .1 + .3 * R(), c * 1.6 + sn * .5, .7 + .5 * R(), .1, .35, 1.5, .1, COL.dust, K.SMOKE, .6, .3, 0, R() * dt);
+      }
+    },
+  };
 
   // ---------------- stick-tip sphere (Spark Kirby) ----------------
   // an arc crawling over the sphere: a jittered polyline along the great circle from u to v, written straight into a Bolt
@@ -271,8 +315,61 @@ export function createChargeMoves(kit) {
     }
   }
 
+  // water: a ball of water swelling at the stick tip, held by two rings of water spinning round it, drops drawn in
+  function waterSphere(c, dt) {
+    const L = c.v, p = c.tip, full = c.opt?.tier === 'l' || L >= .999, t = now();
+    const r = (.07 + .23 * L) * (full ? 1 + .06 * Math.sin(t * 13) : 1);
+    spr(S.GLOW, p, r * 3, r * 3, 0, 0, COL.waterGlow, .45 + .4 * L, .05);
+    spr(S.WATER, p, r, r, 0, c.seed, COL.water, 1.2 + .3 * L, 2 + 3 * L);
+    for (let ring = 0; ring < 2; ring++) {
+      const tilt = ring ? 1 : -1, spin = t * (4 + 5 * L) * (ring ? -1 : 1), N = 20;
+      let px = 0, py = 0, pz = 0;
+      for (let i = 0; i <= N; i++) {
+        const th = i / N * TAU;
+        tA.set(Math.cos(th), Math.sin(th) * Math.cos(tilt), Math.sin(th) * Math.sin(tilt)).applyAxisAngle(UP, spin).multiplyScalar(r * 1.45).add(p);
+        const sh = .55 + .45 * Math.sin(th * 3 - t * 15 + ring);
+        if (i) seg(px, py, pz, tA.x, tA.y, tA.z, .01 + .012 * L, (.4 + .5 * L) * (.5 + .7 * sh), sh > .8 ? COL.waterHi : COL.water);
+        px = tA.x; py = tA.y; pz = tA.z;
+      }
+    }
+    for (let n = take(c, 'in', (30 + 150 * L) * Q * dt); n > 0; n--) {
+      runit(); const r0 = r * (2 + 1.2 * R()) + .08, life = .2 + .12 * R(), v = (r0 - r * .4) / life;
+      emit(p.x + u3[0] * r0, p.y + u3[1] * r0, p.z + u3[2] * r0, -u3[0] * v, -u3[1] * v, -u3[2] * v, life, .014, .01, 0, 0, COL.waterHi, K.DROP, 1.2, 0, .03, R() * dt);
+    }
+    if (full) {
+      const ph = (t * 2.2) % 1; spr(S.RING, p, r * (1.2 + ph) / .8, r * (1.2 + ph) / .8, 0, c.seed, COL.waterHi, 1.2 * (1 - ph) ** 1.5, .06);
+      for (let n = take(c, 'dr', 30 * Q * dt); n > 0; n--) { runit(); emit(p.x + u3[0] * r, p.y + u3[1] * r, p.z + u3[2] * r, u3[0] * 1.2, u3[1] * 1.2 + .5, u3[2] * 1.2, .4 + .3 * R(), .016, .01, .5, -8, COL.water, K.DROP, 1.2, 0, .03, R() * dt); }
+    }
+  }
+  // wind: a little cyclone: crescents whirling round a pale vortex, rings of air turning at different rates, air drawn in
+  function windSphere(c, dt) {
+    const L = c.v, p = c.tip, full = c.opt?.tier === 'l' || L >= .999, t = now();
+    const r = (.08 + .24 * L) * (full ? 1 + .05 * Math.sin(t * 17) : 1), spin = t * (8 + 10 * L);
+    spr(S.GLOW, p, r * 2.4, r * 2.4, 0, 0, COL.windGlow, .25 + .25 * L, .3);
+    spr(S.SWIRL, p, r * 1.4, r * 1.4, 0, c.seed, COL.wind, .6 + .6 * L);
+    const nc = full ? 4 : 3;
+    for (let i = 0; i < nc; i++) spr(S.CRESCENT, p, r, r, -spin + i * TAU / nc, c.seed + i * .2, COL.wind, .7 + .6 * L, .24);
+    for (let j = 0; j < 3; j++) {
+      const y = (j - 1) * r * .55, rr = r * (1.05 + .2 * j), sp = spin * (1.3 - .25 * j) + j;
+      for (let i = 0; i < 2; i++) {
+        let px = 0, py = 0, pz = 0;
+        for (let q = 0; q <= 7; q++) {
+          const th = sp + i * Math.PI + q / 7 * 1.9, x = p.x + Math.cos(th) * rr, z = p.z + Math.sin(th) * rr;
+          if (q) seg(px, py, pz, x, p.y + y, z, .006 + .008 * L, (.5 + .7 * L) * Math.sin(Math.PI * q / 7), (i + j) % 2 ? COL.wind : COL.windHi);
+          px = x; py = p.y + y; pz = z;
+        }
+      }
+    }
+    for (let n = take(c, 'in', (40 + 200 * L) * Q * dt); n > 0; n--) {
+      runit(); const r0 = r * 2.2 + .12 * R(), life = .15 + .1 * R(), v = r0 / life; tA.set(u3[0], u3[1], u3[2]); tB.crossVectors(tA, UP);
+      emit(p.x + u3[0] * r0, p.y + u3[1] * r0, p.z + u3[2] * r0, -u3[0] * v + tB.x * v, -u3[1] * v, -u3[2] * v + tB.z * v, life, .007, .004, 0, 0, COL.wind, K.SPARK, 1.8, 0, .06, R() * dt);
+    }
+    if (full) { const ph = (t * 2.6) % 1; spr(S.RING, p, r * (1.1 + ph) / .8, r * (1.1 + ph) / .8, 0, c.seed, COL.windHi, 1.1 * (1 - ph) ** 1.5, .035); }
+  }
+  const SPHERE = { water: waterSphere, wind: windSphere };
+
   return {
     aura(a, dt) { classic.aura(a, dt); limitCharge(a, dt); },
-    charge(c, dt) { sparkSphere(c, dt); },
+    charge(c, dt) { (SPHERE[c.el] ?? sparkSphere)(c, dt); },
   };
 }

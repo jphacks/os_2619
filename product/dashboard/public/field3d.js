@@ -607,7 +607,7 @@ export function createMinimap(canvas) {
       g.font = `900 ${12 * u}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
       // shots
       for (const sh of shots) {
-        const [x, y] = P(sh.pos.x, sh.pos.z), c = sh.element === 'fire' ? '#ffb05a' : '#bfe6ff';
+        const [x, y] = P(sh.pos.x, sh.pos.z), c = { fire: '#ffb05a', water: '#4f95ff', wind: '#e6fbf8' }[sh.element] ?? '#bfe6ff';
         g.fillStyle = c; g.shadowColor = c; g.shadowBlur = 8 * u; g.beginPath(); g.arc(x, y, 4 * u, 0, 7); g.fill(); g.shadowBlur = 0;
       }
       // players (marker size in pixels follows the field scale, but stays readable on a big field)
