@@ -12,6 +12,7 @@ import { createActions } from './actions.js';
 import { createVideoSource } from './video.js';
 import { createStage, DRONE_JA } from './stage.js';
 import { POSE } from './field3d.js';
+import { mountSticks } from './sticks.js';
 import { createGame, PHASE_JA, POS_JA, ELEMENT_JA, RULES, TIER_JA } from './game.js';
 import { createSmashStyle } from './fx-smash.js';
 import { createSpace } from './space3d.js';
@@ -81,7 +82,7 @@ hub.on(k => {
   if (k.type === 'marker') { if (k.marker !== W.MARKER) location.reload(); return; } // world.js fixed its tag table at load: start over with the new one
   PA.ingest(k); smap.ingest(k);
   if (k.type === 'phones') { phones = k.list; game.setOnline(playable.withSelf(k.list)); return; }
-  if (k.type === 'sticks') { game.setSticks(k); return; } // assigned sticks (server.mjs): taken on while setting up / at the next match
+  if (k.type === 'sticks') { game.setSticks(k); sticksUi?.refresh().catch(() => {}); return; } // assigned sticks (server.mjs): taken on while setting up / at the next match
   connect.ingest(k); game.ingest(k);
   if (k.type === 'truth' && !playable.owns(k.slot)) vsrc.dummy?.setTruth(k.slot, k); // fake-world.mjs: the dummy room shows the simulated players
   if (k.type === 'imu' || k.type === 'ar' || k.type === 'calib')
@@ -106,14 +107,14 @@ function flash(el) {
   requestAnimationFrame(() => { f.style.transition = 'opacity .35s'; f.style.opacity = 0; });
 }
 
-let screen = null;
+let screen = null, sticksUi = null;
 function show(name) {
   if (!['connect', 'space', 'game', 'final', 'sticks'].includes(name)) name = 'connect';
   screen = name; cfg.screen = name; save();
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('active', s.id === 'scr-' + name);
   for (const b of document.querySelectorAll('nav.tabs button')) b.setAttribute('aria-selected', b.dataset.screen === name);
   if (name === 'game') stage.attach($('#gameBox'), 'game');
-  if (name === 'sticks' && !$('#sticksFrame').src) $('#sticksFrame').src = 'sticks.html?embed'; // loaded on first open
+  if (name === 'sticks') sticksUi ??= mountSticks($('#sticksRoot')); // built on first open
   if (name === 'final') stage.attach($('#finalBox'), 'final');
   if (name === 'space') space.resize();
   if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
