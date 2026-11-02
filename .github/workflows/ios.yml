@@ -1,6 +1,6 @@
 # Builds product/ios on a GitHub-hosted Mac (no Mac needed locally).
 #  - push touching product/ios: compile check (no signing)
-#  - "Run workflow" with testflight=true: archive, sign (App Store Connect API key, automatic signing) and upload a new build to TestFlight
+#  - "Run workflow" with testflight=true, or a push whose last commit message contains [testflight]: archive, sign (App Store Connect API key, automatic signing) and upload a new build to TestFlight
 # Secrets for the TestFlight job: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 (base64 of AuthKey_XXXX.p8), TEAM_ID
 name: ios
 on:
@@ -38,7 +38,8 @@ jobs:
         run: grep -n -B2 -A6 "error:" build.log | head -200
 
   testflight:
-    if: ${{ inputs.testflight }}
+    # Run workflow with testflight=true, or (works from any branch, no need for the file on main) a pushed commit whose message has the tag below
+    if: ${{ inputs.testflight || contains(github.event.head_commit.message, '[testflight]') }}
     needs: build
     runs-on: macos-26
     env:
