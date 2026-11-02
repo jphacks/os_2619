@@ -38,6 +38,7 @@ targets:
       - sdk: CoreImage.framework
       - sdk: ARKit.framework
       - sdk: CoreBluetooth.framework
+      - sdk: WebKit.framework
     info:
       path: SensorLink/Info.plist
       properties:
@@ -46,7 +47,7 @@ targets:
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities: [arkit, bluetooth-le]
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
-        NSCameraUsageDescription: AR tracking and floor-tag detection use the camera.
+        NSCameraUsageDescription: AR tracking, floor-tag detection and photographing branches use the camera.
         NSBluetoothAlwaysUsageDescription: Connects to the IMU (WitMotion) attached to the stick.
         NSLocalNetworkUsageDescription: Sends sensor data to the PC on the local network.
         NSAppTransportSecurity:

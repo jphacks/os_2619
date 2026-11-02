@@ -108,11 +108,12 @@ function flash(el) {
 
 let screen = null;
 function show(name) {
-  if (!['connect', 'space', 'game', 'final'].includes(name)) name = 'connect';
+  if (!['connect', 'space', 'game', 'final', 'sticks'].includes(name)) name = 'connect';
   screen = name; cfg.screen = name; save();
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('active', s.id === 'scr-' + name);
   for (const b of document.querySelectorAll('nav.tabs button')) b.setAttribute('aria-selected', b.dataset.screen === name);
   if (name === 'game') stage.attach($('#gameBox'), 'game');
+  if (name === 'sticks' && !$('#sticksFrame').src) $('#sticksFrame').src = 'sticks.html?embed'; // loaded on first open
   if (name === 'final') stage.attach($('#finalBox'), 'final');
   if (name === 'space') space.resize();
   if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);

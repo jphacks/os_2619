@@ -5,7 +5,7 @@ import { cleanRarityMul } from './stick-stats.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
-const EL = { fire: '火', thunder: '雷', water: '水', wind: '風' };
+const EL = { fire: '炎', thunder: '雷', water: '水', wind: '風' };
 const ST = { hp: '体力', power: '威力', speed: '速さ', charge: '溜め' };
 const stars = n => `<span class="stars" aria-label="★${n}">${'★'.repeat(n)}<i>${'★'.repeat(5 - n)}</i></span>`;
 const bars = s => `<div class="bars">${Object.entries(ST).map(([k, l]) =>

@@ -1,10 +1,12 @@
 import SwiftUI
+import WebKit
 
 /// Camera picture with the detected tags drawn on top, the status lines, and the three buttons (IMU / Calibrate / LAN).
 struct ContentView: View {
     @EnvironmentObject var model: Model
     @State private var showImu = false
     @State private var showLan = false
+    @State private var showStick = false
 
     var body: some View {
         ZStack {
@@ -32,6 +34,7 @@ struct ContentView: View {
                     Button("IMU") { showImu = true }
                     Button("Calibrate") { model.calibrate() }
                     Button("LAN") { showLan = true }
+                    Button("枝") { showStick = true }
                 }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity)
@@ -42,6 +45,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showImu) { ImuSheet().environmentObject(model) }
         .sheet(isPresented: $showLan) { LanSheet().environmentObject(model) }
+        .sheet(isPresented: $showStick) { StickSheet(url: URL(string: "http://\(model.host):\(model.port)/sticks.html")!) }
     }
 }
 
@@ -139,4 +143,29 @@ struct LanSheet: View {
         }
         .onAppear { host = model.host; port = String(model.port) }
     }
+}
+
+/// The PC's branch-scan page (sticks.html) inside the app: its photo button opens the camera, and the page measures and uploads.
+struct StickSheet: View {
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationView {
+            WebView(url: url)
+                .navigationTitle("枝をスキャン")
+                .navigationBarTitleDisplayMode(.inline)
+                .navigationBarItems(trailing: Button("閉じる") { dismiss() })
+        }
+    }
+}
+
+struct WebView: UIViewRepresentable {
+    let url: URL
+    func makeUIView(context: Context) -> WKWebView {
+        let v = WKWebView()
+        v.load(URLRequest(url: url))
+        return v
+    }
+    func updateUIView(_ v: WKWebView, context: Context) {}
 }
