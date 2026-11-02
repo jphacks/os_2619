@@ -28,7 +28,7 @@ final class TagDetector {
         var found = [(id: Int, c: [Double])]()
         var runeInfo = "rune off"
         // AprilTags on another core while the RuneTags are read
-        var april = [NSDictionary]()
+        var april = [[AnyHashable: Any]]()
         let aprilDone = DispatchGroup()
         DispatchQueue.global(qos: .userInitiated).async(group: aprilDone) { [bridge] in april = bridge.detectAprilTags(f.gray) }
         if rune {
