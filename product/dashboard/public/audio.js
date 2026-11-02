@@ -11,15 +11,17 @@
 // Autoplay: Chrome keeps the context suspended until a user gesture ON THIS PAGE. BroadcastChannel messages from
 // admin.html are not gestures. unlock() is idempotent; the first pointerdown / keydown / touchend on the page calls it.
 
-const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3', 'guard'];
+const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3', 'water1', 'water2', 'water3', 'wind1', 'wind2', 'wind3', 'guard'];
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
-const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2, guard: -18.0 }; // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
+const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2,
+  water1: -18.0, water2: -17.8, water3: -19.4, wind1: -12.4, wind2: -11.3, wind3: -12.7, guard: -18.0 }; // water / wind: audio/README.md // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
 // fire3 is also the 大 hit: its 0-6 s faded from 3 s measures differently from the 3 s bed, so that use is corrected by this
-const BIG_LUFS = { fire3: -11.8, lightning3: -7.2 };
+const BIG_LUFS = { fire3: -11.8, lightning3: -7.2, water3: -20.1, wind3: -13.0 };
 const REF_LUFS = -16;
 // what plays what (10/18): every launch (小・中・大) = 1; the hit by tier: 小 = 1, 中 = 2, 大 = 3. fire3 is also fire's aura bed.
-const EL = { fire: { 1: 'fire1', 2: 'fire2', 3: 'fire3', bed: 'fire3' }, thunder: { 1: 'lightning1', 2: 'lightning2', 3: 'lightning3' } };
+export const EL = { fire: { 1: 'fire1', 2: 'fire2', 3: 'fire3', bed: 'fire3' }, thunder: { 1: 'lightning1', 2: 'lightning2', 3: 'lightning3' },
+  water: { 1: 'water1', 2: 'water2', 3: 'water3' }, wind: { 1: 'wind1', 2: 'wind2', 3: 'wind3' } };
 const HIT_FILE = { s: 1, m: 2, l: 3 };
 // fire's 大 is the exception: fire3 0-0.7 s is the launch, and the hit starts at 0.7 s of fire3. lufs: those parts, measured
 // with their fades (the 0.7 s launch is fire3's soft swell, so it is brought up to the other launches' level)
