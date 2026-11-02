@@ -8,6 +8,8 @@
 
 @implementation TagBridge {
     cv::aruco::ArucoDetector *_det;
+    int _lastRejected;
+    double _lastMean;
 }
 
 - (instancetype)init {
@@ -48,7 +50,10 @@
     cv::Mat gray(image.height, image.width, CV_8UC1, (void *)image.data.bytes);
     std::vector<std::vector<cv::Point2f>> corners;
     std::vector<int> ids;
-    _det->detectMarkers(gray, corners, ids);
+    std::vector<std::vector<cv::Point2f>> rejected;
+    _det->detectMarkers(gray, corners, ids, rejected);
+    _lastRejected = (int)rejected.size();
+    _lastMean = cv::mean(gray)[0];
     NSMutableArray *out = [NSMutableArray array];
     for (size_t i = 0; i < ids.size(); i++) {
         NSMutableArray *c = [NSMutableArray arrayWithCapacity:8];

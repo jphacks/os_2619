@@ -20,15 +20,23 @@ func tagSizeOf(_ id: Int, rune: Bool = false) -> Double {
 /// Positions in the OpenCV camera frame (x right, y down, z forward), metres. Output matches Vision.kt packet for packet.
 final class TagDetector {
     private let bridge = TagBridge()
+    /// One line about the last frame for the status text: picture size and brightness, RuneTags found and how long Rune took, AprilTags and rejected squares.
+    private(set) var info = ""
 
     func detect(_ f: TagFrame, rune: Bool) -> [[String: Any]] {
         let w = Double(f.gray.width), h = Double(f.gray.height)
         var found = [(id: Int, c: [Double])]()
+        var runeInfo = "rune off"
         if rune {
+            let t0 = Date()
             let g = [UInt8](f.gray.data)
-            for m in Rune.detect(g, Int(f.gray.width), Int(f.gray.height)) { found.append((m.id, m.corners)) }
+            let runes = Rune.detect(g, Int(f.gray.width), Int(f.gray.height))
+            for m in runes { found.append((m.id, m.corners)) }
+            runeInfo = String(format: "rune %d in %.0f ms", runes.count, Date().timeIntervalSince(t0) * 1000)
         }
-        for t in bridge.detectAprilTags(f.gray) {
+        let april = bridge.detectAprilTags(f.gray)
+        info = String(format: "img %dx%d mean %.0f  %@  april %d  rejected %d", f.gray.width, f.gray.height, bridge.lastMean, runeInfo, april.count, bridge.lastRejected)
+        for t in april {
             guard let id = (t["id"] as? NSNumber)?.intValue, let c = t["c"] as? [NSNumber] else { continue }
             if rune && Rune.IDS.contains(id) { continue }
             found.append((id, c.map { $0.doubleValue }))

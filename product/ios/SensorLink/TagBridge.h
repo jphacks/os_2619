@@ -14,6 +14,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// Kept in Objective-C++ because OpenCV has no Swift API; this header stays free of C++ so Swift can import it.
 @interface TagBridge : NSObject
 
+/// Diagnostics of the last detectAprilTags: square-looking candidates that were not valid tags, and the picture's mean brightness (0-255).
+@property (nonatomic, readonly) int lastRejected;
+@property (nonatomic, readonly) double lastMean;
+
 /// The luma plane of a camera frame, rotated 90° clockwise. The sensor is landscape; this is the upright portrait picture.
 + (nullable GrayImage *)uprightGray:(CVPixelBufferRef)pixelBuffer;
 
