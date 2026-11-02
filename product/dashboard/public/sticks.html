@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>枝スキャン</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #fff; --text: #111; --muted: #666; --line: #ddd; --soft: #f4f4f2; --navy: #1d3461; --bad: #b3261e;
+    font: 14px/1.6 system-ui, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); }
+  main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
+  header { display: flex; align-items: baseline; gap: 16px; border-bottom: 2px solid var(--text); padding-bottom: 8px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: .04em; }
+  header a { margin-left: auto; color: var(--navy); }
+  h2 { font-size: 15px; margin: 28px 0 10px; }
+  button, input, label.btn { font: inherit; color: inherit; }
+  button, label.btn { background: #fff; border: 1px solid var(--text); border-radius: 4px; padding: 5px 12px; cursor: pointer; white-space: nowrap; }
+  button.go, label.btn { background: var(--navy); border-color: var(--navy); color: #fff; }
+  button.del { border-color: var(--line); color: var(--bad); }
+  button:disabled { opacity: .4; cursor: default; }
+  input[type=text], input[type=number] { border: 1px solid #999; border-radius: 4px; padding: 4px 6px; background: #fff; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .bad { color: var(--bad); }
+  .stars { color: var(--navy); letter-spacing: .1em; font-size: 18px; }
+  .stars i { color: #ccc; font-style: normal; }
+
+  /* scan */
+  .scan { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+  .photo { background: var(--soft); min-height: 220px; display: grid; place-items: center; border: 1px solid var(--line); }
+  .photo img { max-width: 100%; max-height: 420px; display: block; }
+  .card { border: 1px solid var(--text); padding: 14px 16px; }
+  .card .name { width: 100%; font-size: 16px; font-weight: 700; }
+  .el { display: inline-block; border: 1px solid var(--text); padding: 0 8px; margin-left: 8px; font-size: 13px; }
+  .bars { display: grid; grid-template-columns: 3em 1fr 3.4em; gap: 4px 8px; align-items: center; margin: 10px 0; font-variant-numeric: tabular-nums; }
+  .bar { height: 8px; background: var(--soft); position: relative; }
+  .bar b { position: absolute; inset: 0 auto 0 0; background: var(--navy); }
+  .bar::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; border-left: 1px solid var(--text); } /* ×1 = today's value */
+
+  /* players */
+  .players { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .slot { border-left: 4px solid var(--text); padding: 6px 12px; background: var(--soft); display: flex; gap: 10px; align-items: center; }
+  .slot strong { font-size: 18px; }
+  .slot button { margin-left: auto; }
+
+  /* list */
+  table { width: 100%; border-collapse: collapse; }
+  td { border-top: 1px solid var(--line); padding: 8px 6px; vertical-align: middle; }
+  td.pic img { width: 72px; height: 54px; object-fit: cover; display: block; background: var(--soft); }
+  td.st { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  td.act { text-align: right; white-space: nowrap; }
+  td.act button { margin-left: 4px; }
+  tr.inuse td.who { color: var(--navy); font-weight: 700; }
+
+  /* rarityMul */
+  .mul { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+  .mul input { width: 5em; }
+
+  @media (max-width: 720px) {
+    .scan, .players { grid-template-columns: 1fr; }
+    td.st { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>枝スキャン</h1><span class="muted">試合の外で使う</span><a href="/">ダッシュボードへ</a></header>
+
+  <h2>1. 枝を撮る</h2>
+  <p class="muted">無地の床か紙に置く。枝の全体を写す。</p>
+  <div class="scan">
+    <div class="photo" id="photo"><span class="muted">写真はまだない</span></div>
+    <div class="card" id="card">
+      <label class="btn">写真を選ぶ<input type="file" id="file" accept="image/*" hidden></label>
+      <div id="result"></div>
+    </div>
+  </div>
+
+  <h2>2. プレイヤーの枝</h2>
+  <div class="players" id="players"></div>
+
+  <h2>3. 保存した枝</h2>
+  <table><tbody id="list"></tbody></table>
+
+  <h2>4. ★ごとの強さ</h2>
+  <p class="muted">4つの能力の平均。1 で今と同じ。0.7〜1.3。</p>
+  <div class="mul" id="mul"></div>
+  <p class="muted" id="mulMsg"></p>
+</main>
+<script type="module" src="sticks.js"></script>
+</body>
+</html>
