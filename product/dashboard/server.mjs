@@ -4,6 +4,7 @@
 //  /ws    phones A and B (the SensorLink app) and the dashboards. Same protocol as sensing/dashboard/server.mjs:
 //         slots A / B, packets relayed with `slot` added, ping → pong, `phones` list. Phones A / B send no picture.
 //  /cam   phone C, the third-person camera (cam.html + camlink.js): WebRTC signalling and a JPEG fallback relay
+//  /sticks  scanned branches (sticks.html): records, photos, which one players A / B use, sent to dashboards as { type: 'sticks' }
 //  /marker.js  the floor sheets' marker (april | rune), saved in settings.json;  /info  JSON for the dashboard;  /ca.crt /ca.pem  the local CA phone C trusts once (trust.html)
 //  /cdn/npm/<pkg>@<x.y.z>/<file>  cdn.jsdelivr.net cached in vendor/cdn/ (works offline once fetched)
 //  /cdn/mp-models/<path>.task      MediaPipe's models (storage.googleapis.com/mediapipe-models), cached the same way
@@ -13,12 +14,14 @@ import https from 'node:https';
 import net from 'node:net';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { X509Certificate } from 'node:crypto';
+import { X509Certificate, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, extname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
+import { stickStats, stickElement, stickRarity, cleanRarityMul } from './public/stick-stats.js';
+import { shapeScore } from './public/stick-analyze.js';
 
 const PORT = +process.env.PORT || 8000;
 const root = fileURLToPath(new URL('.', import.meta.url));
@@ -120,7 +123,7 @@ wss.on('connection', (ws, req) => {
     }
     if (k.type === 'hello') {
       role = String(k.role); id = String(k.id).slice(0, 64);
-      if (role === 'dashboard') { dashboards.add(ws); send(ws, { type: 'marker', marker }); return status(); }
+      if (role === 'dashboard') { dashboards.add(ws); send(ws, { type: 'marker', marker }); ws.send(sticksMsg()); return status(); }
       if (role !== 'phone') return;
       const old = phones.get(id); // same phone reconnecting keeps its slot
       const slot = old?.slot ?? SLOTS.find(s => ![...phones.values()].some(q => q.slot === s));
@@ -231,14 +234,88 @@ function info(host) {
   };
 }
 // the game screen's numbers saved on this PC (rules.json next to server.mjs, not in git): GET -> them (404 when none), POST <- them
-const RULES_FILE = join(root, 'rules.json');
+const RULES_FILE = process.env.RULES_FILE ?? join(root, 'rules.json');
 async function rulesFile(req, res) {
   const json = { 'content-type': 'application/json', 'cache-control': 'no-store' };
   if (req.method === 'GET') { let body; try { body = await readFile(RULES_FILE); } catch { return res.writeHead(404, json).end('null'); } return res.writeHead(200, json).end(body); }
   if (req.method !== 'POST') return res.writeHead(405).end();
   let body = ''; for await (const c of req) { body += c; if (body.length > 64e3) return res.writeHead(413).end(); }
-  try { const r = JSON.parse(body); if (!r || typeof r !== 'object' || Array.isArray(r)) throw 0; await writeFile(RULES_FILE, JSON.stringify(r, null, 2)); log('rules: saved to rules.json'); return res.writeHead(200, json).end('{"ok":true}'); }
+  try { const r = JSON.parse(body); if (!r || typeof r !== 'object' || Array.isArray(r)) throw 0; await writeFile(RULES_FILE, JSON.stringify(r, null, 2)); log('rules: saved to rules.json');
+    rarityMul = cleanRarityMul(r.rarityMul); toDashboards(sticksMsg()); // the players' sticks' stats follow rules.rarityMul
+    return res.writeHead(200, json).end('{"ok":true}'); }
   catch { return res.writeHead(400, json).end('{"ok":false}'); }
+}
+
+// ---- /sticks: branches scanned on sticks.html. The browser measures the shape (stick-analyze.js) and sends the features;
+// here they are checked, the score recomputed, and a new random seed picks the luck, element and stats (stick-stats.js).
+//  GET /sticks → records   POST /sticks {name?, features, image: jpeg data URL} → the new record   DELETE /sticks/<id>
+//  GET /sticks/assign → {A, B}   POST /sticks/assign {A?: id|null, B?: id|null}   GET /sticks/img/<id>.jpg
+// Stored in DATA_DIR (data/, not in git): sticks.json {sticks, assign} and sticks/<id>.jpg. Stats are never trusted from the
+// file: they are recomputed from (seed, rarity, rules.rarityMul) on the way out, so a new rarityMul changes every stick.
+const DATA_DIR = process.env.DATA_DIR ?? join(root, 'data'), STICKS_FILE = join(DATA_DIR, 'sticks.json'), IMG_DIR = join(DATA_DIR, 'sticks');
+let db = { sticks: [], assign: { A: null, B: null } };
+try { const d = JSON.parse(readFileSync(STICKS_FILE, 'utf8')); db = { sticks: Array.isArray(d.sticks) ? d.sticks : [], assign: { A: d.assign?.A ?? null, B: d.assign?.B ?? null } }; } catch {}
+let rarityMul = cleanRarityMul(null); try { rarityMul = cleanRarityMul(JSON.parse(readFileSync(RULES_FILE, 'utf8')).rarityMul); } catch {}
+const ID = /^[a-z0-9]{8,32}$/;
+const byId = id => db.sticks.find(s => s.id === id) ?? null;
+const withStats = s => s && { ...s, stats: stickStats(s.seed, s.rarity, rarityMul) };
+const assigned = () => ({ A: withStats(byId(db.assign.A)), B: withStats(byId(db.assign.B)) });
+const sticksMsg = () => JSON.stringify({ type: 'sticks', ...assigned() });
+const saveDb = () => { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(STICKS_FILE, JSON.stringify(db, null, 2)); }; // sync: two saves never interleave
+// feature -> [min, max, integer]: anything else in the body is dropped
+const FEATURES = { branches: [0, 50, 1], ends: [0, 100, 1], tortuosity: [1, 50], aspect: [0, 1000], thickness: [0, 1000], length: [0, 5000], coverage: [0, 1] };
+function cleanFeatures(f) {
+  if (!f || typeof f !== 'object') return null;
+  const out = {};
+  for (const [k, [lo, hi, int]] of Object.entries(FEATURES)) { const v = f[k]; if (typeof v !== 'number' || !(v >= lo && v <= hi) || (int && !Number.isInteger(v))) return null; out[k] = v; }
+  return out;
+}
+// null when over max; the rest is still read (up to 8 × max) so the client gets the 413 instead of a reset
+async function body(req, max) { let b = '', n = 0; for await (const c of req) { n += c.length; if (n > 8 * max) return req.destroy(), null; if (n <= max) b += c; } return n > max ? null : b; }
+async function sticksRoute(req, res, path) {
+  const json = (code, v) => res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(v));
+  const img = path.match(/^\/sticks\/img\/([a-z0-9]+)\.jpg$/);
+  if (img && req.method === 'GET') {
+    if (!ID.test(img[1])) return res.writeHead(404).end();
+    let jpg; try { jpg = await readFile(join(IMG_DIR, img[1] + '.jpg')); } catch { return res.writeHead(404).end(); }
+    return res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-cache' }).end(jpg);
+  }
+  if (path === '/sticks/assign') {
+    if (req.method === 'GET') return json(200, assigned());
+    if (req.method !== 'POST') return res.writeHead(405).end();
+    let k; try { k = JSON.parse(await body(req, 1e3)); } catch {}
+    if (!k || typeof k !== 'object') return json(400, { ok: false });
+    for (const s of ['A', 'B']) if (s in k && k[s] !== null && !byId(k[s])) return json(400, { ok: false, error: `no stick ${s}` });
+    for (const s of ['A', 'B']) if (s in k) db.assign[s] = k[s];
+    saveDb(); toDashboards(sticksMsg()); log(`sticks: A ${db.assign.A ?? '-'}, B ${db.assign.B ?? '-'}`);
+    return json(200, assigned());
+  }
+  if (path === '/sticks') {
+    if (req.method === 'GET') return json(200, db.sticks.map(withStats));
+    if (req.method !== 'POST') return res.writeHead(405).end();
+    const b = await body(req, 1.5e6); if (b === null) return json(413, { ok: false, error: 'too big' });
+    let k; try { k = JSON.parse(b); } catch {}
+    const features = cleanFeatures(k?.features);
+    const m = typeof k?.image === 'string' && k.image.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/);
+    const jpg = m && Buffer.from(m[1], 'base64');
+    if (!features || !jpg || jpg.length > 1048576 || jpg[0] !== 0xff || jpg[1] !== 0xd8) return json(400, { ok: false, error: 'features or image' });
+    const id = Date.now().toString(36) + randomBytes(3).toString('hex'), seed = randomBytes(4).readUInt32LE(), rarity = stickRarity(seed, shapeScore(features));
+    const name = String(k.name ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 24) || `枝 ${db.sticks.length + 1}`;
+    const rec = { id, createdAt: new Date().toISOString(), name, seed, rarity, element: stickElement(seed), stats: stickStats(seed, rarity, rarityMul), features, image: `/sticks/img/${id}.jpg` };
+    await mkdir(IMG_DIR, { recursive: true }); await writeFile(join(IMG_DIR, id + '.jpg'), jpg);
+    db.sticks.push(rec); saveDb(); log(`sticks: scanned ${id} ★${rarity} ${rec.element}`);
+    return json(200, rec);
+  }
+  const del = path.match(/^\/sticks\/([a-z0-9]+)$/);
+  if (del && req.method === 'DELETE') {
+    if (!ID.test(del[1]) || !byId(del[1])) return json(404, { ok: false });
+    db.sticks = db.sticks.filter(s => s.id !== del[1]);
+    const was = ['A', 'B'].filter(s => db.assign[s] === del[1]); for (const s of was) db.assign[s] = null;
+    saveDb(); rmSync(join(IMG_DIR, del[1] + '.jpg'), { force: true });
+    if (was.length) toDashboards(sticksMsg());
+    return json(200, { ok: true });
+  }
+  return res.writeHead(404).end();
 }
 async function onRequest(req, res) {
   try {
@@ -248,6 +325,7 @@ async function onRequest(req, res) {
     if (path === '/marker.js') return res.writeHead(200, { 'content-type': types['.js'], 'cache-control': 'no-store' }).end(`export const MARKER = '${marker}'; // server.mjs settings\n`);
     if (path === '/info') return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(info(req.headers.host)));
     if (path === '/rules') return rulesFile(req, res);
+    if (path === '/sticks' || path.startsWith('/sticks/')) return sticksRoute(req, res, path);
     if (path.startsWith('/cdn/')) {
       const p = path.slice(5);
       if (!pinned(p)) return res.writeHead(404).end();
