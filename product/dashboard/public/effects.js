@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { createFireEffects } from './fire-effects.js';
 import { createThunderEffects } from './thunder-effects.js';
 import { createChargeEffects } from './charge-effects.js';
+import { createWaterWindLayer } from './fx-ww-layer.js';
 
 const TAU = Math.PI * 2;
 const K = { FLAME: 0, SMOKE: 1, SPARK: 2, GLOW: 3, EMBER: 4, DROP: 5, LEAF: 6 };            // particle kinds
@@ -353,6 +354,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
   const fire = createFireEffects(fxScene, { onShake: shake });
   const thunder = createThunderEffects(fxScene, { onShake: shake });
   const charging = createChargeEffects(fxScene);
+  const ww = createWaterWindLayer(fxScene); // textured sprites + shader meshes for the water / wind moves (kit.ww)
   const common = { uNoise: { value: noise }, uTime: { value: 0 } };
   const addMat = (vs, fs, uniforms = {}) => new THREE.ShaderMaterial({
     // DoubleSide: floor sprites (sprFloor) span +x/+z, so seen from above their winding faces away and FrontSide culled them
@@ -487,7 +489,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
     }
     for (let i = 0; i < 12 * Q * speed; i++) {
       runit(); const sp = (.6 + R()) * speed;
-      emit(p.x, p.y, p.z, u3[0] * sp, Math.abs(u3[1]) * sp * .4, u3[2] * sp, .7 + .5 * R(), .2, .8, 2.5, .2, COL.dust, K.SMOKE, .35, .6, 0, -.05);
+      emit(p.x, p.y, p.z, u3[0] * sp, Math.abs(u3[1]) * sp * .4, u3[2] * sp, .7 + .5 * R(), .12, .5, 2.5, .2, COL.dust, K.SMOKE, .14, .6, 0, -.05); // thin: big puffs read as cream blobs
     }
   }
 
@@ -911,7 +913,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
     aura: (a, dt) => (AURA[a.el] ?? thunderAura)(a, dt), guard: guardFx, block: classicBlock };
   const kit = {
     THREE, K, S, COL, TAU, Q, R, RS, V, emit, spr, sprFloor, seg, segV, Bolt, gen, drawBolt, runit, u3, take, flick, sc, shake,
-    fireBurst, sparkBurst, splashBurst, gustBurst, trailFire, headFire, screenRot, add, classic, camera, get time() { return time; },
+    fireBurst, sparkBurst, splashBurst, gustBurst, trailFire, headFire, screenRot, add, classic, camera, ww, get time() { return time; },
   };
   // 'textured': takumi's set (fire-effects.js / thunder-effects.js / charge-effects.js, generated texture sprites in their own
   // meshes). They take the shot by id and draw everything themselves; nothing goes through the primitives above.
@@ -1066,7 +1068,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
     controlThunderPreview(state) { thunder.previewControl(state); },
     step(dt) {
       dt = Math.min(Math.max(dt, 0), .1); time += dt;
-      nS = 0; nG = 0;
+      nS = 0; nG = 0; ww.begin(time);
       for (const [k, a] of auras) { if (time - a.seen > .15) { auras.delete(k); continue; } (style.aura ?? classic.aura)(a, dt); }
       for (const [k, g] of guards) { if (time - g.seen > .15) { guards.delete(k); continue; } (style.guard ?? guardFx)(g, dt); }
       for (const [k, c] of charges) { if (time - c.seen > .15) { charges.delete(k); continue; } if (c.v > 0) (style.charge ?? classic.charge)(c, dt); }
@@ -1076,6 +1078,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
         if (!e.update(e, dt)) live.splice(i, 1);
         e.age += dt;
       }
+      ww.end();
       uploadParticles();
       for (const [b, n, st] of [[SP, nS, SS], [SG, nG, GS]]) {
         b.g.instanceCount = n;
@@ -1094,7 +1097,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
       renderer.setRenderTarget(null); renderer.autoClear = true;
       timed('scene', () => renderer.render(scene, camera));
       // nothing alive: skip the effect layer, bloom and composite (setup, between moves)
-      if (!nS && !nG && time >= pAlive && !fire.active && !thunder.active && !charging.active) { renderer.autoClear = ac; renderer.setRenderTarget(rt0); return; }
+      if (!nS && !nG && time >= pAlive && !fire.active && !thunder.active && !charging.active && !ww.active) { renderer.autoClear = ac; renderer.setRenderTarget(rt0); return; }
       timed('fx', fxPasses);
       renderer.setClearColor(cc, ca); renderer.autoClear = ac; renderer.setRenderTarget(rt0);
     },
@@ -1103,11 +1106,12 @@ export function createFx(renderer, scene, camera, opts = {}) {
     /** { fxPixels, fxPixelsMin, fxBudgetMs, adaptive }: fxPixels also resets the adaptive size to it. */
     setQuality(q) { Object.assign(opts, q); if (q.fxPixels) { px = q.fxPixels; if (W) resizeTargets(W, H); } },
     stats() { return { sprites: nS, segments: nG, particleCap: CAP, shots: shots.size, live: live.length, auras: auras.size, charges: charges.size,
-      fire: fire.stats(), thunder: thunder.stats(), charging: charging.stats(), fxPixels: Math.round(fxRT.width * fxRT.height), gpuSceneMs: +gpu.scene.toFixed(2), gpuFxMs: +gpu.fx.toFixed(2), timer: !!tq }; },
+      fire: fire.stats(), thunder: thunder.stats(), charging: charging.stats(), ww: ww.stats(), fxPixels: Math.round(fxRT.width * fxRT.height), gpuSceneMs: +gpu.scene.toFixed(2), gpuFxMs: +gpu.fx.toFixed(2), timer: !!tq }; },
     dispose() {
       fire.dispose();
       thunder.dispose();
       charging.dispose();
+      ww.dispose();
       for (const t of [fxRT, ...down, ...up]) t.dispose();
       for (const m of [P, SP, SG]) { m.g.dispose(); m.mesh.material.dispose(); }
       for (const m of [downMat, upMat, compMat]) m.dispose();
