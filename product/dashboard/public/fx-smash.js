@@ -1,12 +1,14 @@
 // "スマブラ風" effect set: one move per element and tier, modelled on Smash Bros. specials (original effects, no assets).
 //   炎 小 PK Fire (Ness)          炎 中 Firaga (Sora)              炎 大 Explosive Flame (Palutena)
 //   雷 小 Thunder (Robin)         雷 中 Elthunder (Robin)          雷 大 Thunder (Pikachu)
+//   水 小 Water Gun               水 中 Aqua Ring                  水 大 Geyser
+//   風 小 Air Cutter              風 中 Gale Shuriken              風 大 Tornado
 //   溜め: Limit Charge (Cloud) around the body, a Kirby-Spark-like sphere at the stick tip, in the element's colour
-// The moves live in fx-smash-fire.js, fx-smash-thunder.js and fx-smash-charge.js; this file routes effects.js's style hooks
+// The moves live in fx-smash-fire.js, fx-smash-thunder.js, fx-smash-water.js, fx-smash-wind.js and fx-smash-charge.js; this file routes effects.js's style hooks
 // to them (fx.addStyle('smash', createSmashStyle)). A hook a module does not provide falls back to the classic effect.
 //
 // Contract for the move modules (kit = effects.js primitives, see the `kit` object there):
-//   createFireMoves(kit) / createThunderMoves(kit) -> {
+//   createFireMoves(kit) / createThunderMoves(kit) / createWaterMoves(kit) / createWindMoves(kit) -> {
 //     shot(s, dt)          every frame while the projectile flies. s: { el, tier 's'|'m'|'l', pos (head, moved by the game),
 //                          prev (pos last frame: set s.prev.copy(s.pos) at the end), from (muzzle), dir, power, big, age, travel,
 //                          acc {}, regen, seed, bolts [6 Bolt] } — keep per-shot state on s
@@ -21,6 +23,8 @@
 //   createGuardMoves(kit) -> { guard(g, dt) every frame while guarding, block(el, pos) a shot met the guard }  (fx-smash-guard.js)
 import * as fireMod from './fx-smash-fire.js';
 import * as thunderMod from './fx-smash-thunder.js';
+import * as waterMod from './fx-smash-water.js';
+import * as windMod from './fx-smash-wind.js';
 import * as chargeMod from './fx-smash-charge.js';
 import * as guardMod from './fx-smash-guard.js';
 import * as circleMod from './fx-smash-circle.js';
@@ -32,7 +36,7 @@ function scaledKit(kit) {
   const Z = { k: 1, c: new kit.THREE.Vector3() }, tP = new kit.THREE.Vector3(), tQ = new kit.THREE.Vector3();
   const at = (v, o) => o.copy(v).sub(Z.c).multiplyScalar(Z.k).add(Z.c);
   const sk = {
-    ...kit, _scale: Z,
+    ...kit, _scale: Z, get time() { return kit.time; }, // the spread copied the getter's value: keep it live
     emit(x, y, z, vx, vy, vz, life, s0, s1, drag, grav, col, kind, inten, turb, extra, ageOff) {
       const k = Z.k;
       if (k !== 1) { const c = Z.c; x = c.x + (x - c.x) * k; y = c.y + (y - c.y) * k; z = c.z + (z - c.z) * k; vx *= k; vy *= k; vz *= k; s0 *= k; s1 *= k; }
@@ -56,20 +60,20 @@ function scaledKit(kit) {
 export function createSmashStyle(kit0) {
   const kit = scaledKit(kit0), Z = kit._scale;
   const make = (mod, name) => { try { return mod[name]?.(kit) ?? {}; } catch (e) { console.warn('fx-smash', name, e); return {}; } };
-  const by = { fire: make(fireMod, 'createFireMoves'), thunder: make(thunderMod, 'createThunderMoves') };
+  const by = { fire: make(fireMod, 'createFireMoves'), thunder: make(thunderMod, 'createThunderMoves'), water: make(waterMod, 'createWaterMoves'), wind: make(windMod, 'createWindMoves') };
   const ch = make(chargeMod, 'createChargeMoves'), C = kit0.classic;
   // the guard gets the plain kit: the scaled one is a copy, whose getters (time, view) would be frozen at creation
   let gd = {}, mc = {}; try { gd = guardMod.createGuardMoves(kit0) ?? {}; mc = circleMod.createMagicCircle(kit0) ?? {}; } catch (e) { console.warn('fx-smash', 'guard / circle', e); }
   const tierPower = { s: .25, m: .6, l: 1 };
   return {
     shot(s, dt) {
-      const m = by[s.el]; if (!m.shot) return C.shot(s, dt);
+      const m = by[s.el] ?? {}; if (!m.shot) return C.shot(s, dt);
       Z.k = s.scale ?? 1; Z.c.copy(s.pos);
       try { m.shot(s, dt); } finally { Z.k = 1; }
     },
-    end(s, reason) { const m = by[s.el]; if (m.end) m.end(s, reason); else C.end(s, reason); },
+    end(s, reason) { const m = by[s.el] ?? {}; if (m.end) m.end(s, reason); else C.end(s, reason); },
     // no tier: not a projectile (a charge that fizzled): the small classic burst
-    hit(el, pos, power, opt = {}) { const m = by[el]; if (m.hit && opt.tier) m.hit(pos, opt.tier, power); else C.hit(el, pos, opt.tier ? tierPower[opt.tier] : power); },
+    hit(el, pos, power, opt = {}) { const m = by[el] ?? {}; if (m.hit && opt.tier) m.hit(pos, opt.tier, power); else C.hit(el, pos, opt.tier ? tierPower[opt.tier] : power); },
     charge(c, dt) { if (ch.charge) ch.charge(c, dt); else C.charge(c, dt); },
     aura(a, dt) { if (ch.aura) ch.aura(a, dt); else C.aura(a, dt); mc.draw?.(a, dt); }, // + the magic circle under a charging player (fx-smash-circle.js)
     guard(g, dt) { (gd.guard ?? C.guard)(g, dt); },

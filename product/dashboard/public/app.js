@@ -62,7 +62,7 @@ let sfx = null; // sound: loaded lazily so a failing module never stops the pict
 import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const v = JSON.parse(localStorage.getItem('pd-vol')); if (v) for (const [k, x] of Object.entries(v)) sfx.setVolume(k, x); } catch {} }).catch(e => console.warn('audio', e));
 
 // recognition on the final screen (vision.js) and its layers under the effects (visionfx.js); nothing runs unless it is switched on (cfg.visOn) and a layer is on
-const VIS_KEYS = ['visDraw', 'visGhost', 'visSpot', 'visTrail'], EL_COLOR = { fire: '#ff7a1a', thunder: '#6cc8ff' };
+const VIS_KEYS = ['visDraw', 'visGhost', 'visSpot', 'visTrail'], EL_COLOR = { fire: '#ff7a1a', thunder: '#6cc8ff', water: '#2f7dff', wind: '#d8f4f2' };
 const vision = createVision({ getSource: () => video.__dummy?.canvas ?? video, stickLen: () => (cfg.stickLen.A + cfg.stickLen.B) / 2, getFps: () => fps }); // fps (below): the recognition backs off while the page itself is slow
 const vfx = createVisionFx();
 const overlay = { compose: (src, w, h, dt) => vfx.compose(src, w, h, dt, vision, cfg.visOn ? { draw: cfg.visDraw, ghost: cfg.visGhost, spot: cfg.visSpot, trail: cfg.visTrail } : {}, { A: EL_COLOR[game.players.A.element], B: EL_COLOR[game.players.B.element] }) };
@@ -100,7 +100,7 @@ stage.attachMinimap(hud.querySelector('.minimap'));
 hudFlash.el = hud.querySelector('.flash');
 function flash(el) {
   const f = hudFlash.el; f.style.transition = 'none'; f.style.opacity = .5;
-  f.style.background = el === 'fire' ? 'radial-gradient(#ff7a1a, transparent 70%)' : 'radial-gradient(#bfe8ff, transparent 70%)';
+  f.style.background = `radial-gradient(${{ fire: '#ff7a1a', water: '#3d8bff', wind: '#e8fbff' }[el] ?? '#bfe8ff'}, transparent 70%)`;
   requestAnimationFrame(() => { f.style.transition = 'opacity .35s'; f.style.opacity = 0; });
 }
 
@@ -131,7 +131,7 @@ gameCtrl.innerHTML = `
   <p class="why" id="why"></p>
   <h3>プレイヤー</h3>
   <div class="players2">${['A', 'B'].map(s => `
-    <div class="pc" data-s="${s}"><div class="row" style="justify-content:space-between"><b style="color:var(--${s})">${s} ${ELEMENT_JA[s === 'A' ? 'fire' : 'thunder']}</b><span class="num hpv"></span></div>
+    <div class="pc" data-s="${s}"><div class="row" style="justify-content:space-between"><b style="color:var(--${s})">${s} ${ELEMENT_JA[game.players[s].element] ?? ''}</b><span class="num hpv"></span></div>
       <div class="facts"></div>
       <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button><button data-act="guard" title="押している間ガード（小は跳ね返し、中・大は貫通）">押してガード</button></div></div>`).join('')}
   </div>
@@ -264,7 +264,7 @@ drawer.innerHTML = `
   <section><h3>音</h3>
     ${['master:全体', 'bgm:BGM', 'sfx:効果音', 'amb:環境音'].map(x => { const [k, n] = x.split(':'); return `<label class="f"><span>${n}</span><input type="range" min="0" max="1" step="0.01" data-vol="${k}"><output data-volout="${k}"></output></label>`; }).join('')}
     <div class="row"><button id="mute">消音</button><button id="bgmPreview" title="M キーでも押せる。試合の BGM を、試合とは関係なく流す。試合が始まると自動で止まり、試合の BGM が頭から流れる">試合 BGM を流す<kbd>M</kbd></button><span class="note" id="audioInfo"></span></div>
-    <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}</div></section>
+    <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大'], ['shotWater', '水の発射'], ['hitWater', '水の命中'], ['specialWater', '水の大'], ['shotWind', '風の発射'], ['hitWind', '風の命中'], ['specialWind', '風の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}</div></section>
   <section><h3>キー操作</h3><table class="keys">
     <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ試合開始（撃った瞬間に相手を狙う）・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
     <tr><td>Space / Enter</td><td>A / B が小の攻撃（溜めなし）</td></tr><tr><td>Q / P 長押し</td><td>A / B が溜める（離した時の溜め時間で小・中・大）</td></tr>
@@ -289,8 +289,8 @@ $('#tutRow').append($('#bgmPreview')); // the match BGM button sits next to 発�
 $('#bgmPreview').onclick = () => { if (!sfx) return; sfx.unlock?.(); sfx.previewBgm(!sfx.previewingBgm); };
 for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
   if (!sfx) return; sfx.unlock?.();
-  ({ shotFire: () => sfx.shot('fire', 0, .6), shotThunder: () => sfx.shot('thunder', 0, .6), hitFire: () => sfx.hit('fire', 0, .7), hitThunder: () => sfx.hit('thunder', 0, .7),
-    specialFire: () => { sfx.special('fire', 0); sfx.hit('fire', 0, 1, 'l'); }, specialThunder: () => { sfx.special('thunder', 0); sfx.hit('thunder', 0, 1, 'l'); } })[b.dataset.sound]?.();
+  const [, kind, E] = b.dataset.sound.match(/^(shot|hit|special)(\w+)$/) ?? [], el = E?.toLowerCase(); // e.g. hitWater
+  ({ shot: () => sfx.shot(el, 0, .6), hit: () => sfx.hit(el, 0, .7), special: () => { sfx.special(el, 0); sfx.hit(el, 0, 1, 'l'); } })[kind]?.();
 };
 
 // ---- keys ----

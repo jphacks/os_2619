@@ -15,11 +15,15 @@ import { createThunderEffects } from './thunder-effects.js';
 import { createChargeEffects } from './charge-effects.js';
 
 const TAU = Math.PI * 2;
-const K = { FLAME: 0, SMOKE: 1, SPARK: 2, GLOW: 3, EMBER: 4 };                              // particle kinds
-const S = { GLOW: 0, FIREBALL: 1, PLASMA: 2, RING: 3, SWIRL: 4, FLARE: 5, GHOST: 6 };        // sprite kinds
+const K = { FLAME: 0, SMOKE: 1, SPARK: 2, GLOW: 3, EMBER: 4, DROP: 5 };                     // particle kinds
+const S = { GLOW: 0, FIREBALL: 1, PLASMA: 2, RING: 3, SWIRL: 4, FLARE: 5, GHOST: 6, WATER: 7, CRESCENT: 8 }; // sprite kinds
 const COL = {
   fire: [1, .38, .08], ember: [1, .5, .14], smoke: [.09, .06, .05], hot: [1, .78, .45], one: [1, 1, 1],
   elec: [.28, .66, 1], spark: [.62, .86, 1], elecGlow: [.16, .38, 1], white: [.85, .94, 1],
+  // water: a deep blue body with cyan light in it, white foam. wind: near-white air with a cool pale-cyan cast and silver dust
+  // (no saturated green, and kept off thunder's electric blue: water is deeper, wind is whiter)
+  water: [.03, .24, .95], waterHi: [.3, .82, 1], waterGlow: [.02, .1, .6], foam: [.78, .93, 1],
+  wind: [.8, .96, .95], windHi: [.95, 1, 1], windGlow: [.42, .66, .7], dust: [.5, .48, .44],
 };
 const PS = 20, SS = 20, GS = 12; // floats per particle / sprite / segment
 
@@ -90,7 +94,7 @@ void main() {
   float size = mix(iC.x, iC.y, x);
   vec4 mv = modelViewMatrix * vec4(p, 1.);
   vec2 c = position.xy;
-  if (iD.w > 1.5 && iD.w < 2.5) { // spark: quad stretched along the screen-space velocity, head at c.y = 1
+  if ((iD.w > 1.5 && iD.w < 2.5) || iD.w > 4.5) { // spark / droplet: quad stretched along the screen-space velocity, head at c.y = 1
     vec2 d = (modelViewMatrix * vec4(vel, 0.)).xy; float L = length(d) * iE.w;
     d = L > 1e-5 ? normalize(d) : vec2(0., 1.);
     mv.xy += vec2(-d.y, d.x) * c.x * size + d * ((c.y * .5 - .5) * L + c.y * size);
@@ -113,6 +117,13 @@ void main() {
     float along = smoothstep(-1., .5, vUv.y) * smoothstep(1., .65, vUv.y);
     float a = max(across, 0.) * along * pow(1. - x, .6);
     rgb = mix(vCol, vec3(1.), across * across * .55) * a * vInt; occ = a * .2;
+  } else if (k == 5) { // water droplet: a bead tapering to its tail, deep-blue body that covers the video, bright rim and a glint
+    float w = mix(.3, 1., smoothstep(-1., .55, vUv.y)), d = abs(vUv.x) / w;
+    float body = smoothstep(1., .55, d) * smoothstep(-1., -.5, vUv.y) * smoothstep(1., .75, vUv.y);
+    float rim = smoothstep(.35, .9, d) * body;
+    vec2 h = vec2(vUv.x + .3, vUv.y - .5); float glint = exp(-dot(h, h) * 22.);
+    float a = body * pow(1. - x, .35);
+    rgb = (vCol * (.3 + 1.5 * rim) + vec3(.9, .97, 1.) * glint * 1.4) * a * vInt; occ = a * .55 * min(vInt, 1.);
   } else {
     if (r2 > 1.) discard;
     float fin = smoothstep(0., .07, x);
@@ -206,6 +217,26 @@ void main() {
       float n = textureLod(uNoise, vec2(ang / TAU * 2. + vSeed, r - uTime), 0.).r;
       float arms = smoothstep(.2, 1., s) * smoothstep(1., .4, r) * smoothstep(.06, .3, r) * (.5 + n);
       rgb = vCol * arms * vInt; occ = arms * .15 * min(vInt, 1.);
+    } else if (k == 7) { // water orb: wobbling outline, thin bright caustic bands flowing inside, fresnel rim, a glint up-left
+      float wob = textureLod(uNoise, vec2(ang / TAU * 2. + vSeed, uTime * .4 * vParam + vSeed), 0.).r;
+      float edge = .9 + .1 * wob, q = r / edge;
+      float body = smoothstep(edge, edge - .05, r);
+      vec2 pc = vec2(ang / TAU + uTime * .08 * vParam + vSeed, q * .6 - uTime * .35 * vParam);
+      float n = textureLod(uNoise, pc, 1.).r * .6 + textureLod(uNoise, pc * 2.3 + .4, 1.).g * .4;
+      float caus = smoothstep(.05, 0., abs(n - .5)) * (1. - q * q * .6);
+      float rim = pow(smoothstep(.5, 1., q), 2.5);
+      vec2 h = vUv - vec2(-.32, .38) * edge; float spec = exp(-dot(h, h) * 55.) * 1.8 + exp(-dot(h, h) * 8.) * .2;
+      float back = smoothstep(.6, .95, q) * smoothstep(.2, -.7, vUv.y + vUv.x * .3); // light coming back round the lower rim
+      rgb = (vCol * vec3(.2, .4, .75) * .5 + vCol * (caus * .8 + rim * .7 + back * .5) + vec3(.85, .96, 1.) * spec) * body * vInt;
+      occ = body * (.5 + .3 * q) * min(vInt, 1.);
+    } else if (k == 8) { // crescent blade (wind): the disc minus a disc pushed down, +y = the cutting edge; vParam = thickness
+      float inner = length(vUv - vec2(0., -vParam)) / (1. + vParam * .2); // horns end near the horizontal, ~180 deg of arc
+      float body = smoothstep(1., .93, r) * smoothstep(.97, 1.05, inner);
+      float lead = exp(-pow((r - .95) / .05, 2.)) * smoothstep(.97, 1.05, inner);
+      float n = textureLod(uNoise, vec2(r * 2.5 + vSeed, ang / TAU * .35 - uTime * 1.5), 0.).r;
+      float tips = smoothstep(-.1, .35, vUv.y);
+      float a = (body * (.2 + .9 * smoothstep(.45, .8, n)) + lead * 1.4) * tips;
+      rgb = mix(vCol, vec3(1.), lead * .6) * a * vInt; occ = body * tips * .08 * min(vInt, 1.);
     }
   }
   gl_FragColor = vec4(rgb, occ);
@@ -397,10 +428,41 @@ export function createFx(renderer, scene, camera, opts = {}) {
 
   // ---- helpers ----
   const V = () => new THREE.Vector3();
-  const tA = V(), tB = V(), tC = V(), UP = new THREE.Vector3(0, 1, 0);
+  const tA = V(), tB = V(), tC = V(), tW = V(), UP = new THREE.Vector3(0, 1, 0);
   function take(st, key, amount) { const v = (st.acc[key] ?? 0) + amount, n = Math.floor(v); st.acc[key] = v - n; return n; }
   const flick = (seed, f = 23) => .78 + .22 * Math.sin(time * f + seed * 17) * Math.sin(time * f * 1.73 + seed * 5);
   const sc = (k, a, b) => Math.min(1, Math.max(0, (k - a) / (b - a)));
+  /** sprite rotation that turns a sprite's +y towards world direction d as seen on screen (crescents, stretched drops) */
+  const tR = V();
+  function screenRot(d) { tR.copy(d).transformDirection(camera.matrixWorldInverse); return Math.atan2(-tR.x, tR.y); }
+  // per-element colours of the shared classic pieces (guard, block, dodge)
+  const ELC = {
+    fire: { main: COL.fire, spark: COL.ember, hot: COL.hot }, thunder: { main: COL.elec, spark: COL.spark, hot: COL.white },
+    water: { main: COL.water, spark: COL.waterHi, hot: COL.foam }, wind: { main: COL.wind, spark: COL.windHi, hot: COL.windHi },
+  };
+  const elc = el => ELC[el] ?? ELC.thunder;
+  // water / wind bursts shared by the classic hit and the smash moves
+  function splashBurst(p, pw, n, speed = 1, up = 1) { // droplets thrown out and falling, a little mist
+    for (let i = 0; i < n * Q; i++) {
+      runit(); const sp = (1.5 + 4.5 * R()) * (.5 + .5 * pw) * speed;
+      emit(p.x, p.y, p.z, u3[0] * sp, u3[1] * sp * .8 + up * (1 + 1.5 * R()), u3[2] * sp, .35 + .45 * R(), .026 + .018 * R(), .016, 1.2, -9,
+        R() < .25 ? COL.waterHi : COL.water, K.DROP, 1.3, .05, .035, 0);
+    }
+    for (let i = 0; i < 10 * Q * speed; i++) {
+      runit(); const sp = .6 * R();
+      emit(p.x, p.y, p.z, u3[0] * sp, u3[1] * sp + .2, u3[2] * sp, .5 + .3 * R(), .15, .5, 2.5, .2, COL.foam, K.GLOW, .35, .1, 0, 0);
+    }
+  }
+  function gustBurst(p, pw, n, speed = 1) { // fast pale streaks flung out, a puff of dust
+    for (let i = 0; i < n * Q; i++) {
+      runit(); const sp = (4 + 8 * R()) * (.5 + .5 * pw) * speed;
+      emit(p.x, p.y, p.z, u3[0] * sp, u3[1] * sp * .5, u3[2] * sp, .16 + .2 * R(), .008, .004, 4, 0, R() < .3 ? COL.windHi : COL.wind, K.SPARK, 2, .1, .08, 0);
+    }
+    for (let i = 0; i < 12 * Q * speed; i++) {
+      runit(); const sp = (.6 + R()) * speed;
+      emit(p.x, p.y, p.z, u3[0] * sp, Math.abs(u3[1]) * sp * .4, u3[2] * sp, .7 + .5 * R(), .12, .45, 2.5, .2, COL.dust, K.SMOKE, .7, .3, 0, -.05);
+    }
+  }
 
   // fire / thunder bursts shared by hit() and special()
   function fireBurst(p, pw, big = 1) {
@@ -487,6 +549,51 @@ export function createFx(renderer, scene, camera, opts = {}) {
     for (const u of [.3, .65, 1]) spr(S.GLOW, stickPoint(a, u, tA), .2 + .1 * it, .2 + .1 * it, 0, 0, COL.elecGlow, .55 * it * fl, .25);
   }
 
+  function waterAura(a, dt) { // the stick runs with water: a sheen sliding up it, drops beading and falling off
+    const it = a.v, b = a.base, t = a.tip, fl = flick(a.seed, 7);
+    segV(b, t, .036, (.55 + .3 * fl) * it, COL.water);
+    const u = (time * 1.3 + a.seed) % 1;
+    segV(stickPoint(a, Math.max(0, u - .18), tA), stickPoint(a, u, tB), .02, 1.4 * it * Math.sin(Math.PI * u), COL.waterHi);
+    for (let n = take(a, 'd', (30 + 70 * it) * Q * dt); n > 0; n--) {
+      stickPoint(a, Math.pow(R(), .6), tA);
+      emit(tA.x + RS(.02), tA.y, tA.z + RS(.02), RS(.15), -.1 - .3 * R(), RS(.15), .4 + .3 * R(), .014 + .01 * R(), .01, .5, -6, COL.water, K.DROP, 1.2, 0, .03, R() * dt);
+    }
+    for (const v of [.3, .65, 1]) spr(S.GLOW, stickPoint(a, v, tA), .17 + .1 * it, .17 + .1 * it, 0, 0, COL.waterGlow, .4 * it * fl, .2);
+  }
+  function windAura(a, dt) { // air streaming round the stick: pale lines spiralling about it, the stick itself barely tinted
+    const it = a.v, b = a.base, t = a.tip;
+    segV(b, t, .026, .5 * it, COL.windGlow);
+    tB.copy(t).sub(b); const L = tB.length() || 1; tB.divideScalar(L);
+    tC.crossVectors(tB, UP); if (tC.lengthSq() < 1e-4) tC.set(1, 0, 0); tC.normalize();
+    for (let n = take(a, 'w', (40 + 120 * it) * Q * dt); n > 0; n--) {
+      const u = R(), th = R() * TAU, r = .05 + .06 * R();
+      stickPoint(a, u, tA); tW.copy(tC).applyAxisAngle(tB, th); const ox = tW.x, oy = tW.y, oz = tW.z; tW.applyAxisAngle(tB, Math.PI / 2);
+      emit(tA.x + ox * r, tA.y + oy * r, tA.z + oz * r, tW.x * 2.2 + tB.x * 1.2, tW.y * 2.2 + tB.y * 1.2, tW.z * 2.2 + tB.z * 1.2, .14 + .14 * R(), .006, .003, 1, 0,
+        COL.wind, K.SPARK, 1.6 * it + .4, .2, .08, R() * dt);
+    }
+    for (const v of [.3, .65, 1]) spr(S.GLOW, stickPoint(a, v, tA), .15 + .08 * it, .15 + .08 * it, 0, 0, COL.windGlow, .3 * it, .1);
+  }
+  function waterCharge(c, dt) { // a ball of water swelling at the tip, drops drawn into it
+    const L = c.v, full = L >= .999, p = c.tip, sz = (.06 + .16 * L) * (full ? 1 + .06 * Math.sin(time * 14) : 1);
+    for (let n = take(c, 'd', (40 + 200 * L) * Q * dt); n > 0; n--) {
+      runit(); const r = sz + .15 + .3 * L * R(), life = .2 + .12 * R(), sp = (r - sz * .5) / life;
+      emit(p.x + u3[0] * r, p.y + u3[1] * r, p.z + u3[2] * r, -u3[0] * sp, -u3[1] * sp, -u3[2] * sp, life, .014, .01, 0, 0, COL.waterHi, K.DROP, 1.3, 0, .03, R() * dt);
+    }
+    spr(S.GLOW, p, sz * 3.5, sz * 3.5, 0, 0, COL.waterGlow, .4 + .4 * L, .1);
+    spr(S.WATER, p, sz, sz, 0, c.seed, COL.water, 1.1 + .4 * L, 1 + 2 * L);
+    if (full) { const ph = (time * 2.2) % 1; spr(S.RING, p, sz + .5 * ph, sz + .5 * ph, 0, c.seed, COL.waterHi, 1.4 * (1 - ph) ** 1.5, .05); }
+  }
+  function windCharge(c, dt) { // a little whirlwind at the tip: crescents chasing each other round a pale swirl, air drawn in
+    const L = c.v, full = L >= .999, p = c.tip, sz = .1 + .2 * L, rot = time * (6 + 6 * L);
+    for (let n = take(c, 'k', (40 + 220 * L) * Q * dt); n > 0; n--) {
+      runit(); const r = sz * 1.6 + .2 * R(), life = .16 + .1 * R(), sp = r / life; tA.set(u3[0], u3[1], u3[2]); tB.crossVectors(tA, UP);
+      emit(p.x + u3[0] * r, p.y + u3[1] * r, p.z + u3[2] * r, -u3[0] * sp + tB.x * sp, -u3[1] * sp, -u3[2] * sp + tB.z * sp, life, .007, .004, 0, 0, COL.wind, K.SPARK, 1.8, 0, .06, R() * dt);
+    }
+    spr(S.SWIRL, p, sz * 1.6, sz * 1.6, 0, c.seed, COL.wind, .5 + .7 * L);
+    for (let i = 0; i < 3; i++) spr(S.CRESCENT, p, sz, sz, rot + i * TAU / 3, c.seed + i, COL.wind, .5 + .7 * L, .25);
+    spr(S.GLOW, p, sz * 2.5, sz * 2.5, 0, 0, COL.windGlow, .25 + .3 * L, .4);
+    if (full) { const ph = (time * 2.6) % 1; spr(S.RING, p, sz + .5 * ph, sz + .5 * ph, 0, c.seed, COL.windHi, 1.2 * (1 - ph) ** 1.5, .04); }
+  }
   function fireCharge(c, dt) {
     const L = c.v, full = L >= .999, p = c.tip, pulse = full ? 1 + .12 * Math.sin(time * 20) : 1;
     for (let n = take(c, 'f', (60 + 320 * L) * Q * dt); n > 0; n--) {
@@ -560,6 +667,23 @@ export function createFx(renderer, scene, camera, opts = {}) {
     if (s.el === 'fire') {
       trailFire(s, dt, s.prev, s.pos, pw, big);
       headFire(s.pos, (.12 + .1 * pw) * big, s.seed);
+    } else if (s.el === 'water') {
+      const d = s.dir, sz = (.1 + .09 * pw) * big;
+      for (let n = take(s, 'd', (dist * 90 * big + dt * 30) * Q); n > 0; n--) {
+        const u = R(); tA.copy(s.prev).lerp(s.pos, u); runit();
+        emit(tA.x + u3[0] * sz * .6, tA.y + u3[1] * sz * .6, tA.z + u3[2] * sz * .6, -d.x * .8 + u3[0] * .6, -d.y * .8 + u3[1] * .6 + .4, -d.z * .8 + u3[2] * .6,
+          .3 + .3 * R(), .016 * big, .01, 1, -7, COL.water, K.DROP, 1.2, 0, .03, (1 - u) * dt);
+      }
+      spr(S.GLOW, s.pos, sz * 3.2, sz * 3.2, 0, 0, COL.waterGlow, .6, .1);
+      spr(S.WATER, s.pos, sz * 1.2, sz * 1.5, screenRot(d), s.seed, COL.water, 1.2, 2);
+    } else if (s.el === 'wind') {
+      const d = s.dir, sz = (.14 + .12 * pw) * big;
+      for (let n = take(s, 'k', (dist * 120 + dt * 30) * Q); n > 0; n--) {
+        const u = R(); tA.copy(s.prev).lerp(s.pos, u); runit();
+        emit(tA.x + u3[0] * sz, tA.y + u3[1] * sz, tA.z + u3[2] * sz, -d.x * 2, -d.y * 2, -d.z * 2, .15 + .15 * R(), .007, .004, 3, 0, COL.wind, K.SPARK, 1.8, .1, .1, (1 - u) * dt);
+      }
+      spr(S.CRESCENT, s.pos, sz, sz, screenRot(d), s.seed, COL.wind, 1.4, .3);
+      spr(S.GLOW, s.pos, sz * 2.4, sz * 2.4, 0, 0, COL.windGlow, .35, .2);
     } else {
       const sz = (.1 + .09 * pw) * big, d = s.dir;
       if ((s.regen -= dt) <= 0) {
@@ -619,8 +743,23 @@ export function createFx(renderer, scene, camera, opts = {}) {
     if (a < .2) spr(S.FLARE, p, (2 + 1.6 * pw) * big, (.07 + .05 * pw) * big, 0, 0, COL.white, 2.6 * (1 - a / .2) ** 2);
     return a < .8;
   }
+  function hitWater(e) {
+    const a = e.age, pw = e.power, p = e.pos, big = e.big ?? 1;
+    const g = (.25 + .3 * pw) * big * (.7 + .8 * sc(a, 0, .2));
+    spr(S.WATER, p, g, g, 0, e.seed, COL.water, 1.3 * (1 - sc(a, .08, .35)), 3);
+    if (a < .12) spr(S.GLOW, p, (.5 + .5 * pw) * big, (.5 + .5 * pw) * big, 0, 0, COL.foam, 1.4 * (1 - a / .12) ** 2, .6);
+    for (let i = 0; i < 2; i++) { const k = sc(a, i * .1, .45 + i * .1), rr = (.2 + 1.1 * (1 - (1 - k) ** 3)) * (.6 + .5 * pw) * big; spr(S.RING, p, rr, rr, 0, e.seed + i, i ? COL.water : COL.waterHi, 1.4 * (1 - k) ** 1.5, .05); }
+    return a < .6;
+  }
+  function hitWind(e) {
+    const a = e.age, pw = e.power, p = e.pos, big = e.big ?? 1, k = sc(a, 0, .3), sz = (.4 + .3 * pw) * big;
+    for (let i = 0; i < 2; i++) spr(S.CRESCENT, p, sz * (1 + .5 * k), sz * (1 + .5 * k), (i ? 2.4 : -.7) + k * (i ? 1 : -1), e.seed + i, COL.wind, 2 * (1 - k) ** 1.2, .32);
+    const k2 = sc(a, 0, .4);
+    spr(S.SWIRL, p, sz * 1.5, sz * 1.5, 0, e.seed, COL.wind, .5 * (1 - k2));
+    return a < .45;
+  }
   function dodgeFx(e) {
-    const a = e.age, fade = (1 - a / .45) ** 1.5, col = e.el === 'fire' ? COL.fire : COL.elec;
+    const a = e.age, fade = (1 - a / .45) ** 1.5, col = elc(e.el).main;
     for (let i = 1; i <= 4; i++) {
       tA.copy(e.pos).addScaledVector(e.dir, -.2 * i * Math.min(1, a / .06 + .3));
       spr(S.GHOST, tA, .3, .85, 0, e.seed + i, col, 1.3 * (1 - i * .19) * fade);
@@ -633,17 +772,17 @@ export function createFx(renderer, scene, camera, opts = {}) {
   }
   // guard: a shield of rings in front of the chest (st.tip = its centre), flickering sparks around the rim
   function guardFx(g, dt) {
-    const p = g.tip, col = g.el === 'fire' ? COL.fire : COL.elec, fl = flick(g.seed, 11);
+    const p = g.tip, col = elc(g.el).main, fl = flick(g.seed, 11);
     spr(S.GLOW, p, .9, .9, 0, 0, col, .35 * g.v * fl, .3);
     for (let i = 0; i < 3; i++) { const r = .55 + .08 * i + .02 * Math.sin(time * 6 + i); spr(S.RING, p, r, r, time * (i - 1), g.seed + i, col, (.9 - .25 * i) * g.v * fl, .03); }
     for (let n = take(g, 'r', 40 * Q * dt); n > 0; n--) {
       const a = R() * TAU;
-      emit(p.x + Math.cos(a) * .3, p.y + Math.sin(a) * .3, p.z, RS(.2), RS(.2), RS(.2), .25 + .2 * R(), .012, .006, 2, 0, g.el === 'fire' ? COL.ember : COL.spark, K.SPARK, 1.6, 0, .05, 0);
+      emit(p.x + Math.cos(a) * .3, p.y + Math.sin(a) * .3, p.z, RS(.2), RS(.2), RS(.2), .25 + .2 * R(), .012, .006, 2, 0, elc(g.el).spark, K.SPARK, 1.6, 0, .05, 0);
     }
   }
-  function classicBlock(element, pos) { sparkBurst(pos, .3, 80, .8); add({ update: blockFx, el: element, pos: pos.clone() }); shake(.15); }
+  function classicBlock(element, pos) { if (element === 'water') splashBurst(pos, .3, 60, .8); else if (element === 'wind') gustBurst(pos, .3, 70, .8); else sparkBurst(pos, .3, 80, .8); add({ update: blockFx, el: element, pos: pos.clone() }); shake(.15); }
   function blockFx(e) {
-    const a = e.age, k = sc(a, 0, .3), col = e.el === 'fire' ? COL.hot : COL.white;
+    const a = e.age, k = sc(a, 0, .3), col = elc(e.el).hot;
     spr(S.RING, e.pos, .5 + 1.2 * k, .5 + 1.2 * k, 0, e.seed, col, 2 * (1 - k) ** 2, .05);
     if (a < .12) spr(S.FLARE, e.pos, 1.6, .06, 0, 0, col, 2.2 * (1 - a / .12) ** 2);
     return a < .3;
@@ -734,36 +873,46 @@ export function createFx(renderer, scene, camera, opts = {}) {
     return a < 2;
   }
 
+  const SPECIAL = { fire: specialFire, thunder: specialThunder };
+
   // ---- effect styles: other sets of moves drawn with the same primitives (fx-smash.js). 'classic' is everything above. ----
   // A style is make(kit) -> { shot?(s, dt), end?(s, reason), hit?(el, pos, power, opt), charge?(c, dt), aura?(a, dt) };
   // a missing handler falls back to the classic one. Shots keep the style they were fired with.
-  const classic = { shot: updateShot, end: classicEnd, hit: classicHit, charge: (c, dt) => (c.el === 'fire' ? fireCharge : thunderCharge)(c, dt),
-    aura: (a, dt) => (a.el === 'fire' ? fireAura : thunderAura)(a, dt), guard: guardFx, block: classicBlock };
+  const CHARGE = { fire: fireCharge, thunder: thunderCharge, water: waterCharge, wind: windCharge };
+  const AURA = { fire: fireAura, thunder: thunderAura, water: waterAura, wind: windAura };
+  const classic = { shot: updateShot, end: classicEnd, hit: classicHit, charge: (c, dt) => (CHARGE[c.el] ?? thunderCharge)(c, dt),
+    aura: (a, dt) => (AURA[a.el] ?? thunderAura)(a, dt), guard: guardFx, block: classicBlock };
   const kit = {
     THREE, K, S, COL, TAU, Q, R, RS, V, emit, spr, sprFloor, seg, segV, Bolt, gen, drawBolt, runit, u3, take, flick, sc, shake,
-    fireBurst, sparkBurst, trailFire, headFire, add, classic, get time() { return time; },
+    fireBurst, sparkBurst, splashBurst, gustBurst, trailFire, headFire, screenRot, add, classic, camera, get time() { return time; },
   };
   // 'textured': takumi's set (fire-effects.js / thunder-effects.js / charge-effects.js, generated texture sprites in their own
   // meshes). They take the shot by id and draw everything themselves; nothing goes through the primitives above.
-  const texMod = el => el === 'fire' ? fire : thunder;
+  // Only fire and thunder have textures: the other elements are drawn by the program-drawn set ('smash' once app.js added it).
+  const TEX = { fire, thunder }, texMod = el => TEX[el];
+  const noTex = () => styles.smash ?? classic;
   const textured = {
-    start: s => texMod(s.el).shot(s.id, s.pos, s.dir, s.power),
-    move: (s, pos) => texMod(s.el).moveShot(s.id, pos),
-    shot: s => { s.prev.copy(s.pos); },
-    end: s => texMod(s.el).endShot(s.id),
-    hit: (el, pos, power) => texMod(el).hit(pos, power),
-    charge: () => {}, // the tip sphere is part of charge-effects.js, requested from aura()
-    aura: (a) => { if (a.opt?.charging) charging.request(a.el, a.opt.chest, a.tip, a.opt.level, a.el); }, // no stick glow when not charging
+    start: s => texMod(s.el)?.shot(s.id, s.pos, s.dir, s.power),
+    move: (s, pos) => texMod(s.el)?.moveShot(s.id, pos),
+    shot: (s, dt) => { if (texMod(s.el)) s.prev.copy(s.pos); else noTex().shot(s, dt); },
+    end: (s, reason) => { if (texMod(s.el)) texMod(s.el).endShot(s.id); else noTex().end(s, reason); },
+    hit: (el, pos, power, opt) => { if (texMod(el)) texMod(el).hit(pos, power); else noTex().hit(el, pos, power, opt); },
+    charge: (c, dt) => { if (!texMod(c.el)) noTex().charge(c, dt); }, // fire / thunder: the tip sphere is part of charge-effects.js, requested from aura()
+    aura: (a, dt) => { if (!texMod(a.el)) noTex().aura(a, dt); else if (a.opt?.charging) charging.request(a.el, a.opt.chest, a.tip, a.opt.level, a.el); }, // no stick glow when not charging
   };
   const styles = { classic, textured }; let style = textured, styleName = 'textured';
   function classicEnd(s) {
     const p = s.pos;
     if (s.el === 'fire') for (let i = 0; i < 25 * Q; i++) { runit(); emit(p.x, p.y, p.z, u3[0] * .6, u3[1] * .6 + .3, u3[2] * .6, .3 + .2 * R(), .08, .14, 3, 1, COL.one, K.FLAME, 1, .2, 0, 0); }
+    else if (s.el === 'water') splashBurst(p, .2, 30, .5);
+    else if (s.el === 'wind') gustBurst(p, .2, 30, .5);
     else sparkBurst(p, .2, 30, .5);
   }
+  const BURST = { fire: (p, pw) => fireBurst(p, pw), water: (p, pw) => splashBurst(p, pw, 120 + 160 * pw), wind: (p, pw) => gustBurst(p, pw, 140 + 180 * pw) };
+  const HITFX = { fire: hitFire, water: hitWater, wind: hitWind };
   function classicHit(element, pos, power) {
-    if (element === 'fire') fireBurst(pos, power); else sparkBurst(pos, power, 220 + 260 * power);
-    add({ update: element === 'fire' ? hitFire : hitThunder, el: element, pos: pos.clone(), power, bolts: element === 'fire' ? [] : Array.from({ length: 10 }, () => new Bolt(160)) });
+    (BURST[element] ?? ((p, pw) => sparkBurst(p, pw, 220 + 260 * pw)))(pos, power);
+    add({ update: HITFX[element] ?? hitThunder, el: element, pos: pos.clone(), power, bolts: HITFX[element] ? [] : Array.from({ length: 10 }, () => new Bolt(160)) });
     shake(.25 + .75 * power);
   }
 
@@ -860,7 +1009,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
     get style() { return styleName; },
     get styles() { return Object.keys(styles); },
     dodge(element, pos, dir) {
-      const d = dir.clone().normalize(), col = element === 'fire' ? COL.ember : COL.spark;
+      const d = dir.clone().normalize(), col = elc(element).spark;
       for (let i = 0; i < 45 * Q; i++) {
         const sp = 3 + 3 * R();
         emit(pos.x + RS(.25), pos.y + RS(.8), pos.z + RS(.25), -d.x * sp, -d.y * sp, -d.z * sp, .16 + .14 * R(), .012, .006, 3, 0, col, K.SPARK, 1.8, 0, .07, 0);
@@ -868,7 +1017,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
       if (element === 'fire') for (let i = 0; i < 40 * Q; i++) {
         const u = R() * .7;
         emit(pos.x - d.x * u + RS(.15), pos.y + RS(.6), pos.z - d.z * u + RS(.15), -d.x * .4, .5, -d.z * .4, .3 + .2 * R(), .07, .03, 2, 1, COL.one, K.FLAME, .9, .2, 0, 0);
-      } else sparkBurst(pos, .2, 40, .5);
+      } else if (element === 'water') splashBurst(pos, .2, 40, .5); else if (element === 'wind') gustBurst(pos, .2, 40, .5); else sparkBurst(pos, .2, 40, .5);
       add({ update: dodgeFx, el: element, pos: pos.clone(), dir: d, bolts: [new Bolt(96)] });
     },
     /** Shield held this frame (call every frame like aura); level 0..1. */
@@ -878,8 +1027,9 @@ export function createFx(renderer, scene, camera, opts = {}) {
     /** A shot met a raised guard at pos (it bounces back if 小, goes through otherwise). */
     block(element, pos) { (style.block ?? classicBlock)(element, pos); },
     special(element, from, to) {
+      if (!SPECIAL[element]) { (style.hit ?? classicHit)(element, to.clone(), 1, { tier: 'l' }); return; } // water / wind: their 大 landing
       if (styleName === 'textured') { texMod(element).special(from, to); return; }
-      add({ update: element === 'fire' ? specialFire : specialThunder, el: element, from: from.clone(), to: to.clone(), bolts: Array.from({ length: 8 }, () => new Bolt(200)) });
+      add({ update: SPECIAL[element], el: element, from: from.clone(), to: to.clone(), bolts: Array.from({ length: 8 }, () => new Bolt(200)) });
       if (element === 'thunder') shake(.4);
     },
     /** Visual checks only: no game damage or sensor input is generated. */
