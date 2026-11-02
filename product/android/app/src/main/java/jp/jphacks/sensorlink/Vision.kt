@@ -24,10 +24,10 @@ fun r4(x: Double) = round(x * 1e4) / 1e4
 fun r4(x: Float) = r4(x.toDouble())
 
 /** Black-square size (m) of every tag. The printed paper is 200 mm square with a white margin of a tenth on each side, so the black square is 160 mm.
- *  A RuneTag (marker rune, ids 0-3) reports the corners of its virtual 200 mm square instead (Rune.SQUARE). */
+ *  A RuneTag (marker rune, the mahoujin ids 0-6) reports the corners of its virtual 224 mm square instead (Rune.SQUARE). */
 fun tagSizeOf(id: Int, rune: Boolean = false) = if (rune && id in Rune.IDS) Rune.SQUARE else 0.16
 
-/** AprilTag tag36h11 via OpenCV's aruco module (and RuneTags 0-3 via Rune.kt when [rune]), pose by solvePnP. Positions in the OpenCV camera frame (x right, y down, z forward), metres. */
+/** AprilTag tag36h11 via OpenCV's aruco module (and RuneTags 0-6 via Rune.kt when [rune]), pose by solvePnP. Positions in the OpenCV camera frame (x right, y down, z forward), metres. */
 class TagDetector {
     private val det = ArucoDetector(
         Objdetect.getPredefinedDictionary(Objdetect.DICT_APRILTAG_36h11),

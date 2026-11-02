@@ -12,22 +12,25 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * RuneTag reader for the floor sheets 0-3 when the PC says marker = rune: a line-for-line port of detectRunes in
+ * RuneTag reader for the mahoujin's 7 tags (ids 0-6) when the PC says marker = rune: a line-for-line port of detectRunes in
  * dashboard/public/runetag.js (the marker, its code and the method are described there; keep the two in step).
  * Plain Kotlin on a grey byte array, no Android or OpenCV, so the same file runs on the desktop JVM for checks.
  * Corners are those of the virtual RUNE square (side SQUARE), in OpenCV order: tag (-h,h), (h,h), (h,-h), (-h,-h).
  */
 object Rune {
-    const val SQUARE = 0.2
-    const val S = 18
-    private val RINGS = doubleArrayOf(0.108, 0.08, 0.05926)
-    private const val DOT = 0.085
-    val IDS = 0..3
+    const val SQUARE = 0.224
+    const val S = 43
+    private val RINGS = doubleArrayOf(0.12782, 0.12782 * 5 / 6, 0.12782 * 4 / 6)
+    private const val DOT = 1 / 17.8
+    val IDS = 0..6
     private val CODES = arrayOf(
-        intArrayOf(5, 1, 6, 7, 4, 5, 3, 1, 7, 4, 3, 1, 2, 5, 4, 4, 7, 7),
-        intArrayOf(1, 7, 6, 1, 3, 1, 4, 6, 5, 2, 4, 3, 1, 2, 4, 7, 2, 5),
-        intArrayOf(2, 6, 6, 4, 4, 4, 3, 2, 1, 4, 2, 3, 1, 4, 1, 5, 5, 3),
-        intArrayOf(1, 3, 4, 3, 3, 6, 7, 7, 2, 3, 6, 2, 3, 7, 5, 6, 7, 6),
+        intArrayOf(2, 7, 7, 2, 4, 2, 2, 7, 7, 6, 1, 2, 7, 5, 3, 3, 6, 6, 6, 2, 5, 6, 5, 5, 6, 3, 7, 3, 7, 6, 4, 2, 3, 3, 5, 1, 4, 3, 7, 4, 4, 1, 3),
+        intArrayOf(4, 3, 3, 6, 2, 6, 2, 4, 5, 5, 4, 1, 5, 4, 3, 3, 7, 7, 4, 4, 3, 2, 6, 3, 2, 2, 3, 5, 1, 5, 1, 4, 4, 3, 2, 1, 2, 5, 7, 2, 5, 6, 5),
+        intArrayOf(2, 2, 2, 7, 5, 7, 3, 7, 1, 6, 6, 5, 4, 6, 2, 4, 3, 4, 4, 5, 2, 3, 1, 2, 3, 2, 5, 2, 5, 6, 6, 5, 1, 4, 4, 7, 2, 5, 6, 1, 3, 2, 4),
+        intArrayOf(3, 6, 6, 3, 7, 3, 4, 7, 5, 1, 7, 3, 2, 3, 3, 1, 2, 1, 4, 7, 1, 7, 6, 1, 7, 4, 3, 1, 5, 1, 7, 7, 3, 1, 7, 2, 3, 5, 5, 4, 6, 2, 6),
+        intArrayOf(4, 1, 1, 1, 1, 1, 4, 7, 1, 3, 3, 5, 3, 6, 5, 4, 4, 7, 6, 6, 3, 7, 1, 3, 7, 7, 3, 1, 7, 3, 6, 6, 7, 4, 4, 5, 6, 3, 5, 3, 3, 1, 7),
+        intArrayOf(6, 1, 1, 1, 1, 1, 4, 2, 3, 1, 4, 3, 3, 5, 7, 7, 3, 3, 7, 6, 4, 5, 7, 4, 5, 6, 1, 2, 6, 1, 7, 6, 1, 7, 3, 1, 1, 2, 5, 1, 4, 6, 2),
+        intArrayOf(2, 2, 2, 7, 5, 7, 5, 2, 6, 7, 4, 5, 3, 1, 5, 3, 6, 5, 4, 6, 7, 2, 2, 7, 2, 7, 6, 1, 3, 7, 6, 6, 4, 3, 7, 2, 1, 5, 4, 2, 1, 4, 6),
     )
     private val K = RINGS.size
     private val STEP = 2 * PI / S
@@ -38,7 +41,7 @@ object Rune {
     private class Hit(val k: Int, val j: Int, val i: Int)
     private class Read(val bits: IntArray, val hits: List<Hit>, val known: Int)
 
-    private fun slotPos(k: Int, j: Int): DoubleArray { val a = PI / 2 - j * STEP; return doubleArrayOf(RINGS[k] * cos(a), RINGS[k] * sin(a)) }
+    private fun slotPos(k: Int, j: Int): DoubleArray { val a = -j * STEP; return doubleArrayOf(RINGS[k] * cos(a), RINGS[k] * sin(a)) }
     private fun bit(id: Int, j: Int, k: Int) = CODES[id][j] shr k and 1
 
     fun detect(g: ByteArray, w: Int, h: Int, ids: IntRange = IDS): List<Found> {
@@ -125,6 +128,14 @@ object Rune {
                 val inl = cs.filter { abs(hypot(it.second[0] - cx, it.second[1] - cy) - r) < .12 * r }
                 if (best == null || inl.size > best.size) best = inl
             }
+            // the nearest 24 cover only an arc of a 43-sector layer: fit an ellipse through them and collect that layer's dots from every
+            // candidate (the layers are >= 1/6 apart, so 0.06 keeps the neighbours out)
+            for (it in 0 until 2) {
+                val bb = best ?: break; if (bb.size < 4) break
+                val e = fitEllipse(listOf(doubleArrayOf(0.0, 0.0)) + bb.map { o -> o.second }) ?: break
+                val rr = sqrtSym(e.second)
+                best = cand.filter { o -> val q = mul2(rr, o.second[0] - e.first[0], o.second[1] - e.first[1]); abs(hypot(q[0], q[1]) - 1) < .06 }
+            }
             if (best == null || best.size < 5) continue
             val m = readMarker(b, near, listOf(si) + best.map { it.first }, w, h, ids) ?: continue
             for (i in m.second) used[i] = true
@@ -139,18 +150,22 @@ object Rune {
         val r = sqrtSym(e.second)
         val ang = p.map { val q = mul2(r, it[0] - e.first[0], it[1] - e.first[1]); doubleArrayOf(hypot(q[0], q[1]), atan2(q[1], q[0])) }
         if (ang.any { abs(it[0] - 1) > .12 }) return null
-        val ord = ang.indices.sortedBy { ang[it][1] }; val sec = IntArray(p.size)
-        var j = 0
-        for (t in ord.indices) { // image angles grow clockwise as seen, like the sector numbers
-            sec[ord[t]] = j
-            var gap = ang[ord[(t + 1) % ord.size]][1] - ang[ord[t]][1]; if (gap <= 0) gap += 2 * PI
-            val m = (gap / STEP).roundToInt(); if (m < 1 || abs(gap - m * STEP) > .4 * STEP) return null
-            j += m
+        // number the dots by the sector gaps between neighbours (image angles grow clockwise as seen): the longest run of clean gaps
+        // (1-5 sectors), as perspective bends the angles too much to count all 43 round the ring. Relative numbers: decoding tries every turn
+        val n = p.size; val ord = ang.indices.sortedBy { ang[it][1] }
+        val gaps = DoubleArray(n) { t -> var g = ang[ord[(t + 1) % n]][1] - ang[ord[t]][1]; if (g <= 0) g += 2 * PI; g / STEP }
+        val good = BooleanArray(n) { t -> val m = gaps[t].roundToInt(); m in 1..5 && abs(gaps[t] - m) <= .4 }
+        var start = 0; var len = n - 1
+        if (!good.all { it }) {
+            len = 0
+            for (t in 0 until n) if (!good[(t + n - 1) % n]) { var l = 0; while (good[(t + l) % n]) l++; if (l > len) { len = l; start = t } }
         }
-        if (j != S) return null
+        if (len < 4) return null
+        val run = ArrayList<DoubleArray>(); val sec = ArrayList<Int>(); var j = 0
+        for (t in 0..len) { val u = (start + t) % n; run.add(p[ord[u]]); sec.add(j); j += gaps[u].roundToInt() }
         var bestErr = 99; var second = 99; var bestId = -1; var bestR = 0; var bestRead: Read? = null
         for (k in 0 until K) {
-            var hm = homography(sec.map { slotPos(k, it) }, p) ?: continue
+            var hm = homography(sec.map { slotPos(k, it) }, run) ?: continue
             var read: Read? = null
             for (it in 0 until 3) {
                 read = readSlots(b, near, hm, w, h)
@@ -166,18 +181,19 @@ object Rune {
             }
         }
         val br = bestRead ?: return null
-        if (bestErr > 7 || second < bestErr + 6) return null
+        // wrong bits allowed: 1 in 8 of those seen (>= 7); any two words differ in >= 45 of 129, so a right read also wins clearly
+        if (bestErr > maxErr(br.known) || second < bestErr + 8) return null
         // the true sector numbers from here on; read again through the refitted homography, keeping only dots where the code has one
         val fit = { hs: List<Hit> -> homography(hs.map { slotPos(it.k, it.j) }, hs.map { doubleArrayOf(b[it.i].x, b[it.i].y) }) }
         var hits = br.hits.map { Hit(it.k, (it.j + bestR) % S, it.i) }.filter { bit(bestId, it.j, it.k) == 1 }
-        var err = bestErr
+        var err = bestErr; var known = br.known
         for (it in 0 until 2) {
             if (hits.size < 8) break
             val rd = readSlots(b, near, fit(hits) ?: break, w, h)
-            err = 0; for (k in 0 until K) for (jj in 0 until S) { val v = rd.bits[k * S + jj]; if (v >= 0 && v != bit(bestId, jj, k)) err++ }
+            err = 0; known = rd.known; for (k in 0 until K) for (jj in 0 until S) { val v = rd.bits[k * S + jj]; if (v >= 0 && v != bit(bestId, jj, k)) err++ }
             hits = rd.hits.filter { bit(bestId, it.j, it.k) == 1 }
         }
-        if (hits.size < 8 || err > 7) return null
+        if (hits.size < 8 || err > maxErr(known)) return null
         val hm = fit(hits) ?: return null
         var ss = 0.0
         for (o in hits) { val q = slotPos(o.k, o.j); val pr = project(hm, q[0], q[1]); ss += (pr[0] - b[o.i].x).let { it * it } + (pr[1] - b[o.i].y).let { it * it } }
@@ -185,6 +201,8 @@ object Rune {
         arrayOf(doubleArrayOf(-hs, hs), doubleArrayOf(hs, hs), doubleArrayOf(hs, -hs), doubleArrayOf(-hs, -hs)).forEachIndexed { i, c -> val q = project(hm, c[0], c[1]); corners[2 * i] = q[0]; corners[2 * i + 1] = q[1] }
         return Found(bestId, corners, err, hits.size, sqrt(ss / hits.size)) to (br.hits + hits).map { it.i }
     }
+
+    private fun maxErr(known: Int) = max(7, known shr 3)
 
     /** Look for a dot at every slot through hm: bits (1 dot, 0 none, -1 unknown) and the dots it found. */
     private fun readSlots(b: List<Blob>, near: (Double, Double, Double, (Int) -> Unit) -> Unit, hm: DoubleArray, w: Int, h: Int): Read {

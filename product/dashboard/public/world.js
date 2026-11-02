@@ -1,7 +1,7 @@
 // Shared contract: arena layout, tag table and frame conventions. Plain JS (no deps) so node and the browser both use it.
-import { MARKER } from './marker.js';
+import { MARKER, RUNE_SCALE } from './marker.js';
 import { RUNE, RUNE_IDS } from './runetag.js';
-export { MARKER };
+export { MARKER, RUNE_SCALE };
 //
 // World: metres, y up, origin on the floor at the arena centre. A starts at -x facing +x, B at +x facing -x.
 // Pose = { R: 3x3 row-major [9], t: [3] }, maps points from the child frame into the parent frame: p_parent = R p_child + t.
@@ -43,15 +43,20 @@ const H = 2; // the full / today tag poles stay where they were put (2 m out); t
 // (the paper width when the sheets touch: PRINTED below; ?pitch=0.2 or env PITCH overrides it).
 // Sizes: a tag36h11 sheet has a white margin of 1/10 of its side on each side, so the black square (TAGS[id].size, what the distance
 // maths measures) is 0.8 x the paper. tagSquare() draws the paper at size x 10/8.
-// MARKER 'rune': the four map4 sheets are RuneTags (print/make_runetags.mjs). Their detectors report the corners of a virtual square
-// of RUNE.square / RUNE.sheet = 0.8 of the sheet, so the same 10/8 paper rule holds. Worn tags 8-11 and the other layouts stay tag36h11.
-// PRINTED: the sheets' sides as measured with a ruler after printing and cutting (printers scale: the "200 mm" AprilTags came out
-// 180 mm, the 250 mm RuneTags 246 mm). Every size below follows from these, so a new print only needs a new measurement here.
-export const PRINTED = { april: 0.18, rune: 0.246 };
-const SHEET = PRINTED[MARKER];
+// MARKER 'rune': map4 is the mahoujin instead, one printed magic circle (mahoujin/magic-circle-576808920-A3.pdf) whose 7 RuneTags
+// T0-T6 are ids 0-6, every one upright like the poster, centres on a circle of RUNE.circle round the origin: T0 straight ahead (-z, the
+// poster's top edge away from the camera), then clockwise seen from above. Their detectors report the corners of a virtual square of
+// RUNE.square / RUNE.sheet = 0.8 of the patch disc, so the same 10/8 paper rule holds. Worn tags 8-11 and the other layouts stay tag36h11.
+// RUNE_SCALE: printed / designed size of the whole mahoujin (tags and circle alike), measured after assembly (dots Ø 270 mm by design);
+// set on the connection screen (server settings.json) or env RUNE_SCALE.
+// PRINTED: the AprilTag sheets' side as measured with a ruler after printing and cutting (the "200 mm" AprilTags came out 180 mm).
+export const PRINTED = { april: 0.18 };
+const SHEET = PRINTED.april;
 const PITCH = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('pitch')) || (typeof process !== 'undefined' && +process.env?.PITCH) || SHEET;
 export const TAG_PITCH = PITCH;
-const HP = PITCH / 2, FS = SHEET * .8; // map4 sheet size (black square / virtual square)
+const HP = PITCH / 2, FS = SHEET * .8; // map4 sheet size (black square)
+/** Mahoujin tag i on the floor: [x, 0, z] in m. */
+export const runeTagPos = i => { const a = i * 2 * Math.PI / 7, r = RUNE.circle * RUNE_SCALE; return [r * Math.sin(a), 0, -r * Math.cos(a)]; };
 const LAYOUTS = {
   full: {
     0: { size: 0.16, pos: [-H, CHEST_H, -H] },
@@ -65,7 +70,7 @@ const LAYOUTS = {
     0: { size: 0.16, pos: [H, CHEST_H, 0], flip: true },
     1: { size: 0.16, pos: [-H, CHEST_H, 0], flip: true },
   },
-  map4: {
+  map4: MARKER === 'rune' ? Object.fromEntries(RUNE_IDS.map(id => [id, { size: RUNE.square * RUNE_SCALE, pos: runeTagPos(id), floor: true, yaw: 0, yawKnown: true }])) : {
     0: { size: FS, pos: [-HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
     1: { size: FS, pos: [HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
     2: { size: FS, pos: [HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
@@ -79,7 +84,7 @@ const LAYOUTS = {
 const pick = (typeof location !== 'undefined' && new URLSearchParams(location.search).get('layout'))
   || (typeof process !== 'undefined' && process.env?.LAYOUT) || 'map4';
 export const LAYOUT = LAYOUTS[pick] ? pick : 'map4';
-/** Is fixed sheet `id` a RuneTag (MARKER rune, map4 ids 0-3)? Everything else is tag36h11. */
+/** Is fixed sheet `id` a RuneTag (MARKER rune, map4 ids 0-6)? Everything else is tag36h11. */
 export const isRune = id => MARKER === 'rune' && LAYOUT === 'map4' && RUNE_IDS.includes(+id);
 export const TAGS = LAYOUTS[LAYOUT];
 export const FIXED_FIELD = LAYOUT === 'map4'; // sheet positions and turns are fixed (a scan only places phone C)
@@ -145,7 +150,7 @@ export function inField(x, z) {
   return inside;
 }
 /** Factor from a tag message's p to metres. The app measures each tag at the size it assumes (`sz`: 160 mm for tag36h11, a RuneTag's
- *  virtual square 200 mm); the true size is TAGS[id].size (from PRINTED), so p scales by true / assumed. Tags outside TAGS are taken as
+ *  virtual square RUNE.square); the true size is TAGS[id].size (from PRINTED / RUNE_SCALE), so p scales by true / assumed. Tags outside TAGS are taken as
  *  printed like the AprilTag sheets. An old app sends no `sz` and assumed PHONE_TAG_SIZE for all.
  *  (This replaces a fixed 1/1.12 found on the 180 mm AprilTag print: 144 / 160 = 1/1.11. Applied to the RuneTags too, it made
  *  their distances 9% short.) */

@@ -48,7 +48,7 @@ let fails = 0, n = 0;
 const check = (ok, msg) => { n++; if (!ok) { fails++; console.log('FAIL', msg); } };
 const cams = [{ w: 480, h: 640, f: 500 }, { w: 1280, h: 720, f: 1000 }];
 const cases = [];
-for (const cam of cams) for (const dist of [0.7, 1.3, 2.2, 3.2]) for (const tilt of [0, 35, 55, 68]) cases.push({ ...cam, dist, tilt: tilt * Math.PI / 180, spin: rnd() * 2 * Math.PI, roll: (rnd() - .5) * .6, id: Math.floor(rnd() * 4) });
+for (const cam of cams) for (const dist of [0.7, 1.3, 2.2, 3.2]) for (const tilt of [0, 35, 55, 68]) cases.push({ ...cam, dist, tilt: tilt * Math.PI / 180, spin: rnd() * 2 * Math.PI, roll: (rnd() - .5) * .6, id: Math.floor(rnd() * RUNE_IDS.length) });
 const t0 = Date.now(); const miss = [];
 for (const c of cases) {
   const H = camHomography(c), px = Math.hypot(...[0, 1].map(i => project(H, RUNE.sheet / 2, 0)[i] - project(H, -RUNE.sheet / 2, 0)[i]));
@@ -67,13 +67,15 @@ for (const t of miss) { const px = +t.match(/sheet=(\d+)/)[1], tilt = +t.match(/
 for (const cam of cams) { const g = render(null, camHomography({ ...cam, dist: 1, tilt: 0, spin: 0, roll: 0 }), cam.w, cam.h, { noise: 12 }); check(!detectRunes(g, cam.w, cam.h).length, 'found a tag in an empty picture'); }
 console.log(`${cases.length - miss.length}/${cases.length} found, ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 
-// End to end in RuneTag mode: phone C's picture of the four map4 sheets (250 mm, edge to edge) -> tagdetect.js -> extrinsics.js pose
+// End to end in RuneTag mode: phone C's picture of the mahoujin's 7 tags (printed 3% small: RUNE_SCALE) -> tagdetect.js -> extrinsics.js pose
 {
-  process.env.MARKER = 'rune';
+  process.env.MARKER = 'rune'; process.env.RUNE_SCALE = '0.97';
   const W = await import('./public/world.js'), { detectInImage } = await import('./public/tagdetect.js'), { solveCamera } = await import('./public/extrinsics.js');
-  check(W.MARKER === 'rune' && Math.abs(W.TAGS[0].size - W.PRINTED.rune * .8) < 1e-12 && W.TAG_PITCH === W.PRINTED.rune, 'world.js did not switch to RuneTag');
-  // the app measures a RuneTag at its drawn 200 mm square; the 246 mm print makes it 196.8 mm, so distances scale by 0.984 (not 1/1.12)
-  check(Math.abs(W.tagScale(0, RUNE.square) - W.PRINTED.rune / RUNE.sheet) < 1e-12, `RuneTag distance factor ${W.tagScale(0, RUNE.square)}`);
+  check(W.MARKER === 'rune' && W.CORNER_IDS.join() === '0,1,2,3,4,5,6' && Math.abs(W.TAGS[0].size - RUNE.square * .97) < 1e-12, 'world.js did not switch to the mahoujin');
+  // kit page 2: T1 at (383.5, 305.8) mm, poster up = -z
+  check(Math.hypot(W.TAGS[1].pos[0] - .3835 * .97, W.TAGS[1].pos[2] + .3058 * .97) < 2e-4, `T1 at ${W.TAGS[1].pos}`);
+  // the app measures a RuneTag at its designed square; the print is 0.97 of it, so distances scale by 0.97
+  check(Math.abs(W.tagScale(0, RUNE.square) - .97) < 1e-12, `RuneTag distance factor ${W.tagScale(0, RUNE.square)}`);
   const CW = 1920, CH = 1080, fov = 40, f = CH / 2 / Math.tan(fov * Math.PI / 360), K = [f, 0, CW / 2, 0, f, CH / 2, 0, 0, 1];
   const lookAt = (eye, tgt) => {
     const sub = (a, b) => a.map((v, i) => v - b[i]), cr = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]], nz = a => a.map(v => v / Math.hypot(...a));
@@ -85,7 +87,7 @@ console.log(`${cases.length - miss.length}/${cases.length} found, ${((Date.now()
   for (const [dist, hgt, az] of [[2.5, 1.5, .3], [3.5, 1.7, -.5], [4.5, 2.0, .1]]) {
     const eye = [dist * Math.sin(az), hgt, dist * Math.cos(az)], pose = lookAt(eye, [0, 0, 0]), inv = W.invert(pose);
     const Hs = W.CORNER_IDS.map(id => { const ct = W.compose(inv, W.worldTagPose(id)), R = ct.R, t = ct.t; return { id, Hi: inv3(m3(K, [R[0], R[1], t[0], R[3], R[4], t[1], R[6], R[7], t[2]])) }; });
-    const data = new Uint8ClampedArray(CW * CH * 4), half = W.PRINTED.rune / 2; // printed (and measured) at 246 mm, not the drawn 250
+    const data = new Uint8ClampedArray(CW * CH * 4), half = RUNE.sheet * W.RUNE_SCALE / 2; // printed at RUNE_SCALE
     for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) {
       let acc = 0;
       for (let s = 0; s < 4; s++) {
@@ -96,8 +98,9 @@ console.log(`${cases.length - miss.length}/${cases.length} found, ${((Date.now()
       const g = acc / 4 + 3 * gauss(), o = 4 * (y * CW + x); data[o] = data[o + 1] = data[o + 2] = g; data[o + 3] = 255;
     }
     const t1 = Date.now(), dets = await detectInImage({ width: CW, height: CH, data }, W.CORNER_IDS), ms = Date.now() - t1;
-    // 4.5 m from 2 m up the far sheets are seen at ~70° from their normal: the inner dots blur away, 2 of 4 still read
-    check(dets.length >= (dist > 4 ? 2 : 4), `phone C at ${dist} m: found ${dets.map(d => d.id)}`);
+    // RUNE-43 dots are small (outer Ø 14 mm, 4 mm apart): at 3.5 m the far tags blur together and 3 of 7 read; at 4.5 m none (reported only)
+    if (dist < 4) check(dets.length >= (dist < 3 ? 7 : 3), `phone C at ${dist} m: found ${dets.map(d => d.id)}`);
+    if (dets.length < 2) { console.log(`phone C ${dist} m: ${dets.length} tags, too far`); continue; }
     const r = solveCamera(dets, CW, CH, { fovYGuess: fov, fitFocal: 'auto' });
     if (!r) { check(false, 'no pose'); continue; }
     const RR = W.mul3(W.tr3(r.pose.R), pose.R), ang = Math.acos(Math.max(-1, Math.min(1, (RR[0] + RR[4] + RR[8] - 1) / 2))) * 180 / Math.PI;

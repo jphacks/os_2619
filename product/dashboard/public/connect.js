@@ -93,9 +93,12 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
       <div class="urls kv"></div><div class="qrs"></div>
       <p class="kv" style="font-size:12px;margin:10px 0 0">A・B：SensorLink アプリの LAN 欄に IP とポート 8000 を入れて接続（先につないだ方が A）。C：ブラウザで QR のページを開いて「開始」。初回は証明書のページの手順で信頼させる。</p>
     </section>
-    <section class="card"><header><h2>床のマーカー</h2><span class="sub">全体の設定（ID 0-3）</span></header>
+    <section class="card"><header><h2>床のマーカー</h2><span class="sub">全体の設定</span></header>
       <div class="seg marker"><button data-v="april">AprilTag</button><button data-v="rune">RuneTag</button></div>
-      <p class="kv" style="font-size:12px;margin:8px 0 0">紙の一辺（印刷後に測った値、world.js の PRINTED）：AprilTag ${W.PRINTED.april * 1000} mm、RuneTag ${W.PRINTED.rune * 1000} mm（product/print/runetags_A3.pdf）。どちらも 4 枚を端から端まで並べる。印刷し直したら測って PRINTED を直す。切り替えるとサーバーが保存し、スマホ A・B に送り、開いているページは読み直す。胸のタグ 8-11 は AprilTag のまま。</p>
+      <p class="kv" style="font-size:12px;margin:8px 0 0">AprilTag：ID 0〜3 の 4 枚を端から端まで並べる（紙の一辺は印刷後に測った ${W.PRINTED.april * 1000} mm、world.js の PRINTED）。RuneTag：床の魔法陣（mahoujin/magic-circle-576808920-A3.pdf、タグ T0〜T6 = ID 0〜6）。</p>
+      <label class="kv" style="font-size:12px;display:block;margin-top:6px">魔法陣の倍率（実物 / 設計）<input class="runescale" type="number" min="0.5" max="2" step="0.001" style="width:6em"></label>
+      <p class="kv" style="font-size:12px;margin:4px 0 0">PDF の 100 mm が印刷で何 mm になったか ÷ 100（いまは 97.5 mm → 0.975）。タグの大きさと配置の円（半径 490.5 mm）に同じ倍率がかかる。</p>
+      <p class="kv" style="font-size:12px;margin:4px 0 0">切り替えるとサーバーが保存し、スマホ A・B に送り、開いているページは読み直す。胸のタグ 8-11 は AprilTag のまま。</p>
     </section>
     <section class="card"><header><h2>動作の判定</h2><span class="sub">棒の IMU と胸のスマホから</span></header>
       <ul class="actions"></ul>
@@ -110,6 +113,8 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
     b.classList.toggle('on', b.dataset.v === W.MARKER);
     b.onclick = () => { if (b.dataset.v !== W.MARKER && confirm(`床のマーカーを ${b.textContent} に切り替えます（全体・ページは読み直し）`)) hub.send({ type: 'setMarker', marker: b.dataset.v }); };
   }
+  const rs = sq('.runescale'); rs.value = W.RUNE_SCALE;
+  rs.onchange = () => { const v = +rs.value; if (v > .5 && v < 2 && v !== W.RUNE_SCALE) hub.send({ type: 'setRuneScale', scale: v }); else rs.value = W.RUNE_SCALE; }; // the server saves it; app.js reloads every page
   for (const inp of side.querySelectorAll('.sticks input')) {
     inp.value = cfg.stickLen[inp.dataset.s];
     inp.oninput = () => { if (+inp.value > 0) onStick(inp.dataset.s, +inp.value); };
