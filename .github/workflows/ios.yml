@@ -1,5 +1,5 @@
 # Builds product/ios on a GitHub-hosted Mac (no Mac needed locally).
-#  - push touching product/ios: compile check (no signing)
+#  - every push: compile check (no signing)
 #  - "Run workflow" with testflight=true, or a push whose last commit message contains [testflight]: archive, sign (App Store Connect API key, automatic signing) and upload a new build to TestFlight
 # Secrets for the TestFlight job: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 (base64 of AuthKey_XXXX.p8), TEAM_ID
 name: ios
@@ -11,9 +11,6 @@ on:
         type: boolean
         default: false
   push:
-    paths:
-      - product/ios/**
-      - .github/workflows/ios.yml
 
 defaults:
   run:
