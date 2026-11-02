@@ -56,12 +56,31 @@ enum Rune {
 
     private static func bit(_ id: Int, _ j: Int, _ k: Int) -> Int { (CODES[id][j] >> k) & 1 }
 
+    /// ROT[id][r][k]: ring k of code id as a 43-bit word, turned so that bit j is the code's sector (j + r) % S.
+    /// Comparing a read with a code is then a popcount per ring instead of 129 single-bit tests (10x fewer operations for 7 ids x 43 turns).
+    private static let ROT: [[[UInt64]]] = CODES.map { c in
+        (0..<S).map { r in
+            (0..<K).map { k -> UInt64 in
+                var m: UInt64 = 0
+                for j in 0..<S where (c[(j + r) % S] >> k) & 1 == 1 { m |= UInt64(1) << UInt64(j) }
+                return m
+            }
+        }
+    }
+
     static func detect(_ g: [UInt8], _ w: Int, _ h: Int, ids: ClosedRange<Int> = Rune.IDS) -> [Found] {
         var found = [Int: Found]()
         let m = Double(min(w, h))
         let rads = [max(4, Int((m / 40.0).rounded())), Int((m / 10.0).rounded())]
-        for rad in rads {
-            for f in pass(blobs(g, w, h, rad), w, h, ids) {
+        // the two blob sizes are independent: read them on two cores, then merge in the same order as one after the other
+        var passes = [[Found]](repeating: [], count: rads.count)
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: rads.count) { i in
+            let r = pass(blobs(g, w, h, rads[i]), w, h, ids)
+            lock.lock(); passes[i] = r; lock.unlock()
+        }
+        for fs in passes {
+            for f in fs {
                 if let o = found[f.id], !(f.n - 2 * f.err > o.n - 2 * o.err) { continue }
                 found[f.id] = f
             }
@@ -245,15 +264,20 @@ enum Rune {
                 hm = nh
             }
             guard let rd = read, rd.known >= 30 else { continue }
+            // the read as one 43-bit word per ring: which sectors were seen, and which of those hold a dot
+            var seen = [UInt64](repeating: 0, count: K), dots = [UInt64](repeating: 0, count: K)
+            for kk in 0..<K {
+                for jj in 0..<S {
+                    let v = rd.bits[kk * S + jj]
+                    if v >= 0 { seen[kk] |= UInt64(1) << UInt64(jj) }
+                    if v == 1 { dots[kk] |= UInt64(1) << UInt64(jj) }
+                }
+            }
             for id in ids {
                 for rr in 0..<S { // observed sector jj is the code's sector jj + rr
+                    let word = ROT[id][rr]
                     var err = 0
-                    for jj in 0..<S {
-                        for kk in 0..<K {
-                            let v = rd.bits[kk * S + jj]
-                            if v >= 0 && v != bit(id, (jj + rr) % S, kk) { err += 1 }
-                        }
-                    }
+                    for kk in 0..<K { err += ((dots[kk] ^ word[kk]) & seen[kk]).nonzeroBitCount }
                     if err < bestErr {
                         second = min(second, bestErr)
                         bestErr = err; bestId = id; bestR = rr; bestRead = rd
