@@ -97,6 +97,7 @@ function setMarker(m) {
   toDashboards(k); for (const p of phones.values()) if (p.ws.readyState === 1) p.ws.send(k);
 }
 
+let matchPhase = 'setup'; // the dashboard's game phase (setup / countdown / fight / result)
 const wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
 wss.on('connection', (ws, req) => {
   let role = null, id = null;
@@ -132,9 +133,16 @@ wss.on('connection', (ws, req) => {
       phones.set(id, { slot, name: String(k.name).slice(0, 40), ws, seen: Date.now(), since: Date.now(), gap: 0, n: { msg: 0, bytes: 0 }, addr: req.socket.remoteAddress?.replace(/^::ffff:/, '') });
       log(`phone ${slot} (${k.name}) connected from ${req.socket.remoteAddress}`);
       send(ws, { type: 'welcome', slot, marker });
+      send(ws, { type: 'match', phase: matchPhase });
       return status();
     }
     if (k.type === 'setMarker' && role === 'dashboard') return setMarker(k.marker);
+    if (k.type === 'match' && role === 'dashboard') { // the phones grey out 枝 while a match runs
+      const ph = String(k.phase).slice(0, 16); if (ph === matchPhase) return;
+      matchPhase = ph; const m = JSON.stringify({ type: 'match', phase: ph });
+      for (const q of phones.values()) if (q.ws.readyState === 1) q.ws.send(m);
+      return;
+    }
     if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); }
   });
   ws.on('close', (code, reason) => {

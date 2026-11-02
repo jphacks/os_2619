@@ -326,6 +326,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function stepMatch(dt) {
     // a new HP setting shows at once while setting up; during a match it waits for the next one (reset)
     if (match.phase === 'setup') for (const p of Object.values(players)) { takeStick(p); if (p.hpMax !== hpOf(p)) p.hp = p.hpMax = hpOf(p); }
+    else if (match.phase === 'result') for (const p of Object.values(players)) takeStick(p); // between matches the element shows at once; HP stays as the match ended
     if (match.phase === 'countdown' && now() >= match.until) { match.phase = 'fight'; match.left = match.sec; match.fightAt = now(); }
     if (match.phase !== 'fight' || match.paused) return;
     match.left = Math.max(0, match.left - dt);

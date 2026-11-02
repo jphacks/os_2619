@@ -53,7 +53,7 @@ export function mountSticks(root) {
         <p class="msg" data-mulmsg></p>
       </section>
     </aside>
-    <input type="file" accept="image/*" hidden data-file>`;
+    <input type="file" accept="image/*" data-file style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true">`;
   const $ = s => root.querySelector(`[data-${s}]`);
   const err = t => { $('err').textContent = t; };
 

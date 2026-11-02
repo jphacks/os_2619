@@ -21,6 +21,7 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
     private var _offset = 0.0
     private var _rttMs = 0.0
     private var _marker = "april"
+    private var _phase = "setup"
 
     private static let queueLimit = 4 * 1024
 
@@ -31,6 +32,8 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
     var rttMs: Double { lock.lock(); defer { lock.unlock() }; return _rttMs }
     /// The floor sheets' marker the PC chose: "april" or "rune". Older servers say nothing: april.
     var marker: String { lock.lock(); defer { lock.unlock() }; return _marker }
+    /// the dashboard's game phase (setup / countdown / fight / result), sent by the server
+    var phase: String { lock.lock(); defer { lock.unlock() }; return _phase }
 
     init(id: String, name: String) {
         self.id = id
@@ -127,6 +130,8 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
             lock.unlock()
         case "marker":
             if let m = k["marker"] as? String { lock.lock(); _marker = m; lock.unlock() }
+        case "match":
+            if let p = k["phase"] as? String { lock.lock(); _phase = p; lock.unlock() }
         case "full":
             lock.lock(); _status = "PC already has 2 phones"; lock.unlock()
         default:

@@ -35,6 +35,7 @@ struct ContentView: View {
                     Button("Calibrate") { model.calibrate() }
                     Button("LAN") { showLan = true }
                     Button("枝") { showStick = true }
+                        .disabled(model.inMatch) // no stick changes during a match
                 }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity)
@@ -45,7 +46,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showImu) { ImuSheet().environmentObject(model) }
         .sheet(isPresented: $showLan) { LanSheet().environmentObject(model) }
-        .sheet(isPresented: $showStick) { StickSheet(url: URL(string: "http://\(model.host):\(model.port)/sticks.html")!) }
+        .sheet(isPresented: $showStick) { StickSheet(url: URL(string: "http://\(model.host):\(model.port)/sticks.html")!).environmentObject(model) }
     }
 }
 
@@ -148,11 +149,22 @@ struct LanSheet: View {
 /// The PC's branch-scan page (sticks.html) inside the app: its photo button opens the camera, and the page measures and uploads.
 struct StickSheet: View {
     let url: URL
+    @EnvironmentObject var model: Model
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationView {
-            WebView(url: url)
+            Group {
+                if model.lanUp {
+                    WebView(url: url)
+                } else {
+                    VStack(spacing: 12) {
+                        Text("PC につながっていません").font(.headline)
+                        Text("閉じて LAN を開き、PC の IP とポートを入れてください。\n今の行き先: \(url.host ?? "") : \(url.port ?? 0)")
+                            .font(.subheadline).foregroundColor(.secondary).multilineTextAlignment(.center)
+                    }.padding()
+                }
+            }
                 .navigationTitle("枝をスキャン")
                 .navigationBarTitleDisplayMode(.inline)
                 .navigationBarItems(trailing: Button("閉じる") { dismiss() })

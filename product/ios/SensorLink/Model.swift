@@ -22,6 +22,8 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     @Published var preview: UIImage?
     @Published var marks: [TagMark] = []
     @Published var toast: String?
+    @Published var inMatch = false   // a match runs on the PC: 枝 is greyed out
+    @Published var lanUp = false
     @Published var found: [ImuDevice] = []
 
     let link: Link
@@ -226,6 +228,9 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     private func refresh() {
+        let up = link.status == "connected", m = up && ["countdown", "fight"].contains(link.phase)
+        if inMatch != m { inMatch = m }
+        if lanUp != up { lanUp = up }
         lock.lock()
         let ar = arError ?? arText
         let tags = lastTags

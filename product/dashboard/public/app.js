@@ -108,6 +108,7 @@ function flash(el) {
 }
 
 let screen = null, sticksUi = null;
+const sentPhase = { ph: null, at: 0 }; // the game phase told to the server (phones grey out 枝 in a match)
 function show(name) {
   if (!['connect', 'space', 'game', 'final', 'sticks'].includes(name)) name = 'connect';
   screen = name; cfg.screen = name; save();
@@ -135,7 +136,7 @@ gameCtrl.innerHTML = `
   <p class="why" id="why"></p>
   <h3>プレイヤー</h3>
   <div class="players2">${['A', 'B'].map(s => `
-    <div class="pc" data-s="${s}"><div class="row" style="justify-content:space-between"><b style="color:var(--${s})">${s} ${ELEMENT_JA[game.players[s].element] ?? ''}</b><span class="num hpv"></span></div>
+    <div class="pc" data-s="${s}"><div class="row" style="justify-content:space-between"><b class="el" style="color:var(--${s})"></b><span class="num hpv"></span></div>
       <div class="facts"></div>
       <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button><button data-act="guard" title="押している間ガード（小は跳ね返し、中・大は貫通）">押してガード</button></div></div>`).join('')}
   </div>
@@ -391,6 +392,7 @@ function updateSlowUi() {
   for (const pc of gameCtrl.querySelectorAll('.pc')) {
     const p = P[pc.dataset.s];
     pc.querySelector('.hpv').textContent = `HP ${Math.round(p.hp)}`;
+    setText(pc.querySelector('b.el'), `${pc.dataset.s} ${ELEMENT_JA[p.element] ?? ''}${p.stick ? ` · ${p.stick.name} ${'★'.repeat(p.stick.rarity | 0)}` : ''}`); // follows the stick chosen on 棒設定
     pc.querySelector('.facts').innerHTML = `${p.online ? '接続中' : p.imu ? 'IMU のみ' : '未接続'} · 位置 ${POS_JA[p.src] ?? (p.src === 'hold' ? '保持' : p.src)}${p.charging ? ` · 溜め ${TIER_JA[p.tier] ?? '小'} ${p.chargeT.toFixed(1)} 秒` : ''}<br>発射 ${p.shots} · 命中 ${p.hits} · 与えたダメージ ${p.dealt} · 大 ${p.specials} · 溜め失敗 ${p.fails}`;
   }
   const key = game.events.length + ':' + (game.events[0]?.at ?? 0);
@@ -454,6 +456,7 @@ function frame(ts) {
   playable.step(dt, t);
   vsrc.dummy?.render(t); // the picture and game placement consume this exact same pose snapshot
   game.step(dt, raw, est, { sensorOnly: screen === 'final' });
+  if (game.match.phase !== sentPhase.ph || t - sentPhase.at > 2) { sentPhase.ph = game.match.phase; sentPhase.at = t; hub.send?.({ type: 'match', phase: sentPhase.ph }); }
   if (screen === 'final') finalControls.step(t);
   // MediaPipe runs for the avatars (pose only) and/or the final screen's layers (also the masks and the stick search)
   const live = !!(video.videoWidth || video.__dummy);
