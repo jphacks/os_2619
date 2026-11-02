@@ -49,6 +49,12 @@ jobs:
       - run: brew install xcodegen
       - run: ./scripts/fetch-opencv.sh
       - run: DEVELOPMENT_TEAM="$TEAM_ID" xcodegen generate
+      - name: Check secrets
+        run: |
+          missing=0
+          for v in TEAM_ID KEY_ID ISSUER_ID; do [ -n "${!v}" ] || { echo "::error::secret for $v is empty (TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID in Settings > Secrets > Actions)"; missing=1; }; done
+          [ -n "${{ secrets.ASC_KEY_P8_BASE64 }}" ] || { echo "::error::secret ASC_KEY_P8_BASE64 is empty"; missing=1; }
+          exit $missing
       - name: API key
         run: |
           mkdir -p ~/private_keys
