@@ -8,8 +8,10 @@
 //                 wind:  a little cyclone instead (crescents whirling round a pale vortex, stacked rings of air, air drawn in)
 //   body extras per element: fire flame tongues and embers, thunder arcs, water bubbles rising and a rippling ring,
 //                 wind an updraft (streak lines spiralling up the cylinder) and dust skirting the floor
+//                 water also gathers UP FROM THE FLOOR into the stick tip (a whirlpool at the feet, strands and drops rising to the tip);
+//                 wind also spirals IN FROM AROUND (pressure rings contracting on the caster, streaks and leaves drawn in)
 export function createChargeMoves(kit) {
-  const { THREE, K, S, COL, TAU, Q, R, RS, emit, spr, seg, Bolt, gen, drawBolt, runit, u3, take, flick, add, classic } = kit;
+  const { THREE, K, S, COL, TAU, Q, R, RS, emit, spr, sprFloor, seg, Bolt, gen, drawBolt, runit, u3, take, flick, add, classic } = kit;
   const V = () => new THREE.Vector3();
   const tA = V(), tB = V(), tC = V(), tD = V(), UP = new THREE.Vector3(0, 1, 0);
   const TIER_K = { s: .32, m: .64, l: 1 };
@@ -21,14 +23,14 @@ export function createChargeMoves(kit) {
   };
   const now = () => kit.time;
   // a glowing ring lying on the floor, drawn as a loop of segments (floor-oriented sprites are back-face culled from above)
-  function floorRing(F, rad, w, inten, col, wob = 0, seed = 0) {
+  function floorRing(F, rad, w, inten, col, wob = 0, seed = 0, y = .015) {
     if (inten <= .01 || rad <= 0) return;
     const n = Math.max(28, Math.min(56, Math.round(30 + rad * 16))), t = now();
     let px = 0, pz = 0;
     for (let i = 0; i <= n; i++) {
       const th = i / n * TAU, rr = rad * (1 + wob * Math.sin(th * 5 + t * 7 + seed * 40) * Math.sin(th * 3 - t * 5 + seed * 13));
       const x = F.x + Math.cos(th) * rr, z = F.z + Math.sin(th) * rr;
-      if (i) seg(px, .015, pz, x, .015, z, w, inten * (.8 + .2 * Math.sin(th * 7 + t * 9 + seed * 50)), col);
+      if (i) seg(px, y, pz, x, y, z, w, inten * (.8 + .2 * Math.sin(th * 7 + t * 9 + seed * 50)), col);
       px = x; pz = z;
     }
   }
@@ -188,6 +190,23 @@ export function createChargeMoves(kit) {
           R() < .3 ? COL.waterHi : COL.water, K.DROP, 1.1 + .4 * k, .35, 0, R() * dt);
       }
       floorRing(F, COL_R + .05, .025 + .02 * k, .5 + .6 * k, COL.waterHi, .06 + .04 * k, a.seed + .7);
+      // water gathered up from the floor into the tip: a whirlpool round the feet, three strands and drops rising to the tip
+      const T = a.tip, t = now(); if (!T) return;
+      sprFloor(S.VORTEX, tA.set(F.x, .02, F.z), .55 + .55 * k, COL.water, .4 + .8 * k, 1 + 3 * k, a.seed);
+      for (let h = 0; h < 3; h++) {
+        let px = 0, py = 0, pz = 0;
+        for (let i = 0; i <= 12; i++) {
+          const u = i / 12, th = h * TAU / 3 + t * 5 + u * 5, r = (.7 + .2 * k) * (1 - u) ** 1.3, w = u ** 1.6;
+          const x = F.x + Math.cos(th) * r + (T.x - F.x) * w, y = .03 + (T.y - .03) * u, z = F.z + Math.sin(th) * r + (T.z - F.z) * w;
+          const fl = .5 + .5 * Math.sin(u * 14 - t * 16 + h * 2);
+          if (i) seg(px, py, pz, x, y, z, .01 + .012 * k * (1 - u * .5), (.3 + .9 * k) * fl * Math.sin(Math.PI * Math.min(1, u * 1.1)), fl > .75 ? COL.waterHi : COL.water);
+          px = x; py = y; pz = z;
+        }
+      }
+      for (let n = take(a, 'lcU', (15 + 120 * k) * Q * dt); n > 0; n--) {
+        const th = R() * TAU, r = .5 + .45 * R(), x = F.x + Math.cos(th) * r, z = F.z + Math.sin(th) * r, life = .35 + .25 * R();
+        emit(x, .03, z, (T.x - x) / life, (T.y - .03) / life, (T.z - z) / life, life, .028, .012, 0, 0, R() < .4 ? COL.waterHi : COL.water, K.DROP, 1.3, .2, .03, R() * dt);
+      }
     },
     wind(a, F, k, dt) { // an updraft: streak lines spiralling up the cylinder, dust skirting the floor
       const t = now(), nl = Math.round(3 + 6 * k);
@@ -203,7 +222,21 @@ export function createChargeMoves(kit) {
       }
       for (let n = take(a, 'lcD', (6 + 30 * k) * Q * dt); n > 0; n--) {
         const th = R() * TAU, c = Math.cos(th), sn = Math.sin(th), r = COL_R * (.9 + .6 * R());
-        emit(F.x + c * r, .04, F.z + sn * r, -sn * 1.6 + c * .5, .1 + .3 * R(), c * 1.6 + sn * .5, .7 + .5 * R(), .1, .35, 1.5, .1, COL.dust, K.SMOKE, .6, .3, 0, R() * dt);
+        emit(F.x + c * r, .04, F.z + sn * r, -sn * 1.6 + c * .5, .1 + .3 * R(), c * 1.6 + sn * .5, .7 + .5 * R(), .18, .7, 1.5, .1, COL.dust, K.SMOKE, .22, .6, 0, R() * dt);
+      }
+      // air spiralling in from all round: pressure rings contracting on the caster (floor and chest height), streaks and leaves drawn in
+      for (let j = 0; j < 2; j++) {
+        const ph = (t * (.7 + .8 * k) + j * .5 + a.seed) % 1, f = Math.sin(Math.PI * ph) * k;
+        floorRing(F, 2.1 * (1 - ph) + COL_R + .1, .02 + .015 * k, 1.1 * f, j ? COL.wind : COL.windHi, .02, a.seed + j);
+        if (k > .4) floorRing(F, 1.5 * (1 - ph) + COL_R + .05, .012 + .01 * k, .8 * f, COL.wind, .04, a.seed + j + .5, .9 + .3 * j);
+      }
+      for (let n = take(a, 'lcI', (20 + 140 * k) * Q * dt); n > 0; n--) {
+        const th = R() * TAU, c = Math.cos(th), sn = Math.sin(th), r = 1.5 + .8 * R(), v = 3 + 3 * R(), life = (r - COL_R) / v;
+        emit(F.x + c * r, .1 + R() * 1.8, F.z + sn * r, -c * v - sn * v * .6, .2, -sn * v + c * v * .6, life, .008, .004, 0, 0, R() < .4 ? COL.windHi : COL.wind, K.SPARK, 1.7, .05, .07, R() * dt);
+      }
+      for (let n = take(a, 'lcL', 8 * k * Q * dt); n > 0; n--) {
+        const th = R() * TAU, c = Math.cos(th), sn = Math.sin(th), r = 1.8, life = .8;
+        emit(F.x + c * r, .1 + R() * 1.2, F.z + sn * r, -c * 1.8 - sn * 2, .3, -sn * 1.8 + c * 2, life, .055, .04, .3, -.3, COL.leaf ?? COL.dust, K.LEAF, 1, .3, RS(9), R() * dt);
       }
     },
   };

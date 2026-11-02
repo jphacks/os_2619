@@ -15,8 +15,8 @@ import { createThunderEffects } from './thunder-effects.js';
 import { createChargeEffects } from './charge-effects.js';
 
 const TAU = Math.PI * 2;
-const K = { FLAME: 0, SMOKE: 1, SPARK: 2, GLOW: 3, EMBER: 4, DROP: 5 };                     // particle kinds
-const S = { GLOW: 0, FIREBALL: 1, PLASMA: 2, RING: 3, SWIRL: 4, FLARE: 5, GHOST: 6, WATER: 7, CRESCENT: 8 }; // sprite kinds
+const K = { FLAME: 0, SMOKE: 1, SPARK: 2, GLOW: 3, EMBER: 4, DROP: 5, LEAF: 6 };            // particle kinds
+const S = { GLOW: 0, FIREBALL: 1, PLASMA: 2, RING: 3, SWIRL: 4, FLARE: 5, GHOST: 6, WATER: 7, CRESCENT: 8, VORTEX: 9, COLUMN: 10 }; // sprite kinds
 const COL = {
   fire: [1, .38, .08], ember: [1, .5, .14], smoke: [.09, .06, .05], hot: [1, .78, .45], one: [1, 1, 1],
   elec: [.28, .66, 1], spark: [.62, .86, 1], elecGlow: [.16, .38, 1], white: [.85, .94, 1],
@@ -24,6 +24,7 @@ const COL = {
   // (no saturated green, and kept off thunder's electric blue: water is deeper, wind is whiter)
   water: [.03, .24, .95], waterHi: [.3, .82, 1], waterGlow: [.02, .1, .6], foam: [.78, .93, 1],
   wind: [.8, .96, .95], windHi: [.95, 1, 1], windGlow: [.42, .66, .7], dust: [.5, .48, .44],
+  waterDeep: [.01, .07, .4], leaf: [.42, .4, .28], pebble: [.3, .29, .27], // whirlpool eye; wind debris (dusty khaki leaves, grey grit)
 };
 const PS = 20, SS = 20, GS = 12; // floats per particle / sprite / segment
 
@@ -94,7 +95,7 @@ void main() {
   float size = mix(iC.x, iC.y, x);
   vec4 mv = modelViewMatrix * vec4(p, 1.);
   vec2 c = position.xy;
-  if ((iD.w > 1.5 && iD.w < 2.5) || iD.w > 4.5) { // spark / droplet: quad stretched along the screen-space velocity, head at c.y = 1
+  if ((iD.w > 1.5 && iD.w < 2.5) || (iD.w > 4.5 && iD.w < 5.5)) { // spark / droplet: quad stretched along the screen-space velocity, head at c.y = 1
     vec2 d = (modelViewMatrix * vec4(vel, 0.)).xy; float L = length(d) * iE.w;
     d = L > 1e-5 ? normalize(d) : vec2(0., 1.);
     mv.xy += vec2(-d.y, d.x) * c.x * size + d * ((c.y * .5 - .5) * L + c.y * size);
@@ -142,6 +143,11 @@ void main() {
       float th = .25 + x * .45;
       float a = smoothstep(th, th + .35, dens) * smoothstep(0., .25, x) * (1. - x);
       rgb = vCol * a * vInt; occ = a * .28 * vInt;
+    } else if (k == 6) { // leaf / grit: a pointed oval with a midrib, tumbling (its width flips), opaque
+      float w = (1. - vUv.y * vUv.y) * .5 * (.2 + .8 * abs(sin(uTime * 9. + vSeed * 40.)));
+      float body = smoothstep(w, w * .6, abs(vUv.x)), rib = exp(-vUv.x * vUv.x / (w * w) * 30.) * .35;
+      float a = body * pow(1. - x, .5) * fin;
+      rgb = vCol * (.6 + .4 * sign(vUv.x) * sign(vSeed - .5) + rib) * a * vInt; occ = a * .8 * min(vInt, 1.);
     } else if (k == 3) { // soft glow puff
       float g = exp(-r2 * 5.) - exp(-5.);
       float a = g * pow(1. - x, 1.5) * fin;
@@ -237,6 +243,27 @@ void main() {
       float tips = smoothstep(-.1, .35, vUv.y);
       float a = (body * (.2 + .9 * smoothstep(.45, .8, n)) + lead * 1.4) * tips;
       rgb = mix(vCol, vec3(1.), lead * .6) * a * vInt; occ = body * tips * .08 * min(vInt, 1.);
+    } else if (k == 9) { // whirlpool (lay it on the floor): foam arms winding into a dark eye that hides the floor; vParam = spin (sign = sense)
+      float lr = log(max(r, .02)), sp = vParam;
+      float n = textureLod(uNoise, vec2(ang / TAU * 3. + lr * .4 - uTime * .25 * sp + vSeed, r * 1.3 - uTime * .4), 0.).r;
+      float arm = sin(ang * 5. + lr * 6. * sign(sp) - uTime * sp * 7. + vSeed * TAU) * .6 + n * .7;
+      float foam = smoothstep(.55, 1., arm) * smoothstep(1., .5, r) * smoothstep(.06, .28, r);
+      float body = smoothstep(1., .45, r), eye = smoothstep(.32, .02, r), rim = exp(-pow((r - .8) / .09, 2.)) * (.4 + n);
+      rgb = (vCol * (body * (.2 + .6 * n) + rim) * (1. - eye) + vec3(.85, .96, 1.) * foam * 1.3) * vInt;
+      occ = (body * .5 + eye * .45) * min(vInt, 1.);
+    } else if (k == 10) { // column: a vertical body, +y up (geyser, funnel); vParam > 0 widens to the top by vParam, < 0 narrows;
+      // seed >= 10: air (streaks winding round it, almost no body), else water (dark body, streaks racing up, bright rim)
+      bool air = vSeed >= 10.; float sd = fract(vSeed), v = vUv.y * .5 + .5;
+      float hw = 1. - abs(vParam) * (vParam > 0. ? 1. - v : v);
+      float wob = textureLod(uNoise, vec2(v * 1.3 - uTime * (air ? .6 : 1.4), sd), 0.).r - .5;
+      float xx = (vUv.x + wob * .2) / hw, ax = abs(xx);
+      float body = smoothstep(1., .82, ax) * smoothstep(-1., -.88, vUv.y) * smoothstep(1., .72, vUv.y);
+      vec2 fc = air ? vec2(xx * .35 + v * .9 - uTime * 1.6 + sd, v * .22) : vec2(xx * .5 + sd, v * .3 - uTime * 1.9);
+      float n = textureLod(uNoise, fc, 0.).r, streak = smoothstep(.6, .82, n);
+      float caus = smoothstep(.06, 0., abs(textureLod(uNoise, fc * 1.9 + .3, 0.).g - .5)), rim = pow(ax, 4.);
+      if (air) { rgb = vCol * (rim * .3 + streak * 1.1 + caus * .35) * body * vInt; occ = body * .05 * min(vInt, 1.); }
+      else { rgb = (vCol * vec3(.25, .45, .8) * .5 + vCol * (rim * .9 + caus * .6 + streak * .4) + vec3(.85, .96, 1.) * (streak * .35 + rim * caus * .5)) * body * vInt;
+        occ = body * (.55 + .25 * ax) * min(vInt, 1.); }
     }
   }
   gl_FragColor = vec4(rgb, occ);
@@ -460,7 +487,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
     }
     for (let i = 0; i < 12 * Q * speed; i++) {
       runit(); const sp = (.6 + R()) * speed;
-      emit(p.x, p.y, p.z, u3[0] * sp, Math.abs(u3[1]) * sp * .4, u3[2] * sp, .7 + .5 * R(), .12, .45, 2.5, .2, COL.dust, K.SMOKE, .7, .3, 0, -.05);
+      emit(p.x, p.y, p.z, u3[0] * sp, Math.abs(u3[1]) * sp * .4, u3[2] * sp, .7 + .5 * R(), .2, .8, 2.5, .2, COL.dust, K.SMOKE, .35, .6, 0, -.05);
     }
   }
 

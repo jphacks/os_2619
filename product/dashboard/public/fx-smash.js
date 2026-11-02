@@ -1,8 +1,8 @@
 // "スマブラ風" effect set: one move per element and tier, modelled on Smash Bros. specials (original effects, no assets).
 //   炎 小 PK Fire (Ness)          炎 中 Firaga (Sora)              炎 大 Explosive Flame (Palutena)
 //   雷 小 Thunder (Robin)         雷 中 Elthunder (Robin)          雷 大 Thunder (Pikachu)
-//   水 小 Water Gun               水 中 Aqua Ring                  水 大 Geyser
-//   風 小 Air Cutter              風 中 Gale Shuriken              風 大 Tornado
+//   水 小 Aqua Bullet             水 中 Spiral Lance               水 大 Maelstrom Geyser  (water rises from below)
+//   風 小 Vacuum Crescent         風 中 Cross Gale                 風 大 Tempest           (wind closes in from around)
 //   溜め: Limit Charge (Cloud) around the body, a Kirby-Spark-like sphere at the stick tip, in the element's colour
 // The moves live in fx-smash-fire.js, fx-smash-thunder.js, fx-smash-water.js, fx-smash-wind.js and fx-smash-charge.js; this file routes effects.js's style hooks
 // to them (fx.addStyle('smash', createSmashStyle)). A hook a module does not provide falls back to the classic effect.

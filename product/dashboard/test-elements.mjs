@@ -26,7 +26,7 @@ for (const [file, table] of [['fx-smash-charge.js', 'const PAL = {'], ['fx-smash
 
 // a kit of stubs that counts what gets drawn
 const V = () => new THREE.Vector3();
-let drawn = 0, time = 0, seed = 1;
+let drawn = 0, time = 0, seed = 1; const kinds = new Set();
 const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
 const u3 = [0, 0, 0];
 const classicCalls = [];
@@ -34,11 +34,11 @@ const classic = new Proxy({}, { get: (_, k) => (...a) => { classicCalls.push([k,
 const live = [];
 class Bolt { constructor(cap = 160) { this.d = new Float32Array(cap * 8); this.n = 0; this.cap = cap; this.on = 1; } }
 const kit = {
-  THREE, K: { FLAME: 0, SMOKE: 1, SPARK: 2, GLOW: 3, EMBER: 4, DROP: 5 }, S: { GLOW: 0, FIREBALL: 1, PLASMA: 2, RING: 3, SWIRL: 4, FLARE: 5, GHOST: 6, WATER: 7, CRESCENT: 8 },
+  THREE, K: { FLAME: 0, SMOKE: 1, SPARK: 2, GLOW: 3, EMBER: 4, DROP: 5, LEAF: 6 }, S: { GLOW: 0, FIREBALL: 1, PLASMA: 2, RING: 3, SWIRL: 4, FLARE: 5, GHOST: 6, WATER: 7, CRESCENT: 8, VORTEX: 9, COLUMN: 10 },
   COL: new Proxy({}, { get: () => [1, 1, 1] }), TAU: Math.PI * 2, Q: 1, R, RS: s => (R() * 2 - 1) * s, V,
-  emit: (...a) => { assert.ok(a.slice(0, 11).every(Number.isFinite), 'emit: finite numbers'); drawn++; },
-  spr: (k, p, sx, sy) => { assert.ok(Number.isFinite(p.x + p.y + p.z + sx + sy), 'spr: finite'); drawn++; },
-  sprFloor: () => { drawn++; }, seg: (...a) => { assert.ok(a.slice(0, 8).every(Number.isFinite), 'seg: finite'); drawn++; }, segV: () => { drawn++; },
+  emit: (...a) => { assert.ok(a.slice(0, 11).every(Number.isFinite), 'emit: finite numbers'); drawn++; kinds.add('K' + a[12]); },
+  spr: (k, p, sx, sy) => { assert.ok(Number.isFinite(p.x + p.y + p.z + sx + sy), 'spr: finite'); drawn++; kinds.add('S' + k); },
+  sprFloor: k => { drawn++; kinds.add('S' + k); }, seg: (...a) => { assert.ok(a.slice(0, 8).every(Number.isFinite), 'seg: finite'); drawn++; }, segV: () => { drawn++; },
   Bolt, gen: () => {}, drawBolt: () => {}, runit: (o = u3) => { const z = R() * 2 - 1, t = R() * 6.28, r = Math.sqrt(1 - z * z); o[0] = r * Math.cos(t); o[1] = z; o[2] = r * Math.sin(t); return o; }, u3,
   take: (st, k, n) => { const v = (st.acc[k] ?? 0) + n, f = Math.floor(v); st.acc[k] = v - f; return f; },
   flick: () => 1, sc: (k, a, b) => Math.min(1, Math.max(0, (k - a) / (b - a))), shake: () => {},
@@ -47,8 +47,9 @@ const kit = {
 };
 const style = createSmashStyle(kit);
 const dt = 1 / 60;
-const runLive = () => { for (let f = 0; f < 150 && live.length; f++) { time += dt; for (let i = live.length - 1; i >= 0; i--) { const e = live[i]; e.dt = dt; if (!e.update(e, dt)) live.splice(i, 1); e.age += dt; } } };
+const runLive = () => { for (let f = 0; f < 240 && live.length; f++) { time += dt; for (let i = live.length - 1; i >= 0; i--) { const e = live[i]; e.dt = dt; if (!e.update(e, dt)) live.splice(i, 1); e.age += dt; } } };
 for (const el of NEW) {
+  kinds.clear();
   for (const tier of ['s', 'm', 'l']) for (const how of ['hit', 'floor', 'timeout']) {
     const s = { el, tier, pos: new THREE.Vector3(-1.5, 1.2, 0), prev: new THREE.Vector3(-1.5, 1.2, 0), from: V(), dir: new THREE.Vector3(1, 0, 0), power: .6, big: 1, scale: 1, age: 0, travel: 0, acc: {}, regen: 0, seed: .3, bolts: [] };
     drawn = 0;
@@ -60,6 +61,9 @@ for (const el of NEW) {
     runLive();
     assert.ok(drawn > 20, `${el} ${tier} ${how} landing draws`);
   }
+  // the signature layers: water rises from a whirlpool as a column, wind spins a funnel and throws leaves
+  for (const k of el === 'water' ? ['S9', 'S10', 'K5'] : ['S10', 'S8', 'K6']) assert.ok(kinds.has(k), `${el} landings draw ${k}`);
+  assert.equal(live.length, 0, `${el} landing effects end`);
   // charge (tip), aura (stick + body + magic circle), guard and block
   const c = { el, tip: new THREE.Vector3(0, 1.4, 0), v: 0, acc: {}, regen: 0, seed: .4, bolts: Array.from({ length: 10 }, () => new Bolt(96)), opt: {} };
   const a = { el, base: V(), tip: new THREE.Vector3(.4, 1.4, 0), v: 1, acc: {}, regen: 0, seed: .5, bolts: Array.from({ length: 10 }, () => new Bolt(96)) };
