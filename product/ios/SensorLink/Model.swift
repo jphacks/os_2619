@@ -1,4 +1,5 @@
 import ARKit
+import AVFoundation
 import CoreImage
 import SwiftUI
 import UIKit
@@ -45,6 +46,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     private var tagInfo = "no frame yet"
     private var lastImgTs = 0.0
     private var lastPreview = 0.0
+    private var torchText = "torch: -" // result of the last Flash test
 
     private static let imageFps = 30.0 // tag detection rate (camera max); the AR pose is sent every frame
 
@@ -180,6 +182,35 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
 
     // MARK: UI actions (main thread)
 
+    /// Test for the hit flash: light the torch for 3 s while ARKit runs and report whether it stayed on and what the tag reader did meanwhile.
+    func flashTest() {
+        guard let dev = AVCaptureDevice.default(for: .video), dev.hasTorch else { setTorch("torch: no torch on this device"); return }
+        do {
+            try dev.lockForConfiguration()
+            try dev.setTorchModeOn(level: 1.0)
+            dev.unlockForConfiguration()
+        } catch { setTorch("torch: on failed (\(error.localizedDescription))"); return }
+        lock.lock(); let before = tagW.hz; let tagsBefore = lastTags; lock.unlock()
+        showToast("torch on for 3 s")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+            self.setTorch("torch: after 0.5 s \(dev.torchMode == .on ? "STILL ON" : "TURNED OFF by the system")")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self = self else { return }
+            self.lock.lock(); let now = self.tagW.hz; let tags = self.lastTags; self.lock.unlock()
+            self.setTorch(String(format: "torch: at 2.5 s %@, tag Hz %.0f (before %.0f), tags now %d (before %d), AR: %@",
+                                 dev.torchMode == .on ? "on" : "OFF", now, before, tags.count, tagsBefore.count, self.session.currentFrame?.camera.trackingState.description ?? "?"))
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            if (try? dev.lockForConfiguration()) != nil { dev.torchMode = .off; dev.unlockForConfiguration() }
+        }
+    }
+
+    private func setTorch(_ s: String) {
+        lock.lock(); torchText = s; lock.unlock()
+    }
+
     func calibrate() {
         imu.calibrate()
         lock.lock()
@@ -231,6 +262,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         let ar = arError ?? arText
         let tags = lastTags
         let info = tagInfo
+        let torch = torchText
         lock.unlock()
         var imuLine = "IMU: \(imu.status)"
         if let l = imu.last { imuLine += String(format: "  %.0f Hz  r %.0f p %.0f y %.0f", imu.hz, l.euler[0], l.euler[1], l.euler[2]) }
@@ -241,6 +273,17 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
             String(format: "Hz  cam %.0f  tag %.0f", convertW.hz, tagW.hz),
             "tags: " + tags.map(String.init).joined(separator: ", "),
             info,
+            torch,
         ]
+    }
+}
+
+private extension ARCamera.TrackingState {
+    var description: String {
+        switch self {
+        case .normal: return "normal"
+        case .notAvailable: return "n/a"
+        case .limited(let r): return "limited(\(r))"
+        }
     }
 }
