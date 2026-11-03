@@ -1,9 +1,7 @@
 package jp.jphacks.sensorlink
 
-import android.graphics.Bitmap
 import org.json.JSONArray
 import org.json.JSONObject
-import org.opencv.android.Utils
 import org.opencv.calib3d.Calib3d
 import org.opencv.core.CvType
 import org.opencv.core.Mat
@@ -17,8 +15,8 @@ import org.opencv.objdetect.DetectorParameters
 import org.opencv.objdetect.Objdetect
 import kotlin.math.round
 
-/** One upright camera frame. Intrinsics are in pixels of [bmp]. [t] is capture time on the PC clock (s). */
-class Frame(val bmp: Bitmap, val t: Double, val fx: Double, val fy: Double, val cx: Double, val cy: Double)
+/** One upright grey camera frame (the camera's Y plane, as on iOS). Intrinsics are in pixels of [gray]. [t] is capture time on the PC clock (s). */
+class Frame(val gray: ByteArray, val width: Int, val height: Int, val t: Double, val fx: Double, val fy: Double, val cx: Double, val cy: Double)
 
 fun r4(x: Double) = round(x * 1e4) / 1e4
 fun r4(x: Float) = r4(x.toDouble())
@@ -33,16 +31,14 @@ class TagDetector {
         Objdetect.getPredefinedDictionary(Objdetect.DICT_APRILTAG_36h11),
         DetectorParameters().apply { set_cornerRefinementMethod(Objdetect.CORNER_REFINE_SUBPIX) },
     )
-    private val rgba = Mat()
     private val gray = Mat()
 
     fun detect(f: Frame, rune: Boolean = false): JSONArray {
-        Utils.bitmapToMat(f.bmp, rgba)
-        Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+        gray.create(f.height, f.width, CvType.CV_8UC1)
+        gray.put(0, 0, f.gray)
         val found = ArrayList<Pair<Int, FloatArray>>() // id, corners (x, y) x 4 in OpenCV order
         if (rune) {
-            val g = ByteArray(gray.cols() * gray.rows()).also { gray.get(0, 0, it) }
-            for (m in Rune.detect(g, gray.cols(), gray.rows())) found.add(m.id to FloatArray(8) { m.corners[it].toFloat() })
+            for (m in Rune.detect(f.gray, f.width, f.height)) found.add(m.id to FloatArray(8) { m.corners[it].toFloat() })
         }
         val corners = ArrayList<Mat>()
         val ids = Mat()
@@ -62,7 +58,7 @@ class TagDetector {
             val ok = Calib3d.solvePnP(obj, MatOfPoint2f(*Array(4) { org.opencv.core.Point(c[2 * it].toDouble(), c[2 * it + 1].toDouble()) }),
                 k, MatOfDouble(), rvec, tvec, false, Calib3d.SOLVEPNP_IPPE_SQUARE)
             val tag = JSONObject().put("id", id).put("sz", size)
-                .put("c", JSONArray().apply { for (j in 0 until 4) put(JSONArray().put(r4(c[2 * j] / f.bmp.width)).put(r4(c[2 * j + 1] / f.bmp.height))) })
+                .put("c", JSONArray().apply { for (j in 0 until 4) put(JSONArray().put(r4(c[2 * j] / f.width)).put(r4(c[2 * j + 1] / f.height))) })
             if (ok) {
                 tag.put("p", JSONArray().put(r4(tvec.get(0, 0)[0])).put(r4(tvec.get(1, 0)[0])).put(r4(tvec.get(2, 0)[0])))
                 tag.put("r", JSONArray().put(r4(rvec.get(0, 0)[0])).put(r4(rvec.get(1, 0)[0])).put(r4(rvec.get(2, 0)[0])))
