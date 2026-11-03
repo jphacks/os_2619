@@ -44,13 +44,23 @@ object Rune {
     private fun slotPos(k: Int, j: Int): DoubleArray { val a = -j * STEP; return doubleArrayOf(RINGS[k] * cos(a), RINGS[k] * sin(a)) }
     private fun bit(id: Int, j: Int, k: Int) = CODES[id][j] shr k and 1
 
+    /** ROT[id][r][k]: ring k of code id as a 43-bit word, turned so that bit j is the code's sector (j + r) % S.
+     *  Comparing a read with a code is then a popcount per ring instead of 129 single-bit tests. */
+    private val ROT: Array<Array<LongArray>> = Array(CODES.size) { id ->
+        Array(S) { r -> LongArray(K) { k -> var m = 0L; for (j in 0 until S) if (bit(id, (j + r) % S, k) == 1) m = m or (1L shl j); m } }
+    }
+
     fun detect(g: ByteArray, w: Int, h: Int, ids: IntRange = IDS): List<Found> {
         val found = HashMap<Int, Found>()
-        for (rad in intArrayOf(max(4, (min(w, h) / 40.0).roundToInt()), (min(w, h) / 10.0).roundToInt())) {
-            for (m in pass(blobs(g, w, h, rad), w, h, ids)) {
-                val o = found[m.id]
-                if (o == null || m.n - 2 * m.err > o.n - 2 * o.err) found[m.id] = m
-            }
+        val rads = intArrayOf(max(4, (min(w, h) / 40.0).roundToInt()), (min(w, h) / 10.0).roundToInt())
+        // the two blob sizes are independent: read the second on another core, then merge in the same order as one after the other
+        var second: List<Found> = emptyList(); var fail: Throwable? = null
+        val th = Thread { try { second = pass(blobs(g, w, h, rads[1]), w, h, ids) } catch (e: Throwable) { fail = e } }.also { it.start() }
+        val first = pass(blobs(g, w, h, rads[0]), w, h, ids)
+        th.join(); fail?.let { throw it }
+        for (fs in listOf(first, second)) for (m in fs) {
+            val o = found[m.id]
+            if (o == null || m.n - 2 * m.err > o.n - 2 * o.err) found[m.id] = m
         }
         return found.values.toList()
     }
@@ -173,9 +183,13 @@ object Rune {
                 hm = homography(read.hits.map { slotPos(it.k, it.j) }, read.hits.map { doubleArrayOf(b[it.i].x, b[it.i].y) }) ?: break
             }
             if (read == null || read.known < 30) continue
+            // the read as one 43-bit word per ring: which sectors were seen, and which of those hold a dot
+            val seen = LongArray(K); val dots = LongArray(K)
+            for (kk in 0 until K) for (jj in 0 until S) { val v = read.bits[kk * S + jj]; if (v >= 0) seen[kk] = seen[kk] or (1L shl jj); if (v == 1) dots[kk] = dots[kk] or (1L shl jj) }
             for (id in ids) for (rr in 0 until S) { // observed sector jj is the code's sector jj + rr
+                val word = ROT[id][rr]
                 var err = 0
-                for (jj in 0 until S) for (kk in 0 until K) { val v = read.bits[kk * S + jj]; if (v >= 0 && v != bit(id, (jj + rr) % S, kk)) err++ }
+                for (kk in 0 until K) err += java.lang.Long.bitCount((dots[kk] xor word[kk]) and seen[kk])
                 if (err < bestErr) { second = min(second, bestErr); bestErr = err; bestId = id; bestR = rr; bestRead = read }
                 else if (err < second) second = err
             }
