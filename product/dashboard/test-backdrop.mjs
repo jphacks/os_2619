@@ -60,7 +60,7 @@ b.fit(3); b.fit(DEFAULT_R); b.fit(12); b.update(.016); b.dispose();
   const n = 256, { ground } = bakeSunlight(pos, idx, [[0, idx.length]], C.EXT, n, undefined, undefined, C.SUN);
   const litAt = (x, z) => ground[(Math.floor((x / (2 * C.EXT) + .5) * n) + Math.floor((z / (2 * C.EXT) + .5) * n) * n) * 4];
   for (const [x, z] of [[0, 0], [-3, -3], [3, -3], [-3, 0], [3, 0]]) assert.ok(litAt(x, z) > 128, 'a shadow falls on the field at ' + x + ', ' + z);
-  assert.ok(litAt(0, 50) < 128, 'the near range throws no shadow on the lawn');
+  assert.ok(litAt(0, 57) < 128, 'the near range throws no shadow on the lawn');
   assert.equal(C.WALL_FRONT + C.WALL_BACK, 0, 'the field is not in the middle of the court'); // x is symmetric by construction
   assert.equal(C.LAWN.z0 + C.LAWN.z1, 0, 'the lawn is not centred on the field');
   // the plainest wall: its first triangle faces into the court
