@@ -243,7 +243,8 @@ playable.mountControl($('#playGame'));
 const finalControls = createFinalControls({ bar: finalBar, stage, game, vsrc, cfg, save, scan, fullscreen, playable, vision });
 function fullscreen() { const box = $('#finalBox'); document.fullscreenElement ? document.exitFullscreen() : box.requestFullscreen?.().then(() => setTimeout(stage.resize, 100)); }
 document.addEventListener('fullscreenchange', () => setTimeout(stage.resize, 50));
-async function scan() { game.command({ cmd: 'phase', phase: 'setup' }); vsrc.dummy?.showPlayers(false); await stage.scan(); vsrc.dummy?.showPlayers(true); }
+let dummyScanning = false; // a scan reads the dummy room's canvas: it has to be current, also on screen 3
+async function scan() { game.command({ cmd: 'phase', phase: 'setup' }); dummyScanning = true; vsrc.dummy?.showPlayers(false); try { await stage.scan(); } finally { vsrc.dummy?.showPlayers(true); dummyScanning = false; } }
 
 // ---- settings drawer ----
 const drawer = $('#settings');
@@ -441,7 +442,7 @@ function applyMimic(on) {
 }
 
 // ---- main loop ----
-let last = performance.now() / 1000, fps = 60, lastSlow = 0, est = PA.estimate(nowS());
+let last = performance.now() / 1000, fps = 60, lastSlow = 0, est = PA.estimate(nowS()), dummyDrawnAt = -1e9;
 function frame(ts) {
   requestAnimationFrame(frame);
   if (ts && ts - (frame.at ?? -1e9) < 1000 / 60 - 2) return; // 120 Hz screens: no visible gain for twice the work
@@ -450,7 +451,11 @@ function frame(ts) {
   fps = .95 * fps + .05 / Math.max(raw, 1e-3);
   try { est = PA.estimate(nowS()); } catch (e) { console.warn('phonealign', e); }
   playable.step(dt, t);
-  vsrc.dummy?.render(t); // the picture and game placement consume this exact same pose snapshot
+  // The picture and game placement consume this exact same pose snapshot. Screen 3 does not show the picture, so it is drawn once a second there:
+  // enough to keep the video stream alive, and a full 1080p room with soft shadows every frame is what made the dummy heavy on a laptop GPU.
+  const dummyPicture = screen !== 'game' || !!cfg.mimic || dummyScanning || t - dummyDrawnAt >= 1;
+  if (dummyPicture) dummyDrawnAt = t;
+  vsrc.dummy?.render(t, dummyPicture);
   game.step(dt, raw, est, { sensorOnly: screen === 'final' });
   if (screen === 'final') finalControls.step(t);
   // MediaPipe runs for the avatars (pose only) and/or the final screen's layers (also the masks and the stick search)
