@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import * as W from './world.js';
 import { tagCanvas } from './dummycam.js';
+import { createBackdrop, SAND_GLSL, SUN_DIR } from './backdrop.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
@@ -73,8 +74,9 @@ varying vec2 vP;
 void main() { vec4 w = modelMatrix * vec4(position, 1.); vP = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const FLOOR_FS = `
 uniform float uTime, uR; uniform vec2 uX; uniform vec2 uPoly[${MAXP}]; uniform int uN;
-uniform vec4 uP[2]; uniform vec3 uCA, uCB; uniform vec2 uSA, uSB;
+uniform vec4 uP[2]; uniform vec3 uCA, uCB; uniform vec2 uSA, uSB; uniform float uRock;
 varying vec2 vP;
+${SAND_GLSL}
 float aline(float d, float px) { return 1. - smoothstep(.5 * px, 1.5 * px, d); } // ~1.5 px wide line at distance d (px units)
 float gridAt(vec2 p, float s) { vec2 q = p / s, g = abs(fract(q - .5) - .5) / fwidth(q); return 1. - min(min(g.x, g.y) / 1.2, 1.); }
 float ring(vec2 p, vec2 c, float r, float w) { float d = abs(length(p - c) - r); return 1. - smoothstep(w * .5, w * .5 + fwidth(d) * 1.5, d); }
@@ -97,6 +99,32 @@ void main() {
   c += inside * vec3(.035, .04, .06) * exp(-r * r / 5.);                                           // soft centre spot
   c += mix(vec3(.04, .05, .08), vec3(.10, .12, .17), inside) * gridAt(p, .5) * (inside > .5 ? 1. : exp(-d * .8));
   c += inside * vec3(.07, .08, .11) * gridAt(p, 1.);
+  if (uRock > .5) { // the canyon: the same sand as the ground outside, the lines below are painted on it
+    c = sandColor(p);
+    float lines = 1. - smoothstep(.1, .15, abs(d));
+    c *= 1. - .5 * lines; // a dark edge, so a team colour reads on the orange stone
+    float wide = 1. - smoothstep(.055, .055 + fwidth(d) * 1.5, abs(d));
+    c = mix(c, team, wide);
+    float dash = step(.45, fract(p.y * 2.5 + uTime * .3));
+    c = mix(c, vec3(.97, .93, .84), inside * aline(abs(p.x) / fwidth(p.x), 1.4) * dash * .8);
+    c = mix(c, vec3(.97, .93, .84), inside * ring(p, vec2(0.), .6, .02) * .7);
+    c = mix(c, uCA, ring(p, uSA, .32, .03) * .9);
+    c = mix(c, uCB, ring(p, uSB, .32, .03) * .9);
+    for (int i = 0; i < 2; i++) {
+      vec4 P = uP[i]; if (P.w <= 0.) continue;
+      vec3 tc = i == 0 ? uCA : uCB;
+      vec2 q = p - P.xy; float dq = length(q);
+      // the body's shadow along the ground, sharp as the sun makes it, on top of a soft contact shadow
+      vec2 sd = -normalize(uSun.xz); float L = 1.7 * length(uSun.xz) / uSun.y, t = clamp(dot(q, sd), 0., L), wd = mix(.19, .11, t / L);
+      float body = 1. - smoothstep(wd - .03, wd + .03, length(q - sd * t));
+      c *= mix(vec3(1.), vec3(.42, .45, .60), body * P.w);
+      c *= 1. - .5 * exp(-dq * dq / .03) * P.w;
+      float a = fract(atan(q.x, -q.y) / 6.2831853 + .5);
+      c = mix(c, mix(c * .55, tc, step(a, P.z)), ring(p, P.xy, .46, .035) * P.w);
+    }
+    gl_FragColor = vec4(c, 1. - smoothstep(uR + 1.4, uR + 5.7, r));
+    return;
+  }
   // boundary: a line painted on the floor, 6 cm wide (no wall, no posts)
   c += team * (1. - smoothstep(.03, .03 + fwidth(d) * 1.5, abs(d)));
   // centre line (dashed, x = 0 runs across the field between the A and B halves) and circle
@@ -492,12 +520,16 @@ export function createField(scene, opts = {}) {
     uCA: { value: new THREE.Color(TEAM.A) }, uCB: { value: new THREE.Color(TEAM.B) },
     uSA: { value: new THREE.Vector2() }, uSB: { value: new THREE.Vector2() },
     uP: { value: [new THREE.Vector4(), new THREE.Vector4()] },
+    uRock: { value: 1 },
   };
+  const backdrop = createBackdrop();
+  const { uTime: _skyTime, ...sandUniforms } = backdrop.uniforms; // the floor keeps its own clock
+  Object.assign(uniforms, sandUniforms);
   const floor = makeFloor(uniforms);
   const debug = new THREE.Group(); debug.visible = false;
   debug.add(new THREE.AxesHelper(.6));
-  group.add(floor, debug);
-  let arena = null, debugArena = null, sig = NaN;
+  group.add(backdrop.group, floor, debug);
+  let arena = null, debugArena = null, tags = null, letters = [], sig = NaN, showTags = false;
   function rebuild() {
     sig = fieldSig();
     const P = W.FIELD.poly.length > MAXP ? W.FIELD.poly.slice(0, MAXP) : W.FIELD.poly, e = fieldExtent(P);
@@ -505,17 +537,19 @@ export function createField(scene, opts = {}) {
     uniforms.uR.value = e.R; uniforms.uX.value.set(e.minX, e.maxX);
     uniforms.uSA.value.set(W.START.A.pos[0], W.START.A.pos[2]); uniforms.uSB.value.set(W.START.B.pos[0], W.START.B.pos[2]);
     floor.scale.set(2 * (e.R + 6), 2 * (e.R + 6), 1);
+    backdrop.fit(e.R);
     if (arena) { group.remove(arena); disposeTree(arena); debug.remove(debugArena); disposeTree(debugArena); }
     arena = new THREE.Group(); debugArena = new THREE.Group();
-    arena.add(floorText('A', css(TEAM.A), W.START.A.pos[0], W.START.A.pos[2] + .66), floorText('B', css(TEAM.B), W.START.B.pos[0], W.START.B.pos[2] + .66));
-    arena.add(makeTags(debugArena));
+    letters = [floorText('A', css(TEAM.A), W.START.A.pos[0], W.START.A.pos[2] + .66), floorText('B', css(TEAM.B), W.START.B.pos[0], W.START.B.pos[2] + .66)];
+    arena.add(...letters);
+    tags = makeTags(debugArena); tags.visible = showTags; arena.add(tags);
     for (const [t, x, z, c] of [['+x', e.maxX + .35, 0, '#ff6b6b'], ['+z', 0, e.maxZ + .35, '#6b9bff']]) { const l = label(t, c, .16); l.position.set(x, .12, z); debugArena.add(l); }
     group.add(arena); debug.add(debugArena);
   }
   rebuild();
 
   // lights (only lit materials here use them; they switch off with the group)
-  group.add(new THREE.HemisphereLight(0xa8c0ff, 0x1a1622, 1.6));
+  const hemi = new THREE.HemisphereLight(0xa8c0ff, 0x1a1622, 1.6); group.add(hemi);
   const key = new THREE.DirectionalLight(0xfff2e0, 2.2); key.position.set(2, 6, 4); group.add(key, key.target);
   const rim = new THREE.DirectionalLight(0x8fb8ff, 1.4); rim.position.set(-3, 3, -5); group.add(rim, rim.target);
 
@@ -534,14 +568,24 @@ export function createField(scene, opts = {}) {
     group, background, rebuild,
     update(dt, players = {}) {
       if (fieldSig() !== sig) rebuild();
-      uniforms.uTime.value += dt;
+      uniforms.uTime.value += dt; backdrop.update(dt);
       ['A', 'B'].forEach((s, i) => {
         const r = avatars[s].update(dt, players[s]);
         uniforms.uP.value[i].set(r?.x ?? 0, r?.z ?? 0, r?.hp ?? 0, r ? r.vis : 0);
       });
     },
     setLayoutDebug(on) { debug.visible = on; for (const a of Object.values(avatars)) a.ax.visible = on; },
-    dispose() { scene.remove(group); disposeTree(group); background.dispose(); },
+    /** rock: the canyon (backdrop.js), else the plain dark arena. The tag boards stand in the plain arena, and in the canyon only with `debug`. */
+    setLook(rock, debug = false) {
+      backdrop.group.visible = rock; uniforms.uRock.value = rock ? 1 : 0;
+      // in the canyon the avatars stand in the same sun: from its direction, blue from above, the bright sand from below
+      hemi.color.set(rock ? 0xbcd8ff : 0xa8c0ff); hemi.groundColor.set(rock ? 0xb87a52 : 0x1a1622); hemi.intensity = rock ? 1.5 : 1.6;
+      if (rock) key.position.copy(SUN_DIR).multiplyScalar(10); else key.position.set(2, 6, 4);
+      key.intensity = rock ? 3.2 : 2.2;
+      showTags = !rock || debug; if (tags) tags.visible = showTags;
+      for (const l of letters) l.material.opacity = rock ? .95 : .55; // the gravel is busier than the plain floor
+    },
+    dispose() { scene.remove(group); disposeTree(group); backdrop.dispose(); background.dispose(); },
   };
 }
 

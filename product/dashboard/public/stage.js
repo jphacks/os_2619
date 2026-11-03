@@ -271,6 +271,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     world3d.visible = S.mode === 'game' && cfg.debug;
 
     renderer.setScissorTest(false);
+    field.setLook(cfg.backdrop !== 'plain', !!cfg.debug);
     if (S.mode === 'game') {
       canvas.style.transform = '';
       drawGuide2d(false);
