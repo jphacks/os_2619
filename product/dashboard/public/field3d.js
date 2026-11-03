@@ -12,7 +12,10 @@ import { makeRobe } from './robe.js';
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
 const m4 = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
-export const TEAM = { A: 0xff7a1a, B: 0x2f8bff };
+export const TEAM = { A: 0xff6600, B: 0x0078ff };
+const GAME_FONT = `'Barlow Condensed', 'Dela Gothic One', sans-serif`; // index.html's @font-face; canvases that drew before it had loaded draw again (fontsReady)
+const fontsReady = (f, text = 'A1') => document.fonts?.load?.(`italic 800 20px ${GAME_FONT}`, text).then(f).catch(() => {});
+const INK = '#fdfdff', INK_EDGE = '#000'; // index.html's game lettering
 const css = c => '#' + c.toString(16).padStart(6, '0');
 const UP = V(0, 1, 0);
 
@@ -161,8 +164,8 @@ function makeFloor(uniforms) { // unit quad, scaled to the field on rebuild
   floor.rotation.x = -Math.PI / 2; floor.renderOrder = -1;
   return floor;
 }
-function floorText(text, color, x, z) { // big flat letter on the floor, upright seen from +z
-  const tex = canvasTex(128, 128, (g, w, h) => { g.font = '900 100px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = color; g.fillText(text, w / 2, h / 2 + 6); });
+function floorText(text, x, z) { // big flat letter on the floor, upright seen from +z
+  const tex = canvasTex(128, 128, (g, w, h) => { g.font = `italic 800 100px ${GAME_FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = INK; g.shadowColor = INK_EDGE; g.shadowOffsetX = g.shadowOffsetY = 5; g.fillText(text, w / 2, h / 2 + 6); });
   const m = new THREE.Mesh(new THREE.PlaneGeometry(.5, .5), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: .55, depthWrite: false }));
   m.rotation.x = -Math.PI / 2; m.position.set(x, .004, z);
   return m;
@@ -329,14 +332,15 @@ function makeAvatar(slot) {
   hpSprite.scale.set(1.4, 1.4 * 104 / 320, 1); hpSprite.center.set(.5, -.15); world.add(hpSprite); // anchored below: stays above the head on screen from any angle
   const facing = V(1, 0, 0); limitSprite(hpSprite, { facing, maxFrac: .18 });
   let hpKey = '';
+  fontsReady(() => { hpKey = ''; }, 'OFFLINE 100');
   function drawHp(hp, online, charge, value = hp) { // a thick bar, the slot and HP above it. hp: 0..100 (bar length), value: the HP number shown
     const key = `${Math.ceil(hp)}|${Math.ceil(value)}|${online}|${Math.round(charge * 10)}`; if (key === hpKey) return; hpKey = key;
     const g = hpCtx, w = 320, h = 104, c = online ? css(color) : '#7a7f8a', bx = 12, bw = w - 24, by = 46, bh = 34;
     g.clearRect(0, 0, w, h);
-    g.font = '700 34px system-ui, sans-serif'; g.textBaseline = 'alphabetic'; g.shadowColor = '#000'; g.shadowBlur = 6;
-    g.textAlign = 'left'; g.fillStyle = c; g.fillText(slot, bx, by - 10);
-    g.textAlign = 'right'; g.fillStyle = '#d8dbe2'; g.fillText(!online ? 'OFFLINE' : hp <= 0 ? 'KO' : String(Math.ceil(value)), bx + bw, by - 10);
-    g.shadowBlur = 0;
+    g.font = `italic 800 36px ${GAME_FONT}`; g.textBaseline = 'alphabetic'; g.shadowColor = INK_EDGE; g.shadowOffsetX = g.shadowOffsetY = 3; g.fillStyle = INK;
+    g.textAlign = 'left'; g.fillText(slot, bx, by - 10);
+    g.textAlign = 'right'; g.fillText(!online ? 'OFFLINE' : hp <= 0 ? 'KO' : String(Math.ceil(value)), bx + bw, by - 10);
+    g.shadowColor = 'transparent';
     g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(bx - 3, by - 3, bw + 6, bh + 6);
     g.fillStyle = 'rgba(255,255,255,.18)'; g.fillRect(bx, by, bw, bh);
     if (online) {
@@ -557,13 +561,14 @@ export function createField(scene, opts = {}) {
     fieldR = e.R; for (const b of Object.values(built)) b.fit(e.R);
     if (arena) { group.remove(arena); disposeTree(arena); debug.remove(debugArena); disposeTree(debugArena); }
     arena = new THREE.Group(); debugArena = new THREE.Group();
-    letters = [floorText('A', css(TEAM.A), W.START.A.pos[0], W.START.A.pos[2] + .66), floorText('B', css(TEAM.B), W.START.B.pos[0], W.START.B.pos[2] + .66)];
+    letters = [floorText('A', W.START.A.pos[0], W.START.A.pos[2] + .66), floorText('B', W.START.B.pos[0], W.START.B.pos[2] + .66)];
     arena.add(...letters);
     tags = makeTags(debugArena); tags.visible = showTags; arena.add(tags);
     for (const [t, x, z, c] of [['+x', e.maxX + .35, 0, '#ff6b6b'], ['+z', 0, e.maxZ + .35, '#6b9bff']]) { const l = label(t, c, .16); l.position.set(x, .12, z); debugArena.add(l); }
     group.add(arena); debug.add(debugArena);
   }
   rebuild();
+  fontsReady(rebuild, 'AB'); // the floor's letters
 
   // lights (only lit materials here use them; they switch off with the group)
   const hemi = new THREE.HemisphereLight(0xa8c0ff, 0x1a1622, 1.6); group.add(hemi);
@@ -619,6 +624,7 @@ export function createField(scene, opts = {}) {
 export function createMinimap(canvas) {
   const g = canvas.getContext('2d'), bg = document.createElement('canvas'), b = bg.getContext('2d');
   let key = '', sig = NaN, k = 1, ox = 0, oz = 0, u = 1;
+  fontsReady(() => { key = ''; }, 'ID0123AB');
   const P = (x, z) => [ox + x * k, oz + z * k];
   function drawStatic(w, h) {
     bg.width = w; bg.height = h; sig = fieldSig(); key = w + 'x' + h;
@@ -648,7 +654,7 @@ export function createMinimap(canvas) {
     for (const s of ['A', 'B']) { b.strokeStyle = css(TEAM[s]); b.globalAlpha = .55; b.lineWidth = 1 * u; b.beginPath(); b.arc(...P(W.START[s].pos[0], W.START[s].pos[2]), .32 * k, 0, 7); b.stroke(); b.globalAlpha = 1; }
     // tags: floor sheets as small turned squares with a tick on the top edge (tag +y), standing ones as a bar along
     // the tag's x axis; id outside, away from the centre
-    b.font = `700 ${11 * u}px system-ui, sans-serif`; b.textAlign = 'center'; b.textBaseline = 'middle';
+    b.font = `italic 800 ${12 * u}px ${GAME_FONT}`; b.textAlign = 'center'; b.textBaseline = 'middle';
     for (const id of ids) {
       const tp = W.worldTagPose(id), t = W.TAGS[id], ax = [tp.R[0], tp.R[6]], ay = [tp.R[1], tp.R[7]], cx = tp.t[0], cz = tp.t[2];
       if (t.floor) {
@@ -669,7 +675,7 @@ export function createMinimap(canvas) {
       const w = canvas.width, h = canvas.height;
       if (w !== bg.width || h !== bg.height || fieldSig() !== sig || !key) drawStatic(w, h);
       g.clearRect(0, 0, w, h); g.drawImage(bg, 0, 0);
-      g.font = `900 ${12 * u}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = `italic 800 ${13 * u}px ${GAME_FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
       // shots
       for (const sh of shots) {
         const [x, y] = P(sh.pos.x, sh.pos.z), c = sh.element === 'fire' ? '#ffb05a' : '#bfe6ff';

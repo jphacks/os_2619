@@ -321,11 +321,10 @@ addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k] && s
 
 // ---- per-frame UI ----
 function pill(id, state) { const p = $(id); p.classList.toggle('on', state === true); p.classList.toggle('half', state === 'half'); }
-const hudP = Object.fromEntries(['A', 'B'].map(s => { const el = hud.querySelector('.pl.' + s); return [s, { el, hp: el.querySelector('.hp i'), gauge: createGauge(el.querySelector('.gauge')), hpn: el.querySelector('.hpn'), act: el.querySelector('.act'), chips: Object.fromEntries([...el.querySelectorAll('.chips span')].map(c => [c.className.split(' ')[0], c])) }]; }));
+const hudP = Object.fromEntries(['A', 'B'].map(s => { const el = hud.querySelector('.pl.' + s); return [s, { el, hp: el.querySelector('.hp i'), gauge: createGauge(el.querySelector('.gauge')), hpn: el.querySelector('.hpn') }]; }));
 const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
 const setHtml = (el, h) => { if (el.innerHTML !== h) el.innerHTML = h; };
-// damage numbers: HUD text over the player's HP bar, pushed out to the side away from the opponent and up, so the hit's
-// effects (round the body, between the two) never cover it; drawn above the 3D, bigger for a bigger hit
+// damage numbers: HUD text at the inner end of the player's HP bar, so the hit's effects never cover it; bigger for a bigger hit
 const dmgLast = {}, dmgPops = [];
 function damagePops() {
   for (const p of Object.values(game.players)) {
@@ -336,14 +335,15 @@ function damagePops() {
     el.textContent = String(n); el.style.fontSize = Math.round(22 + 60 * k) + 'px';
     hud.append(el); dmgPops.push({ el, slot: p.slot, t0: performance.now() });
   }
-  // anchored on the game's own chest position (sensor data, steady) rather than the avatar's drawn HP bar; head height
-  const at = s => { const c = game.players[s]?.chest; return c && stage.project({ x: c.x, y: c.y + .7, z: c.z }); };
+  // on the player's own HP bar: over its inner end (77 % of the way from the outer end), resting on its top edge
+  const box = hud.getBoundingClientRect();
   for (let i = dmgPops.length - 1; i >= 0; i--) {
-    const d = dmgPops[i], t = (performance.now() - d.t0) / 1000, me = at(d.slot), foe = at(d.slot === 'A' ? 'B' : 'A');
-    if (t > 1.4 || !me) { d.el.remove(); dmgPops.splice(i, 1); continue; }
-    const out = foe ? Math.sign(me.x - foe.x) || (d.slot === 'A' ? -1 : 1) : d.slot === 'A' ? -1 : 1; // away from the opponent
+    const d = dmgPops[i], t = (performance.now() - d.t0) / 1000;
+    if (t > 1.4) { d.el.remove(); dmgPops.splice(i, 1); continue; }
+    const bar = hudP[d.slot].el.querySelector('.meter.hp').getBoundingClientRect(), along = d.slot === 'A' ? .77 : .23;
     const pop = t < .12 ? .6 + 3.3 * t : t < .25 ? 1.2 - 1.5 * (t - .12) : 1;
-    const half = d.el.offsetWidth / 2; d.el.style.left = Math.max(half + 8, Math.min(hud.clientWidth - half - 8, me.x + out * (half + 90))) + 'px'; // kept on screen d.el.style.top = Math.max(half / 2 + 70, Math.min(hud.clientHeight - 40, me.y - 30 - 50 * Math.min(1, t))) + 'px'; // never off screen or under the top HUD
+    d.el.style.left = bar.left - box.left + bar.width * along + 'px';
+    d.el.style.top = Math.max(d.el.offsetHeight / 2 + 2, bar.top - box.top - bar.height * .64 - 10 * Math.min(1, t)) + 'px'; // rises a little, never off the top
     d.el.style.transform = `translate(-50%, -50%) scale(${pop})`; d.el.style.opacity = Math.min(1, (1.4 - t) / .4);
   }
 }
@@ -353,16 +353,13 @@ function updateHud() {
   for (const p of Object.values(game.players)) {
     const h = hudP[p.slot];
     h.hp.style.width = 100 * p.hp / (p.hpMax || 100) + '%'; setText(h.hpn, String(Math.round(p.hp)));
+    h.hp.classList.toggle('low', p.hp / (p.hpMax || 100) <= .2);
     // the try-out button fills it as well, as far as a real charge of that length would (game.js effects())
     const { t1, t2 } = cfg.rules, pv = p.preview ? performance.now() / 1000 - p.preview : null, level = pv !== null ? Math.min(1, pv / t2) : p.charging ? p.charge : 0;
-    h.gauge.set(level, pv !== null ? (pv < t1 ? 's' : pv < t2 ? 'm' : 'l') : p.charging ? p.tier : null, Math.min(1, t1 / t2));
-    h.chips.off.classList.toggle('on', !p.online && !p.imu);
-    h.chips.charge.classList.toggle('on', p.charging);
-    setText(h.chips.charge, p.charging ? `溜め ${TIER_JA[p.tier] ?? '小'} ${p.chargeT.toFixed(1)}s` : '溜め中');
-    setText(h.act, game.actText(p));
+    h.gauge.set(level, pv !== null ? (pv < t1 ? 's' : pv < t2 ? 'm' : 'l') : p.charging ? p.tier : null);
   }
   const showTimer = m.phase === 'fight' || m.phase === 'result';
-  setText(hud.querySelector('.timer'), showTimer ? `${Math.floor(Math.ceil(m.left) / 60)}:${String(Math.ceil(m.left) % 60).padStart(2, '0')}` : '');
+  setText(hud.querySelector('.timer'), showTimer ? String(Math.ceil(m.left)) : '');
   const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : m.mode === 'demo' ? 'デモ試合（相手を狙って撃つ）' : '';
   setText(pp, pt); pp.style.display = pt ? '' : 'none';
   const bt = game.bannerText(), bn = hud.querySelector('.banner');

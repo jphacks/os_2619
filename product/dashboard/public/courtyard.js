@@ -126,18 +126,20 @@ function gateTower(f, c) { // the gate tower on the far range: the clock, the oc
 }
 function buildCourt() {
   const b = builder(), width = 2 * WALL_X, length = WALL_FRONT - WALL_BACK, mid = width / 2;
-  const back = range(b, -WALL_X, WALL_BACK, 0, 1, width, 7.2, { sill: 4.35, spring: 5.35, winW: 1.2, roof: false, skip: (i, n) => Math.abs(i + .5 - n / 2) < 1 });
-  gateTower(back, mid);
+  // the two ends of the court are the same range with the same corner towers; only the far one has the gate tower, in the gap left for it
+  const end = (ox, oz, nz, skip) => {
+    const f = range(b, ox, oz, 0, nz, width, 7.2, { sill: 4.35, spring: 5.35, winW: 1.2, roof: false, skip });
+    for (const c of [1.7, width - 1.7]) {
+      f.box(c - 1.8, c + 1.8, 0, 9, -1.6, 1.8, KIND.stone);
+      for (const s of [-1, 1]) for (const n of [-1.3, 1.5]) { f.box(c + s * 1.5 - .25, c + s * 1.5 + .25, 9, 9.9, n - .25, n + .25, KIND.trim); f.cone(c + s * 1.5, 9.9, n, .34, 1.8, KIND.trim); }
+      for (let x = c - 1.7; x < c + 1.6; x += .85) f.box(x, x + .5, 9, 9.45, 1.4, 1.8, KIND.trim);
+    }
+    return f;
+  };
+  gateTower(end(-WALL_X, WALL_BACK, 1, (i, n) => Math.abs(i + .5 - n / 2) < 1), mid);
+  end(WALL_X, WALL_FRONT, -1); // behind the camera
   range(b, -WALL_X, WALL_FRONT, 1, 0, length, 10.5, { spring: 7.5 }); // left of the view
   range(b, WALL_X, WALL_BACK, -1, 0, length, 10.5, { spring: 7.5 }); // right of the view
-  range(b, WALL_X, WALL_FRONT, 0, -1, width, 12, { spring: 8.6, winW: 1.9, roof: false }); // behind the camera
-  // the far corners rise as small towers
-  for (const u of [0, width]) {
-    const c = u === 0 ? 1.7 : width - 1.7;
-    back.box(c - 1.8, c + 1.8, 0, 9, -1.6, 1.8, KIND.stone);
-    for (const s of [-1, 1]) for (const n of [-1.3, 1.5]) { back.box(c + s * 1.5 - .25, c + s * 1.5 + .25, 9, 9.9, n - .25, n + .25, KIND.trim); back.cone(c + s * 1.5, 9.9, n, .34, 1.8, KIND.trim); }
-    for (let x = c - 1.7; x < c + 1.6; x += .85) back.box(x, x + .5, 9, 9.45, 1.4, 1.8, KIND.trim);
-  }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
   g.setAttribute('aK', new THREE.Float32BufferAttribute(b.kind, 1));
