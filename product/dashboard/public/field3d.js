@@ -12,7 +12,7 @@ import { makeRobe } from './robe.js';
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
 const m4 = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
-export const TEAM = { A: 0xff7a1a, B: 0x2f8bff };
+export const TEAM = { A: 0xff6600, B: 0x0078ff };
 const css = c => '#' + c.toString(16).padStart(6, '0');
 const UP = V(0, 1, 0);
 

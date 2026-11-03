@@ -353,9 +353,10 @@ function updateHud() {
   for (const p of Object.values(game.players)) {
     const h = hudP[p.slot];
     h.hp.style.width = 100 * p.hp / (p.hpMax || 100) + '%'; setText(h.hpn, String(Math.round(p.hp)));
+    h.hp.classList.toggle('low', p.hp / (p.hpMax || 100) <= .2);
     // the try-out button fills it as well, as far as a real charge of that length would (game.js effects())
     const { t1, t2 } = cfg.rules, pv = p.preview ? performance.now() / 1000 - p.preview : null, level = pv !== null ? Math.min(1, pv / t2) : p.charging ? p.charge : 0;
-    h.gauge.set(level, pv !== null ? (pv < t1 ? 's' : pv < t2 ? 'm' : 'l') : p.charging ? p.tier : null, Math.min(1, t1 / t2));
+    h.gauge.set(level, pv !== null ? (pv < t1 ? 's' : pv < t2 ? 'm' : 'l') : p.charging ? p.tier : null);
     h.chips.off.classList.toggle('on', !p.online && !p.imu);
     h.chips.charge.classList.toggle('on', p.charging);
     setText(h.chips.charge, p.charging ? `溜め ${TIER_JA[p.tier] ?? '小'} ${p.chargeT.toFixed(1)}s` : '溜め中');

@@ -1,4 +1,4 @@
-// What the avatars wear: a dark brown hooded monk's robe with a shoulder cape, wide sleeves, a white rope belt and a wooden cross.
+// What the avatars wear: a dark brown hooded monk's robe with a shoulder cape, wide sleeves and a white rope belt.
 // The cloth is rebuilt every frame from the rig's points (field3d.js), in the avatar's root frame (x forward, y up, z right; metres):
 // the hem opens with the feet, the sleeves follow the arms, the hood turns with the head. Only looks: the game knows nothing of it.
 import * as THREE from 'three';
@@ -56,7 +56,6 @@ export function makeRobe(root) {
   const cloth = new THREE.MeshStandardMaterial({ color: 0x2c1e12, roughness: .96, metalness: 0, side: THREE.DoubleSide });
   const capeCloth = new THREE.MeshStandardMaterial({ color: 0x281b10, roughness: .96, metalness: 0, side: THREE.DoubleSide });
   const rope = new THREE.MeshStandardMaterial({ color: 0xe9e2d0, roughness: .9, metalness: 0 });
-  const wood = new THREE.MeshStandardMaterial({ color: 0xc49a62, roughness: .7, metalness: 0 });
   const skin = new THREE.MeshStandardMaterial({ color: 0xc99d7e, roughness: .75, metalness: 0 });
   const shade = new THREE.MeshBasicMaterial({ color: 0x0b0806 });
   const robe = new THREE.Group(); robe.name = 'robe'; root.add(robe);
@@ -71,9 +70,6 @@ export function makeRobe(root) {
   hood.add(new THREE.Mesh(hoodGeometry(), Object.assign(cloth.clone(), { color: new THREE.Color(0x2e2013) })));
   const dark = new THREE.Mesh(new THREE.IcosahedronGeometry(.11, 3), shade); dark.position.set(-.002, -.008, 0); hood.add(dark); // the face stays in the hood's shadow
   const neck = grid(3, 12, cloth, robe), neckAt = [V(), V(), V()], neckDir = V(), headC = V();
-  const cross = new THREE.Group(); robe.add(cross);
-  const barV = new THREE.Mesh(new THREE.BoxGeometry(.02, .19, .03), wood), barH = new THREE.Mesh(new THREE.BoxGeometry(.02, .03, .12), wood); barH.position.y = .04;
-  cross.add(barV, barH);
 
   const rows = Array.from({ length: ROWS }, () => ({ c: V(), x: V(), z: V(), rx: 0, rz: 0, fold: 0 }));
   const side = V(), hipSide = V(), up = V(0, 1, 0), mid = V(), waist = V(), F = V(), K = V(), hipAt = V(), tmp = V();
@@ -147,15 +143,12 @@ export function makeRobe(root) {
     knots[0].position.copy(belts[0]); knots[0].scale.setScalar(.026 * k);
     knots[1].position.copy(cord[cord.length - 1]); knots[1].scale.setScalar(.02 * k);
     knots[2].position.copy(cord2[cord2.length - 1]); knots[2].scale.setScalar(.02 * k);
-    // the hood turns with the head; the cross hangs on the chest
+    // the hood turns with the head
     // the head stands on the shoulders' middle, with a neck between: half up the line of the spine (a bent body takes it along), half straight up
     neckDir.subVectors(mid, hipAt).normalize(); neckDir.y += 1; neckDir.normalize();
     headC.copy(mid).addScaledVector(neckDir, .165 * k);
     hood.position.copy(headC); hood.quaternion.copy(r.headQ); hood.scale.setScalar(k);
     neckAt[0].copy(mid).addScaledVector(neckDir, .02 * k); neckAt[1].copy(mid).addScaledVector(neckDir, .06 * k); neckAt[2].copy(headC).addScaledVector(neckDir, -.07 * k);
     tube(neck, neckAt, [.066 * k, .056 * k, .058 * k], 12);
-    const ch = rows[2];
-    cross.position.copy(ch.c).addScaledVector(ch.x, ch.rx + .012 * k); cross.position.y += .015 * k;
-    cross.quaternion.setFromUnitVectors(V(1, 0, 0), ch.x); cross.scale.setScalar(k);
   };
 }

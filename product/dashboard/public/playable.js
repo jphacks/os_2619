@@ -1,6 +1,6 @@
 // How each of A / B moves in the dummy room (screens 3 ゲーム / 4 最終映像):
 //   keyboard キーボード操作  arrows walk on the floor (camera-ish axes: → +x, ↑ −z); the slot's own key (A / B) held = charge,
-//                            released = fire; Space held = guard (game.command 'guard'). Only one slot on the keyboard at a time.
+//                            released = fire; Space held = guard (game.command 'guard'). Only one slot on the keyboard at a time: choosing it makes the other still.
 //   random   ランダム動作    the dummy room's own made-up motion (or fake-world, when it is sending), as before
 //   still    静止            stands where it was, facing the other player, stick held still in front
 // It only uses the existing contact points: the pose goes in through the dummy room's setTruth (the same path fake-world
@@ -28,11 +28,14 @@ export function createPlayable({ vsrc, game, cfg, save, isActive }) {
 
   function setMode(slot, mode) {
     if (!st[slot] || !CONTROL_JA[mode]) return;
-    if (mode === 'keyboard' && st[other(slot)].mode === 'keyboard') return; // one keyboard player at most
-    const s = st[slot];
-    if (s.charging) charge(slot, false);
-    if (s.guarding) guard(slot, false);
-    s.mode = mode; s.chest = null;
+    const put = (q, m) => {
+      const s = st[q];
+      if (s.charging) charge(q, false);
+      if (s.guarding) guard(q, false);
+      s.mode = m; s.chest = null;
+    };
+    if (mode === 'keyboard' && st[other(slot)].mode !== 'still') put(other(slot), 'still'); // one keyboard player at most: the other one stands still, ready to be hit
+    put(slot, mode);
     if (mode === 'keyboard' || keyboardSlot() === null) held.clear();
     cfg.control = { A: st.A.mode, B: st.B.mode }; delete cfg.playable; save?.();
     note();
@@ -97,8 +100,7 @@ export function createPlayable({ vsrc, game, cfg, save, isActive }) {
         for (const b of el.querySelectorAll('[data-control]')) {
           const s = b.dataset.s, m = b.dataset.control;
           b.classList.toggle('on', st[s].mode === m);
-          b.disabled = m === 'keyboard' && k !== null && k !== s; // the other one is already on the keyboard
-          b.title = b.disabled ? `${k} がキーボード操作中` : '';
+          b.title = m === 'keyboard' ? `${s} をキーボード操作にする（${other(s)} は静止になる）` : '';
         }
         hint.textContent = !vsrc.dummy && (k || SLOTS.some(s => st[s].mode === 'still')) ? 'ダミー映像（?dummy）のときだけ効く'
           : k ? `十字キーで ${k} を移動、${k}キー長押しで溜め・離して撃つ、スペース長押しでガード（試合中のみ）` : '';
