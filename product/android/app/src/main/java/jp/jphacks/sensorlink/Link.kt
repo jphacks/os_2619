@@ -32,7 +32,7 @@ class Link(private val id: String, private val name: String) {
     /** PC clock minus phone clock, in seconds (lowest-RTT ping wins). */
     @Volatile var offset = 0.0; private set
     @Volatile var rttMs = 0.0; private set
-    /** The floor sheets' marker the PC chose: "april" or "rune" (Rune.kt reads ids 0-3 then). Older servers say nothing: april. */
+    /** The floor sheets' marker the PC chose: "april" or "rune" (Rune.kt reads the mahoujin tags, ids 0-6, then). Older servers say nothing: april. */
     @Volatile var marker = "april"; private set
 
     /** Phone wall time converted to the PC clock, seconds. */

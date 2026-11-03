@@ -31,6 +31,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.google.ar.core.ArCoreApk
+import com.google.ar.core.CameraConfig
+import com.google.ar.core.CameraConfigFilter
 import com.google.ar.core.Config
 import com.google.ar.core.Plane
 import com.google.ar.core.Pose as ArPose
@@ -96,8 +98,10 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     private var tagDet: TagDetector? = null
     // lazy: Mat() needs the OpenCV native lib, which is only loaded in onCreate (after field initialisers run)
     private val yuv by lazy { Mat() }; private val rgbaL by lazy { Mat() }; private val rgbaU by lazy { Mat() }
+    private val grayL by lazy { Mat() }; private val grayU by lazy { Mat() }
 
     @Volatile var frame: Frame? = null
+    @Volatile var preview: Bitmap? = null // colour picture for the screen, ~10 Hz, apart from the grey one the tags are read from
     @Volatile var tags: JSONArray? = null
 
     override fun onCreate(b: Bundle?) {
@@ -167,6 +171,11 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
                     installRequested = true; return
                 }
                 session = Session(this).also { s ->
+                    // CPU image: ARCore's default is 640x480, too few pixels for the RuneTag dots. Take the biggest 4:3 one up to 1920x1440 (what ARKit gives iOS).
+                    val cfgs = s.getSupportedCameraConfigs(CameraConfigFilter(s).setFacingDirection(CameraConfig.FacingDirection.BACK))
+                    val pick = cfgs.filter { it.imageSize.width * 3 == it.imageSize.height * 4 && it.imageSize.width <= 1920 }.maxByOrNull { it.imageSize.width }
+                    if (pick != null) s.cameraConfig = pick
+                    Log.i("SensorLink", "camera config ${s.cameraConfig.imageSize} (of ${cfgs.map { it.imageSize.toString() }})")
                     s.configure(Config(s).apply { focusMode = Config.FocusMode.AUTO; updateMode = Config.UpdateMode.BLOCKING })
                 }
             } catch (e: Exception) { arError = "ARCore unavailable: ${e.message}"; Log.e("SensorLink", "arcore", e); return }
@@ -191,6 +200,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     // ---- GL thread: ARCore update + camera image ----
 
     private var lastImgNs = 0L
+    private var lastPreviewMs = 0L
     private val IMAGE_FPS = 30 // tag detection rate (camera max); AR pose is sent every frame
 
     override fun onSurfaceCreated(g: GL10?, c: EGLConfig?) {
@@ -232,35 +242,47 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         val img = try { f.acquireCameraImage() } catch (e: NotYetAvailableException) { return }
         lastImgNs = f.timestamp
         val w = img.width; val h = img.height
-        val nv21 = ByteArray(w * h * 3 / 2)
+        val wantPreview = SystemClock.elapsedRealtime() - lastPreviewMs >= 100
+        if (wantPreview) lastPreviewMs = SystemClock.elapsedRealtime()
+        val nv21 = ByteArray(if (wantPreview) w * h * 3 / 2 else w * h) // Y plane only unless the screen needs a colour picture
         try {
             val yp = img.planes[0]; val up = img.planes[1]; val vp = img.planes[2]
             val yb = yp.buffer
             for (r in 0 until h) { yb.position(r * yp.rowStride); yb.get(nv21, r * w, w) }
-            val ub = up.buffer; val vb = vp.buffer
-            var o = w * h
-            for (r in 0 until h / 2) for (c in 0 until w / 2) {
-                nv21[o++] = vb.get(r * vp.rowStride + c * vp.pixelStride)
-                nv21[o++] = ub.get(r * up.rowStride + c * up.pixelStride)
+            if (wantPreview) {
+                val ub = up.buffer; val vb = vp.buffer
+                var o = w * h
+                for (r in 0 until h / 2) for (c in 0 until w / 2) {
+                    nv21[o++] = vb.get(r * vp.rowStride + c * vp.pixelStride)
+                    nv21[o++] = ub.get(r * up.rowStride + c * up.pixelStride)
+                }
             }
         } finally { img.close() }
         val k = cam.imageIntrinsics
         val fl = k.focalLength; val pp = k.principalPoint
-        convertW.offer { onImage(nv21, w, h, t, fl, pp) }
+        convertW.offer { onImage(nv21, wantPreview, w, h, t, fl, pp) }
     }
 
     // ---- worker threads ----
 
-    private fun onImage(nv21: ByteArray, w: Int, h: Int, t: Double, fl: FloatArray, pp: FloatArray) {
-        yuv.create(h * 3 / 2, w, CvType.CV_8UC1)
-        yuv.put(0, 0, nv21)
-        Imgproc.cvtColor(yuv, rgbaL, Imgproc.COLOR_YUV2RGBA_NV21)
+    private fun onImage(nv21: ByteArray, withColour: Boolean, w: Int, h: Int, t: Double, fl: FloatArray, pp: FloatArray) {
+        // the detectors read the camera's Y plane as it is, rotated upright (no colour round trip)
+        grayL.create(h, w, CvType.CV_8UC1)
+        grayL.put(0, 0, nv21, 0, w * h)
+        Core.rotate(grayL, grayU, Core.ROTATE_90_CLOCKWISE)
+        val g = ByteArray(w * h).also { grayU.get(0, 0, it) }
+        if (withColour) {
+            yuv.create(h * 3 / 2, w, CvType.CV_8UC1)
+            yuv.put(0, 0, nv21)
+            Imgproc.cvtColor(yuv, rgbaL, Imgproc.COLOR_YUV2RGBA_NV21)
+            Core.rotate(rgbaL, rgbaU, Core.ROTATE_90_CLOCKWISE)
+            val bmp = Bitmap.createBitmap(h, w, Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(rgbaU, bmp)
+            preview = bmp
+        }
         // shortcut: assumes the back camera sensor is mounted at 90° (true for nearly all phones); read SENSOR_ORIENTATION if a device shows it sideways
-        Core.rotate(rgbaL, rgbaU, Core.ROTATE_90_CLOCKWISE)
-        val bmp = Bitmap.createBitmap(h, w, Bitmap.Config.ARGB_8888)
-        Utils.matToBitmap(rgbaU, bmp)
         // rotating (x, y) -> (h-1-y, x) swaps the focal lengths and moves the principal point
-        val fr = Frame(bmp, t, fl[1].toDouble(), fl[0].toDouble(), h - 1 - pp[1].toDouble(), pp[0].toDouble())
+        val fr = Frame(g, h, w, t, fl[1].toDouble(), fl[0].toDouble(), h - 1 - pp[1].toDouble(), pp[0].toDouble())
         frame = fr
         overlay.postInvalidate()
 
@@ -268,7 +290,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             val r = (tagDet ?: TagDetector().also { tagDet = it }).detect(fr, link.marker == "rune")
             tags = r
             link.send(JSONObject().put("type", "tags").put("t", fr.t).put("tags", r)
-                .put("k", JSONArray().put(r4(fr.fx / fr.bmp.width)).put(r4(fr.fy / fr.bmp.height)).put(r4(fr.cx / fr.bmp.width)).put(r4(fr.cy / fr.bmp.height))))
+                .put("k", JSONArray().put(r4(fr.fx / fr.width)).put(r4(fr.fy / fr.height)).put(r4(fr.cx / fr.width)).put(r4(fr.cy / fr.height))))
         }
     }
 
@@ -340,12 +362,12 @@ class Overlay(private val a: MainActivity) : View(a) {
 
     override fun onDraw(c: Canvas) {
         c.drawColor(Color.BLACK)
-        val f = a.frame
-        if (f != null) {
-            val s = minOf(width.toFloat() / f.bmp.width, height.toFloat() / f.bmp.height)
-            val w = f.bmp.width * s; val h = f.bmp.height * s
+        val bmp = a.preview
+        if (bmp != null) {
+            val s = minOf(width.toFloat() / bmp.width, height.toFloat() / bmp.height)
+            val w = bmp.width * s; val h = bmp.height * s
             dst.set((width - w) / 2, (height - h) / 2, (width + w) / 2, (height + h) / 2)
-            c.drawBitmap(f.bmp, null, dst, null)
+            c.drawBitmap(bmp, null, dst, null)
             fun x(v: Double) = dst.left + (v * dst.width()).toFloat()
             fun y(v: Double) = dst.top + (v * dst.height()).toFloat()
 

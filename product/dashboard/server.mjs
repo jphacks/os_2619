@@ -85,13 +85,23 @@ const status = () => toDashboards(JSON.stringify({ type: 'phones', list: phoneLi
 const settingsFile = join(root, 'settings.json');
 let settings = {}; try { settings = JSON.parse(readFileSync(settingsFile, 'utf8')); } catch {}
 let marker = ['april', 'rune'].includes(process.env.MARKER) ? process.env.MARKER : settings.marker === 'rune' ? 'rune' : 'april';
+// the mahoujin's printed / designed size (world.js RUNE_SCALE), measured after assembly: { type: 'setRuneScale', scale }
+const okScale = v => +v > .5 && +v < 2;
+let runeScale = okScale(process.env.RUNE_SCALE) ? +process.env.RUNE_SCALE : okScale(settings.runeScale) ? +settings.runeScale : 0.975; // measured: 100 mm on the PDF printed 97.5 mm
+function saveSettings() { try { writeFileSync(settingsFile, JSON.stringify(settings, null, 2)); } catch (e) { console.warn('settings:', e.message); } }
+const markerMsg = () => JSON.stringify({ type: 'marker', marker, runeScale });
 function setMarker(m) {
   if (!['april', 'rune'].includes(m) || m === marker) return;
-  marker = m; settings.marker = m;
-  try { writeFileSync(settingsFile, JSON.stringify(settings, null, 2)); } catch (e) { console.warn('settings:', e.message); }
+  marker = m; settings.marker = m; saveSettings();
   log(`marker: ${m === 'rune' ? 'RuneTag' : 'AprilTag'} for the floor sheets`);
-  const k = JSON.stringify({ type: 'marker', marker });
+  const k = markerMsg();
   toDashboards(k); for (const p of phones.values()) if (p.ws.readyState === 1) p.ws.send(k);
+}
+function setRuneScale(v) {
+  if (!okScale(v) || +v === runeScale) return;
+  runeScale = settings.runeScale = +v; saveSettings();
+  log(`mahoujin scale ${runeScale}`);
+  toDashboards(markerMsg()); // the phones measure at the designed size; the pages rescale
 }
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
@@ -120,7 +130,7 @@ wss.on('connection', (ws, req) => {
     }
     if (k.type === 'hello') {
       role = String(k.role); id = String(k.id).slice(0, 64);
-      if (role === 'dashboard') { dashboards.add(ws); send(ws, { type: 'marker', marker }); return status(); }
+      if (role === 'dashboard') { dashboards.add(ws); send(ws, { type: 'marker', marker, runeScale }); return status(); }
       if (role !== 'phone') return;
       const old = phones.get(id); // same phone reconnecting keeps its slot
       const slot = old?.slot ?? SLOTS.find(s => ![...phones.values()].some(q => q.slot === s));
@@ -132,6 +142,7 @@ wss.on('connection', (ws, req) => {
       return status();
     }
     if (k.type === 'setMarker' && role === 'dashboard') return setMarker(k.marker);
+    if (k.type === 'setRuneScale' && role === 'dashboard') return setRuneScale(k.scale);
     if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); }
   });
   ws.on('close', (code, reason) => {
@@ -245,7 +256,7 @@ async function onRequest(req, res) {
     // posix: '/' stays '/' on Windows too; backslashes become '/' first so they can't climb out of the folder
     let path = posix.normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/\\/g, '/')).replace(/^(\.\.[/\\])+/, '');
     if ((path === '/ca.pem' || path === '/ca.crt') && tls) return res.writeHead(200, { 'content-type': path.endsWith('.pem') ? 'application/x-pem-file' : 'application/x-x509-ca-cert', 'cache-control': 'no-store' }).end(tls.ca);
-    if (path === '/marker.js') return res.writeHead(200, { 'content-type': types['.js'], 'cache-control': 'no-store' }).end(`export const MARKER = '${marker}'; // server.mjs settings\n`);
+    if (path === '/marker.js') return res.writeHead(200, { 'content-type': types['.js'], 'cache-control': 'no-store' }).end(`export const MARKER = '${marker}', RUNE_SCALE = ${runeScale}; // server.mjs settings\n`);
     if (path === '/info') return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(info(req.headers.host)));
     if (path === '/rules') return rulesFile(req, res);
     if (path.startsWith('/cdn/')) {

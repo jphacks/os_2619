@@ -42,6 +42,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     private var arText = "AR: starting"
     private var arError: String?
     private var lastTags = [Int]()
+    private var tagInfo = "no frame yet"
     private var lastImgTs = 0.0
     private var lastPreview = 0.0
 
@@ -152,7 +153,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
                     guard let id = tag["id"] as? Int, let c = tag["c"] as? [[Double]] else { return nil }
                     return TagMark(id: id, corners: c, distance: (tag["p"] as? [Double])?[2])
                 }
-                self.lock.lock(); self.lastTags = marks.map { $0.id }; self.lock.unlock()
+                self.lock.lock(); self.lastTags = marks.map { $0.id }; self.tagInfo = self.detector.info; self.lock.unlock()
                 DispatchQueue.main.async { self.marks = marks }
             }
         }
@@ -230,6 +231,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         lock.lock()
         let ar = arError ?? arText
         let tags = lastTags
+        let info = tagInfo
         lock.unlock()
         var imuLine = "IMU: \(imu.status)"
         if let l = imu.last { imuLine += String(format: "  %.0f Hz  r %.0f p %.0f y %.0f", imu.hz, l.euler[0], l.euler[1], l.euler[2]) }
@@ -239,6 +241,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
             ar,
             String(format: "Hz  cam %.0f  tag %.0f", convertW.hz, tagW.hz),
             "tags: " + tags.map(String.init).joined(separator: ", "),
+            info,
         ]
     }
 }
