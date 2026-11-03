@@ -31,6 +31,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.google.ar.core.ArCoreApk
+import com.google.ar.core.CameraConfig
+import com.google.ar.core.CameraConfigFilter
 import com.google.ar.core.Config
 import com.google.ar.core.Plane
 import com.google.ar.core.Pose as ArPose
@@ -167,6 +169,11 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
                     installRequested = true; return
                 }
                 session = Session(this).also { s ->
+                    // CPU image: ARCore's default is 640x480, too few pixels for the RuneTag dots. Take the biggest 4:3 one up to 1920x1440 (what ARKit gives iOS).
+                    val cfgs = s.getSupportedCameraConfigs(CameraConfigFilter(s).setFacingDirection(CameraConfig.FacingDirection.BACK))
+                    val pick = cfgs.filter { it.imageSize.width * 3 == it.imageSize.height * 4 && it.imageSize.width <= 1920 }.maxByOrNull { it.imageSize.width }
+                    if (pick != null) s.cameraConfig = pick
+                    Log.i("SensorLink", "camera config ${s.cameraConfig.imageSize} (of ${cfgs.map { it.imageSize.toString() }})")
                     s.configure(Config(s).apply { focusMode = Config.FocusMode.AUTO; updateMode = Config.UpdateMode.BLOCKING })
                 }
             } catch (e: Exception) { arError = "ARCore unavailable: ${e.message}"; Log.e("SensorLink", "arcore", e); return }
