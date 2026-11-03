@@ -197,7 +197,7 @@ camWss.on('connection', (ws, req) => {
 });
 
 // ---- static files + the CDN cache ----
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.wasm': 'application/wasm', '.mp3': 'audio/mpeg', '.svg': 'image/svg+xml' };
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.wasm': 'application/wasm', '.mp3': 'audio/mpeg', '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.txt': 'text/plain; charset=utf-8' };
 // exact versions only: the cache never goes stale. mp-models/... is MediaPipe's model bucket (versioned paths too)
 const pinned = p => (/^npm\/(@[\w.-]+\/)?[\w.-]+@\d+\.\d+\.\d+\/[\w./@-]+$/.test(p) || /^mp-models\/[\w-]+\/[\w-]+\/[\w-]+\/\d+\/[\w-]+\.task$/.test(p)) && !p.includes('..');
 const upstream = p => p.startsWith('mp-models/') ? 'https://storage.googleapis.com/mediapipe-models/' + p.slice(10) : 'https://cdn.jsdelivr.net/' + p;

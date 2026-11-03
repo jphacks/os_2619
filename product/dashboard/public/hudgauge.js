@@ -17,6 +17,7 @@ function ringPath(from, to = 1, inset = 0) { // the part of the ring between fro
 }
 let count = 0; // the clip paths' ids
 const PAD = 44, W = 132 + 2 * PAD, H = 130 + 2 * PAD, S = 1.4; // the canvas: the drawing's area with room for the flames (drawing units), its pixels per unit
+const SHADOW = 4 * 132 / 92; // the HUD's 4 px, in the drawing's units (it is 132 units across 92 px)
 const fract = v => v - Math.floor(v);
 function paintFilm(g, film, from, time) { // a thin film's colours: its thickness sways slowly, and each thickness shows its own colour. Low resolution, smoothed up, clipped inside the frame
   const x = film.getContext('2d'), N = film.width, im = x.createImageData(N, N), d = im.data;
@@ -57,9 +58,12 @@ function flamePath(g, time, grow) { // one outline: the ring's rippling edge, th
   for (let i = 1; i <= 40; i++) g.lineTo(...polar(-.3 + 1.3 * i / 40, R + 1));
   g.closePath();
 }
-function paintFire(g, time) {
+function paintFire(g, time, shadowX) {
   const hue = g.createConicGradient(FROM - SWEEP, C[0], C[1]); // the rainbow runs along t, and on through the flame
   for (let i = 0; i <= 36; i++) { const t = 1 - 1.39 * i / 36; hue.addColorStop(i / 36, `hsl(${fract(t - time * .7) * 360}, 100%, 56%)`); }
+  // the HUD's hard shadow, drawn here since the canvas lies over the disc: it stays off the disc
+  const off = new Path2D(); off.rect(-PAD, -PAD, W, H); off.arc(C[0], C[1], R - 2, 0, Math.PI * 2);
+  g.save(); g.clip(off, 'evenodd'); g.translate(shadowX, SHADOW); flamePath(g, time, 1); g.fillStyle = '#000'; g.fill(); g.restore();
   flamePath(g, time, 1.1); g.fillStyle = hue; g.globalAlpha = .28; g.fill(); g.globalAlpha = 1; // a soft edge of the same colours
   flamePath(g, time, 1); g.fill();
   g.strokeStyle = '#fff'; g.lineWidth = 1.25; g.lineJoin = 'round'; g.stroke();
@@ -79,6 +83,7 @@ export function createGauge(el) {
   </svg><canvas width="${Math.round(W * S)}" height="${Math.round(H * S)}" style="left:${-PAD / 1.32}%;top:${-PAD / 1.3}%;width:${W / 1.32}%;height:${H / 1.3}%"></canvas><b class="lv"></b>`;
   const fill = el.querySelector('.fill'), lv = el.querySelector('.lv');
   const g = el.querySelector('canvas').getContext('2d'), film = Object.assign(document.createElement('canvas'), { width: 48, height: 48 });
+  const shadowX = el.closest('.pl.B') ? -SHADOW : SHADOW; // B's canvas is mirrored
   let key = '', painted = false;
   function paint(level, tier) {
     const on = tier === 'm' || tier === 'l';
@@ -87,7 +92,7 @@ export function createGauge(el) {
     painted = on; if (!on) return;
     const time = performance.now() / 1000;
     if (tier === 'm') paintFilm(g, film, 1 - level, time);
-    else paintFire(g, time);
+    else paintFire(g, time, shadowX);
   }
   return {
     set(level, tier) {
