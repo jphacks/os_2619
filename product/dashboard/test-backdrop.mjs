@@ -3,6 +3,7 @@ import { register } from 'node:module';
 import assert from 'node:assert/strict';
 register('data:text/javascript,' + encodeURIComponent(`export async function resolve(s, c, n) { return s === 'three' ? { url: ${JSON.stringify(new URL('./vendor/cdn/npm/three@0.160.0/build/three.module.js', import.meta.url).href)}, shortCircuit: true } : n(s, c); }`));
 const { layout, addRock, bakeSunlight, createBackdrop, DEFAULT_R } = await import('./public/backdrop.js');
+const { createCourtyard, courtForTests: C } = await import('./public/courtyard.js');
 
 const build = R => { const pos = [], ao = [], idx = []; for (const r of layout(R).list) addRock(pos, ao, idx, r); return { pos, ao, idx }; };
 for (const R of [DEFAULT_R, 12]) {
@@ -47,4 +48,22 @@ assert.deepEqual(build(DEFAULT_R).pos.slice(0, 300), build(DEFAULT_R).pos.slice(
 // it is sized once: a smaller field keeps the layout, a larger one pushes it out, and neither fails
 const b = createBackdrop();
 b.fit(3); b.fit(DEFAULT_R); b.fit(12); b.update(.016); b.dispose();
+// the courtyard: no building on the field, a sound mesh, walls facing the court, the middle of the field in the sun
+{
+  const { pos, idx } = C.buildCourt(), R = DEFAULT_R;
+  assert.ok(pos.every(Number.isFinite));
+  assert.equal(idx.length % 3, 0);
+  let nearest = Infinity; for (let i = 0; i < pos.length; i += 3) nearest = Math.min(nearest, Math.hypot(pos[i], pos[i + 2]));
+  assert.ok(nearest > R + 5, 'a building stands near the field: ' + nearest.toFixed(1) + ' m from its centre');
+  assert.ok(idx.length / 3 < 300000, 'the courtyard has grown to ' + idx.length / 3 + ' triangles');
+  assert.ok(C.LAWN.x < C.WALL_X && C.LAWN.z0 > C.WALL_BACK && C.LAWN.z1 < C.WALL_FRONT);
+  const n = 256, { ground } = bakeSunlight(pos, idx, [[0, idx.length]], C.EXT, n, undefined, undefined, C.SUN);
+  const litAt = (x, z) => ground[(Math.floor((x / (2 * C.EXT) + .5) * n) + Math.floor((z / (2 * C.EXT) + .5) * n) * n) * 4];
+  for (const [x, z] of [[0, 0], [-3, -3], [3, -3], [-3, 0], [3, 0]]) assert.ok(litAt(x, z) > 128, 'a shadow falls on the field at ' + x + ', ' + z);
+  assert.ok(litAt(0, 50) < 128, 'the near range throws no shadow on the lawn');
+  assert.equal(C.WALL_FRONT + C.WALL_BACK, 0, 'the field is not in the middle of the court'); // x is symmetric by construction
+  assert.equal(C.LAWN.z0 + C.LAWN.z1, 0, 'the lawn is not centred on the field');
+  // the plainest wall: its first triangle faces into the court
+  const c = createCourtyard(); c.fit(R); c.fit(12); c.update(.016); c.dispose();
+}
 console.log('backdrop ok');

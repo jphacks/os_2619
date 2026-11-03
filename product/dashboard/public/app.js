@@ -22,6 +22,7 @@ import { createVisionFx } from './visionfx.js';
 import { personTo3D } from './avatarpose.js';
 import { createPlayable } from './playable.js';
 import { createTutorial } from './tutorial.js';
+import { createGauge } from './hudgauge.js';
 
 const $ = s => document.querySelector(s);
 const nowS = () => Date.now() / 1000;
@@ -31,7 +32,7 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
   minimap: true, debug: false, pip: false, mirrorX: false, mirrorY: false, swordFlip: false, fovC: 40, viewVer: 2, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
-  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 5, fxStyle: 'smash', backdrop: 'rock',
+  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 6, fxStyle: 'smash', backdrop: 'court',
   zoom: { fixed: 1, auto: 1, orbit: 1, chaseA: 1, chaseB: 1, top: 1, side: 1 }, // game screen: zoom per camera mode (free: the mouse wheel)
   mimic: true, // the avatars copy the poses MediaPipe finds in phone C's picture (screen 3, and the small 3D window of screen 4)
 };
@@ -44,7 +45,8 @@ for (const s of ['A', 'B']) if (cfg.stickLen[s] === .8) cfg.stickLen[s] = W.STIC
 if ((saved.rulesVer ?? 0) < 2) cfg.aim = 'motion'; // ...and the aim from the tip's motion
 if ((saved.rulesVer ?? 0) < 4) cfg.fxStyle = 'smash'; // the program-drawn set is the one used in the show (10/18)
 if ((saved.rulesVer ?? 0) < 5) cfg.drone = 'fixed'; // the game screen starts on phone C's view, the same as screen 4 (10/18)
-cfg.rulesVer = 5;
+if ((saved.rulesVer ?? 0) < 6) cfg.backdrop = 'court'; // the game screen stands in the school courtyard (11/3)
+cfg.rulesVer = 6;
 cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg }, size: { ...RULES.size, ...saved.rules?.size } };
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
 const axis = { A: W.STICK.axis, B: W.STICK.axis }; // the IMU's +Y points to the stick tip, on both sticks
@@ -165,7 +167,7 @@ gameCtrl.innerHTML = `
   <div class="row" id="zoomRow"><label title="今のカメラのズーム。カメラごとに覚える。1 が元の大きさ">ズーム <input id="zoom" type="range" min="0.5" max="3" step="0.05" style="width:130px;vertical-align:middle"> <span id="zoomOut" class="num"></span> 倍</label><button id="zoomReset">1 倍に戻す</button><span class="muted" id="zoomFor" style="font-size:12px"></span></div>
   <h3>表示</h3>
   <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="debug">デバッグ<kbd>G</kbd></button></div>
-  <div class="row"><span class="muted" style="font-size:12px">背景</span><span class="seg" id="backdrops"><button data-backdrop="rock">岩場</button><button data-backdrop="plain">無地</button></span></div>
+  <div class="row"><span class="muted" style="font-size:12px">背景</span><span class="seg" id="backdrops"><button data-backdrop="court">中庭</button><button data-backdrop="rock">岩場</button><button data-backdrop="plain">無地</button></span></div>
   <div class="row"><button data-tog="mimic" title="第三者視点カメラの映像を MediaPipe で見て、アバターに同じ姿勢をとらせる（別スレッドで 1 秒に最大 15 回）">カメラの姿勢をアバターに反映</button><span class="muted" id="mimicStatus" style="font-size:12px"></span></div>
   <h3>攻撃・防御の記録</h3>
   <ul class="log" id="gameLog"></ul>`;
@@ -319,7 +321,7 @@ addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k] && s
 
 // ---- per-frame UI ----
 function pill(id, state) { const p = $(id); p.classList.toggle('on', state === true); p.classList.toggle('half', state === 'half'); }
-const hudP = Object.fromEntries(['A', 'B'].map(s => { const el = hud.querySelector('.pl.' + s); return [s, { el, hp: el.querySelector('.hp i'), ch: el.querySelector('.ch'), chi: el.querySelector('.ch i'), hpn: el.querySelector('.hpn'), act: el.querySelector('.act'), tick: el.querySelector('.ch b'), chips: Object.fromEntries([...el.querySelectorAll('.chips span')].map(c => [c.className.split(' ')[0], c])) }]; }));
+const hudP = Object.fromEntries(['A', 'B'].map(s => { const el = hud.querySelector('.pl.' + s); return [s, { el, hp: el.querySelector('.hp i'), gauge: createGauge(el.querySelector('.gauge')), hpn: el.querySelector('.hpn'), act: el.querySelector('.act'), chips: Object.fromEntries([...el.querySelectorAll('.chips span')].map(c => [c.className.split(' ')[0], c])) }]; }));
 const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
 const setHtml = (el, h) => { if (el.innerHTML !== h) el.innerHTML = h; };
 // damage numbers: HUD text over the player's HP bar, pushed out to the side away from the opponent and up, so the hit's
@@ -351,9 +353,9 @@ function updateHud() {
   for (const p of Object.values(game.players)) {
     const h = hudP[p.slot];
     h.hp.style.width = 100 * p.hp / (p.hpMax || 100) + '%'; setText(h.hpn, String(Math.round(p.hp)));
-    h.chi.style.width = (p.charging ? p.charge * 100 : 0) + '%';
-    for (const t of ['m', 'l']) h.ch.classList.toggle(t, p.charging && p.tier === t);
-    h.tick.style.left = (100 * Math.min(1, cfg.rules.t1 / cfg.rules.t2)) + '%';
+    // the try-out button fills it as well, as far as a real charge of that length would (game.js effects())
+    const { t1, t2 } = cfg.rules, pv = p.preview ? performance.now() / 1000 - p.preview : null, level = pv !== null ? Math.min(1, pv / t2) : p.charging ? p.charge : 0;
+    h.gauge.set(level, pv !== null ? (pv < t1 ? 's' : pv < t2 ? 'm' : 'l') : p.charging ? p.tier : null, Math.min(1, t1 / t2));
     h.chips.off.classList.toggle('on', !p.online && !p.imu);
     h.chips.charge.classList.toggle('on', p.charging);
     setText(h.chips.charge, p.charging ? `溜め ${TIER_JA[p.tier] ?? '小'} ${p.chargeT.toFixed(1)}s` : '溜め中');
@@ -383,7 +385,7 @@ function updateSlowUi() {
   for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.classList.toggle('on', b.dataset.drone === stage.drone.mode);
   syncZoom();
   for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.classList.toggle('on', b.dataset.fxstyle === stage.fx.style);
-  for (const b of gameCtrl.querySelectorAll('[data-backdrop]')) b.classList.toggle('on', b.dataset.backdrop === (cfg.backdrop ?? 'rock'));
+  for (const b of gameCtrl.querySelectorAll('[data-backdrop]')) b.classList.toggle('on', b.dataset.backdrop === cfg.backdrop);
   for (const b of finalBar.querySelectorAll('[data-fpv]')) b.classList.toggle('on', (b.dataset.fpv || null) === cfg.fpv);
   for (const g of drawer.querySelectorAll('[data-seg]')) for (const b of g.querySelectorAll('button')) b.classList.toggle('on', String(cfg[g.dataset.seg]) === b.dataset.v);
   $('#why').textContent = !stage.state.scanned ? '未スキャン：最終映像の位置はずれます（最終映像の画面で「タグでスキャン」）' : !hub.phones.A.online && !hub.phones.B.online ? 'スマホ A・B が未接続：キーかボタンで操作できます' : '';

@@ -23,7 +23,7 @@ const tilingNoise = (period, rand) => { // value noise over [0, 1)², tiling
   };
 };
 // One tiling noise texture (r, g: soft layers, b: ridges, a: fine grain), mipmapped so far rock does not shimmer.
-function noiseTexture(size = 256) {
+export function noiseTexture(size = 256) {
   const rand = rng(11), data = new Uint8Array(size * size * 4), layer = period => tilingNoise(period, rand);
   const fbm = (periods, x, y) => { let v = 0, w = .5, n = 0; for (const l of periods) { v += l(x, y) * w; n += w; w *= .55; } return v / n; };
   const A = [4, 8, 16, 32, 64].map(layer), B = [3, 7, 14, 28, 56].map(layer), C = [5, 11, 23, 47].map(layer), F = layer(128);
@@ -60,10 +60,10 @@ function loadGround(slot) { // slot: the uniform that holds the texture
 
 // The sunlight, baked once from the real rock shapes: every triangle is projected along the sun onto the ground.
 // depth: per texel, how far up the sun's ray the highest rock is (m). ground: r = sharp shadow, g = the wide dark around a rock's foot.
-export function bakeSunlight(pos, idx, ranges, ext, n = SHADOW_N, depth = new Float32Array(n * n), ground = new Uint8Array(n * n * 4)) {
+export function bakeSunlight(pos, idx, ranges, ext, n = SHADOW_N, depth = new Float32Array(n * n), ground = new Uint8Array(n * n * 4), sun = SUN) {
   depth.fill(0);
-  const ax = SUN.x / SUN.y, az = SUN.z / SUN.y, k = n / (2 * ext);
-  const U = i => (pos[i] - ax * pos[i + 1] + ext) * k, V = i => (pos[i + 2] - az * pos[i + 1] + ext) * k, T = i => Math.max(0, pos[i + 1]) / SUN.y;
+  const ax = sun.x / sun.y, az = sun.z / sun.y, k = n / (2 * ext);
+  const U = i => (pos[i] - ax * pos[i + 1] + ext) * k, V = i => (pos[i + 2] - az * pos[i + 1] + ext) * k, T = i => Math.max(0, pos[i + 1]) / sun.y;
   for (const [from, to] of ranges) for (let q = from; q < to; q += 3) {
     const a = idx[q] * 3, b = idx[q + 1] * 3, c = idx[q + 2] * 3;
     const x0 = U(a), y0 = V(a), x1 = U(b), y1 = V(b), x2 = U(c), y2 = V(c), t0 = T(a), t1 = T(b), t2 = T(c);
@@ -271,7 +271,7 @@ export function createBackdrop() {
   }
   fit(DEFAULT_R);
   return {
-    group, uniforms, fit,
+    group, uniforms, fit, sun: SUN,
     update(dt) { uniforms.uTime.value += dt; },
     dispose() { uniforms.tN.value.dispose(); uniforms.tG.value.dispose(); tD.dispose(); tSh.dispose(); for (const m of [sky, ground, rocks]) { m.geometry.dispose(); m.material.dispose(); } },
   };
