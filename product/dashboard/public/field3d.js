@@ -5,11 +5,14 @@
 import * as THREE from 'three';
 import * as W from './world.js';
 import { tagCanvas } from './dummycam.js';
+import { createBackdrop, SAND_GLSL } from './backdrop.js';
+import { createCourtyard, LAWN_GLSL } from './courtyard.js';
+import { makeRobe } from './robe.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
 const m4 = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
-export const TEAM = { A: 0xff3b3b, B: 0x2fd46a };
+export const TEAM = { A: 0xff7a1a, B: 0x2f8bff };
 const css = c => '#' + c.toString(16).padStart(6, '0');
 const UP = V(0, 1, 0);
 
@@ -73,8 +76,10 @@ varying vec2 vP;
 void main() { vec4 w = modelMatrix * vec4(position, 1.); vP = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const FLOOR_FS = `
 uniform float uTime, uR; uniform vec2 uX; uniform vec2 uPoly[${MAXP}]; uniform int uN;
-uniform vec4 uP[2]; uniform vec3 uCA, uCB; uniform vec2 uSA, uSB;
+uniform vec4 uP[2]; uniform vec3 uCA, uCB, uBodySun; uniform vec2 uSA, uSB; uniform float uRock;
 varying vec2 vP;
+${SAND_GLSL}
+${LAWN_GLSL}
 float aline(float d, float px) { return 1. - smoothstep(.5 * px, 1.5 * px, d); } // ~1.5 px wide line at distance d (px units)
 float gridAt(vec2 p, float s) { vec2 q = p / s, g = abs(fract(q - .5) - .5) / fwidth(q); return 1. - min(min(g.x, g.y) / 1.2, 1.); }
 float ring(vec2 p, vec2 c, float r, float w) { float d = abs(length(p - c) - r); return 1. - smoothstep(w * .5, w * .5 + fwidth(d) * 1.5, d); }
@@ -97,6 +102,34 @@ void main() {
   c += inside * vec3(.035, .04, .06) * exp(-r * r / 5.);                                           // soft centre spot
   c += mix(vec3(.04, .05, .08), vec3(.10, .12, .17), inside) * gridAt(p, .5) * (inside > .5 ? 1. : exp(-d * .8));
   c += inside * vec3(.07, .08, .11) * gridAt(p, 1.);
+  if (uRock > .5) { // the canyon or the courtyard: the same ground as outside the floor, the lines below are painted on it
+    c = uRock > 1.5 ? lawnColor(p) : sandColor(p);
+    float lines = 1. - smoothstep(.1, .15, abs(d));
+    c *= 1. - .5 * lines; // a dark edge, so a team colour reads on the orange stone
+    float wide = 1. - smoothstep(.055, .055 + fwidth(d) * 1.5, abs(d));
+    c = mix(c, team, wide);
+    float dash = step(.45, fract(p.y * 2.5 + uTime * .3));
+    c = mix(c, vec3(.97, .93, .84), inside * aline(abs(p.x) / fwidth(p.x), 1.4) * dash * .8);
+    c = mix(c, vec3(.97, .93, .84), inside * ring(p, vec2(0.), .6, .02) * .7);
+    c *= 1. - .26 * (ring(p, uSA, .32, .06) + ring(p, uSB, .32, .06)); // a dark edge: a green ring must read on the green lawn too
+    c = mix(c, uCA, ring(p, uSA, .32, .03) * .9);
+    c = mix(c, uCB, ring(p, uSB, .32, .03) * .9);
+    for (int i = 0; i < 2; i++) {
+      vec4 P = uP[i]; if (P.w <= 0.) continue;
+      vec3 tc = i == 0 ? uCA : uCB;
+      vec2 q = p - P.xy; float dq = length(q);
+      // the body's shadow along the ground, sharp as the sun makes it, on top of a soft contact shadow
+      vec2 sd = -normalize(uBodySun.xz); float L = 1.7 * length(uBodySun.xz) / uBodySun.y, t = clamp(dot(q, sd), 0., L), wd = mix(.19, .11, t / L);
+      float body = 1. - smoothstep(wd - .03, wd + .03, length(q - sd * t));
+      c *= mix(vec3(1.), vec3(.42, .45, .60), body * P.w);
+      c *= 1. - .5 * exp(-dq * dq / .03) * P.w;
+      float a = fract(atan(q.x, -q.y) / 6.2831853 + .5);
+      c *= 1. - .26 * ring(p, P.xy, .46, .065) * P.w;
+      c = mix(c, mix(c * .55, tc, step(a, P.z)), ring(p, P.xy, .46, .035) * P.w);
+    }
+    gl_FragColor = vec4(c, 1. - smoothstep(uR + 1.4, uR + 5.7, r));
+    return;
+  }
   // boundary: a line painted on the floor, 6 cm wide (no wall, no posts)
   c += team * (1. - smoothstep(.03, .03 + fwidth(d) * 1.5, abs(d)));
   // centre line (dashed, x = 0 runs across the field between the A and B halves) and circle
@@ -200,8 +233,8 @@ const TALL_MIN = .95, TALL_MAX = 1.7, CAPTURE = .4, TORSO = -HIP[1];
 export const POSE = { show: true };
 const legLen = tall => (tall + HIP[1] - .04) * .97; // hip to sole, standing: a little short, so a standing knee stays straight through the breathing bob (3 % longer bent it ~28°, which read as half-crouched)
 
-// The body that is drawn: a wireframe human (three.js's Xbot, a Mixamo rig), loaded once and cloned per avatar. Its bones aim
-// at the points the avatar code below computes (those primitive meshes stay hidden and only serve as the rig).
+// The rig of the body: a human skeleton (three.js's Xbot, a Mixamo rig), loaded once and cloned per avatar. Its bones aim at the points
+// the avatar code below computes (those primitive meshes stay hidden). What is drawn is the robe over it (robe.js), not the model's own skin.
 const FIG = Promise.all([import('three/addons/loaders/GLTFLoader.js'), import('three/addons/utils/SkeletonUtils.js')])
   .then(([{ GLTFLoader }, SU]) => new GLTFLoader().loadAsync(new URL('./assets/models/Xbot.glb', import.meta.url).href)
     .then(g => (mat, root) => makeFig(SU.clone(g.scene), mat, root)))
@@ -209,7 +242,7 @@ const FIG = Promise.all([import('three/addons/loaders/GLTFLoader.js'), import('t
 const AIM = ['RightArm', 'RightForeArm', 'LeftArm', 'LeftForeArm', 'RightUpLeg', 'RightLeg', 'RightFoot', 'LeftUpLeg', 'LeftLeg', 'LeftFoot'];
 function makeFig(obj, mat, root) {
   const b = {};
-  obj.traverse(o => { if (o.isBone) b[o.name.replace(/^mixamorig:?/, '')] = o; if (o.isMesh) { o.material = mat; o.frustumCulled = false; } });
+  obj.traverse(o => { if (o.isBone) b[o.name.replace(/^mixamorig:?/, '')] = o; if (o.isMesh) { o.material = mat; o.frustumCulled = false; o.visible = false; } });
   obj.updateMatrixWorld(true);
   const wp = n => b[n].getWorldPosition(V()), hipM = wp('LeftUpLeg').add(wp('RightUpLeg')).multiplyScalar(.5);
   const leg = wp('LeftUpLeg').distanceTo(wp('LeftLeg')) + wp('LeftLeg').distanceTo(wp('LeftFoot'));
@@ -228,7 +261,7 @@ function makeFig(obj, mat, root) {
     bone.quaternion.copy(pq.invert().multiply(dq.multiply(wq)));
     bone.updateMatrixWorld(true);
   }
-  const spineBind = b.Spine.quaternion.clone(), lq = new THREE.Quaternion(), rq = new THREE.Quaternion();
+  const spineBind = b.Spine.quaternion.clone(), lq = new THREE.Quaternion(), rq = new THREE.Quaternion(), robe = makeRobe(root), headAt = V();
   return function pose(r) { // r: root-frame points of the rig, headQ the head's turn in the body frame
     // size: r.leg (the standing leg, fixed per player: a crouch bends the knees instead of shrinking the body), else the rig's
     // own leg bones (the camera pose: the person's measured bones, which a crouch does not shorten either)
@@ -249,6 +282,8 @@ function makeFig(obj, mat, root) {
     }
     b.Head.parent.getWorldQuaternion(pq); root.getWorldQuaternion(wq);
     b.Head.quaternion.copy(pq.invert().multiply(wq.multiply(r.headQ).multiply(obj.quaternion).multiply(headBind)));
+    b.Head.getWorldPosition(headAt); root.worldToLocal(headAt);
+    robe({ ...r, hip, leg: r.leg ?? leg * sc, headAt });
   };
 }
 
@@ -489,15 +524,29 @@ export function createField(scene, opts = {}) {
   const uniforms = {
     uTime: { value: 0 }, uR: { value: 3 }, uX: { value: new THREE.Vector2(-2, 2) },
     uPoly: { value: Array.from({ length: MAXP }, () => new THREE.Vector2()) }, uN: { value: 4 },
-    uCA: { value: new THREE.Color(TEAM.A) }, uCB: { value: new THREE.Color(TEAM.B) },
+    uCA: { value: new THREE.Color().setHex(TEAM.A, THREE.LinearSRGBColorSpace) }, uCB: { value: new THREE.Color().setHex(TEAM.B, THREE.LinearSRGBColorSpace) }, // the shader writes display colours: unconverted, or they come out darker than the HP bars
     uSA: { value: new THREE.Vector2() }, uSB: { value: new THREE.Vector2() },
     uP: { value: [new THREE.Vector4(), new THREE.Vector4()] },
+    uRock: { value: 0 }, uBodySun: { value: V(0, 1, 1).normalize() },
+    tN: { value: null }, tG: { value: null }, tSh: { value: null }, uSun: { value: V(0, 1, 0) }, uExt: { value: 64 }, // the canyon's, set when it is built
+    cN: { value: null }, cSh: { value: null }, cG: { value: null }, cSun: { value: V(0, 1, 0) }, cExt: { value: 64 }, // the courtyard's
+  };
+  // The looks behind the arena. Each is built the first time it is shown (they bake textures and lights), and the floor shares its ground's uniforms.
+  const LOOKS = { rock: { make: createBackdrop, id: 1, shared: ['tN', 'tG', 'tSh', 'uSun', 'uExt'], ground: 0xb87a52 }, court: { make: createCourtyard, id: 2, shared: ['cN', 'cSh', 'cG', 'cSun', 'cExt'], ground: 0x6f9a45 } };
+  const built = {}; let activeLook = null, fieldR = 0;
+  const lookOf = name => {
+    if (!built[name]) {
+      const b = built[name] = LOOKS[name].make();
+      b.fit(fieldR); for (const k of LOOKS[name].shared) uniforms[k] = b.uniforms[k];
+      group.add(b.group);
+    }
+    return built[name];
   };
   const floor = makeFloor(uniforms);
   const debug = new THREE.Group(); debug.visible = false;
   debug.add(new THREE.AxesHelper(.6));
   group.add(floor, debug);
-  let arena = null, debugArena = null, sig = NaN;
+  let arena = null, debugArena = null, tags = null, letters = [], sig = NaN, showTags = false;
   function rebuild() {
     sig = fieldSig();
     const P = W.FIELD.poly.length > MAXP ? W.FIELD.poly.slice(0, MAXP) : W.FIELD.poly, e = fieldExtent(P);
@@ -505,17 +554,19 @@ export function createField(scene, opts = {}) {
     uniforms.uR.value = e.R; uniforms.uX.value.set(e.minX, e.maxX);
     uniforms.uSA.value.set(W.START.A.pos[0], W.START.A.pos[2]); uniforms.uSB.value.set(W.START.B.pos[0], W.START.B.pos[2]);
     floor.scale.set(2 * (e.R + 6), 2 * (e.R + 6), 1);
+    fieldR = e.R; for (const b of Object.values(built)) b.fit(e.R);
     if (arena) { group.remove(arena); disposeTree(arena); debug.remove(debugArena); disposeTree(debugArena); }
     arena = new THREE.Group(); debugArena = new THREE.Group();
-    arena.add(floorText('A', css(TEAM.A), W.START.A.pos[0], W.START.A.pos[2] + .66), floorText('B', css(TEAM.B), W.START.B.pos[0], W.START.B.pos[2] + .66));
-    arena.add(makeTags(debugArena));
+    letters = [floorText('A', css(TEAM.A), W.START.A.pos[0], W.START.A.pos[2] + .66), floorText('B', css(TEAM.B), W.START.B.pos[0], W.START.B.pos[2] + .66)];
+    arena.add(...letters);
+    tags = makeTags(debugArena); tags.visible = showTags; arena.add(tags);
     for (const [t, x, z, c] of [['+x', e.maxX + .35, 0, '#ff6b6b'], ['+z', 0, e.maxZ + .35, '#6b9bff']]) { const l = label(t, c, .16); l.position.set(x, .12, z); debugArena.add(l); }
     group.add(arena); debug.add(debugArena);
   }
   rebuild();
 
   // lights (only lit materials here use them; they switch off with the group)
-  group.add(new THREE.HemisphereLight(0xa8c0ff, 0x1a1622, 1.6));
+  const hemi = new THREE.HemisphereLight(0xa8c0ff, 0x1a1622, 1.6); group.add(hemi);
   const key = new THREE.DirectionalLight(0xfff2e0, 2.2); key.position.set(2, 6, 4); group.add(key, key.target);
   const rim = new THREE.DirectionalLight(0x8fb8ff, 1.4); rim.position.set(-3, 3, -5); group.add(rim, rim.target);
 
@@ -534,14 +585,28 @@ export function createField(scene, opts = {}) {
     group, background, rebuild,
     update(dt, players = {}) {
       if (fieldSig() !== sig) rebuild();
-      uniforms.uTime.value += dt;
+      uniforms.uTime.value += dt; if (activeLook) built[activeLook].update(dt);
       ['A', 'B'].forEach((s, i) => {
         const r = avatars[s].update(dt, players[s]);
         uniforms.uP.value[i].set(r?.x ?? 0, r?.z ?? 0, r?.hp ?? 0, r ? r.vis : 0);
       });
     },
     setLayoutDebug(on) { debug.visible = on; for (const a of Object.values(avatars)) a.ax.visible = on; },
-    dispose() { scene.remove(group); disposeTree(group); background.dispose(); },
+    /** name: 'court' (courtyard.js), 'rock' (backdrop.js), anything else the plain dark arena. The tag boards stand in the plain arena, elsewhere only with `debug`. */
+    setLook(name, debug = false) {
+      const look = LOOKS[name], rock = !!look, active = look ? lookOf(name) : null;
+      activeLook = look ? name : null;
+      for (const [k, b] of Object.entries(built)) b.group.visible = k === name;
+      uniforms.uRock.value = look ? look.id : 0;
+      if (active) uniforms.uBodySun.value.copy(active.sun);
+      // in the canyon the avatars stand in the same sun: from its direction, blue from above, the bright sand from below
+      hemi.color.set(rock ? 0xbcd8ff : 0xa8c0ff); hemi.groundColor.set(rock ? look.ground : 0x1a1622); hemi.intensity = rock ? 1.5 : 1.6;
+      if (rock) key.position.copy(active.sun).multiplyScalar(10); else key.position.set(2, 6, 4);
+      key.intensity = rock ? 3.2 : 2.2;
+      showTags = !rock || debug; if (tags) tags.visible = showTags;
+      for (const l of letters) l.material.opacity = rock ? .95 : .55; // the gravel is busier than the plain floor
+    },
+    dispose() { scene.remove(group); disposeTree(group); for (const b of Object.values(built)) b.dispose(); background.dispose(); },
   };
 }
 

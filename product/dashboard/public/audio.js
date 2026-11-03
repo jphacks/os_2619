@@ -14,7 +14,7 @@
 const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3', 'guard'];
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
-const LUFS = { bgm: -9.1, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2, guard: -18.0 }; // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
+const LUFS = { bgm: -4.0, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2, guard: -18.0 }; // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
 // fire3 is also the 大 hit: its 0-6 s faded from 3 s measures differently from the 3 s bed, so that use is corrected by this
 const BIG_LUFS = { fire3: -11.8, lightning3: -7.2 };
 const REF_LUFS = -16;
@@ -30,7 +30,7 @@ const BIG_HIT = { fadeAt: 3, end: 6 };
 const LOOPS = { charge: [.2, 4.4, .35] };
 // the bed (fire3) plays once from the top: full until fadeAt, down to silence at end (s), no loop (10/18)
 const BED = { fadeAt: 2, end: 3 };
-const BGM_LOOP = [.09, 82]; // music starts at .14 s and ends in a tail at ~81.3 s; both ends are below -45 dBFS
+const BGM_LOOP = [.03, 311.33]; // 情動カタルシス: the whole track, 5 min 11 s; both ends are below -45 dBFS
 // mix in dB relative to REF (hit at full power = 0 dB anchor)
 const CHARGE_PITCH = { s: .85, m: 1.1, l: 1.45 }; // playback rate (pitch) per charge tier
 const MIX = { shot: -5, shotSpan: 4, hit: 0, hitSpan: 6, special: 3, charge: -10, chargeSpan: 5, bed: -17, bgm: -8 };
@@ -180,7 +180,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     if (on === musicOn && (!on || music)) return; // cheap enough to call every frame
     if (on && (!buf.bgm || ctx.state !== 'running')) return; // retried on the next call after unlock / load
     musicOn = on;
-    if (on) { music = loopVoice('bgm', duckG, { start: BGM_LOOP[0], end: BGM_LOOP[1] }); music.g.gain.setTargetAtTime(db(MIX.bgm) * norm.bgm, ctx.currentTime, .4); }
+    if (on) { music = loopVoice('bgm', duckG, { start: BGM_LOOP[0], end: BGM_LOOP[1] }); music.g.gain.setValueAtTime(db(MIX.bgm) * norm.bgm, ctx.currentTime); } // full level from its first sample, no fade-in
     else { release(music, .6); music = null; } // ~2 s to silence
   }
   const chg = { A: null, B: null };
