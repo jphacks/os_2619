@@ -100,6 +100,10 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
       <p class="kv" style="font-size:12px;margin:4px 0 0">PDF の 100 mm が印刷で何 mm になったか ÷ 100（いまは 97.5 mm → 0.975）。タグの大きさと配置の円（半径 490.5 mm）に同じ倍率がかかる。</p>
       <p class="kv" style="font-size:12px;margin:4px 0 0">切り替えるとサーバーが保存し、スマホ A・B に送り、開いているページは読み直す。胸のタグ 8-11 は AprilTag のまま。</p>
     </section>
+    <section class="card rec"><header><h2>センサーの記録</h2><span class="sub">溜めの調整用</span></header>
+      <div class="row" style="flex-wrap:wrap;gap:6px"><button data-rec="walk">回さずに歩く</button><button data-rec="walk-circle">回しながら歩く</button><button data-rec="still-circle">止まって回す</button></div>
+      <p class="kv rec-msg" style="font-size:12px;margin:8px 0 0">棒を立てた状態で行う。押して 5 秒後に音が鳴ったら開始、20 秒後の音で終了。</p>
+    </section>
     <section class="card"><header><h2>動作の判定</h2><span class="sub">棒の IMU と胸のスマホから</span></header>
       <ul class="actions"></ul>
       <h3>棒の軸</h3>
@@ -113,6 +117,22 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
     b.classList.toggle('on', b.dataset.v === W.MARKER);
     b.onclick = () => { if (b.dataset.v !== W.MARKER && confirm(`床のマーカーを ${b.textContent} に切り替えます（全体・ページは読み直し）`)) hub.send({ type: 'setMarker', marker: b.dataset.v }); };
   }
+  // sensor recording: 5 s to get in place, then 20 s between two beeps (the mover may be far from the screen); the server writes the file
+  const recMsg = sq('.rec-msg'), recBtns = [...side.querySelectorAll('[data-rec]')], REC_SEC = 20, REC_LEAD = 5;
+  let recAudio = null, recTick = null;
+  const beep = () => { try { recAudio ??= new AudioContext(); recAudio.resume(); const o = recAudio.createOscillator(), g = recAudio.createGain(); o.frequency.value = 880; g.gain.value = .3; o.connect(g).connect(recAudio.destination); o.start(); o.stop(recAudio.currentTime + .4); } catch {} };
+  const countdown = (sec, text, then) => { clearInterval(recTick); let left = sec; recMsg.textContent = `${text}：あと ${left} 秒`; recTick = setInterval(() => { if (--left > 0) recMsg.textContent = `${text}：あと ${left} 秒`; else { clearInterval(recTick); then?.(); } }, 1000); };
+  for (const b of recBtns) b.onclick = () => {
+    if (recAudio === null) { try { recAudio = new AudioContext(); } catch {} } // made in the click: browsers only let a page play sound after one
+    for (const q of recBtns) q.disabled = true;
+    countdown(REC_LEAD, `「${b.textContent}」の準備`, () => hub.send({ type: 'record', label: b.dataset.rec, sec: REC_SEC }));
+  };
+  hub.onRecording = k => {
+    beep();
+    if (k.on) return countdown(k.sec, '記録中');
+    clearInterval(recTick); for (const q of recBtns) q.disabled = false;
+    recMsg.textContent = k.n ? `保存した：dashboard/recordings/${k.file}（${k.n} パケット）` : 'スマホからパケットが届かなかった。スマホ A・B の接続を確かめる';
+  };
   const rs = sq('.runescale'); rs.value = W.RUNE_SCALE;
   rs.onchange = () => { const v = +rs.value; if (v > .5 && v < 2 && v !== W.RUNE_SCALE) hub.send({ type: 'setRuneScale', scale: v }); else rs.value = W.RUNE_SCALE; }; // the server saves it; app.js reloads every page
   for (const inp of side.querySelectorAll('.sticks input')) {

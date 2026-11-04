@@ -14,7 +14,7 @@ import net from 'node:net';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { X509Certificate } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, extname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,6 +80,22 @@ const dashboards = new Set();
 const toDashboards = data => { for (const d of dashboards) if (d.readyState === 1) d.send(data); };
 const phoneList = () => [...phones.values()].map(({ slot, name, addr }) => ({ slot, name, addr }));
 const status = () => toDashboards(JSON.stringify({ type: 'phones', list: phoneList() }));
+// Sensor recording (to tune the charge detector on real motion): a dashboard's { type: 'record', label, sec } writes every phone's imu and ar packets, one JSON a line with the
+// server's receive time rx, to recordings/<label>-<time>.jsonl (not in git) for sec s; { type: 'record' } stops early. Dashboards hear { type: 'recording', on, label, sec | file, n }.
+const RECORD_LABELS = ['walk', 'walk-circle', 'still-circle'];
+let rec = null;
+function stopRecording() {
+  if (!rec) return;
+  const { label, file, n, out, timer } = rec; rec = null; clearTimeout(timer);
+  out.end(() => { log(`recording: ${n} packets in recordings/${file}`); toDashboards(JSON.stringify({ type: 'recording', on: false, label, file, n })); });
+}
+function startRecording(label, sec) {
+  if (rec || !RECORD_LABELS.includes(label)) return;
+  const s = Math.min(Math.max(+sec || 20, 1), 120), dir = join(root, 'recordings'), file = `${label}-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`;
+  mkdirSync(dir, { recursive: true });
+  rec = { label, file, n: 0, out: createWriteStream(join(dir, file)), timer: setTimeout(stopRecording, s * 1000) };
+  toDashboards(JSON.stringify({ type: 'recording', on: true, label, sec: s }));
+}
 // The floor sheets' marker, one choice for every page and phone (public/marker.js): saved in settings.json, served as /marker.js,
 // sent to phones in `welcome` and to everyone as { type: 'marker' } when a dashboard switches it ({ type: 'setMarker', marker }).
 const settingsFile = join(root, 'settings.json');
@@ -143,6 +159,7 @@ wss.on('connection', (ws, req) => {
     }
     if (k.type === 'setMarker' && role === 'dashboard') return setMarker(k.marker);
     if (k.type === 'setRuneScale' && role === 'dashboard') return setRuneScale(k.scale);
+    if (k.type === 'record') { if (role === 'dashboard') { if (k.label) startRecording(k.label, k.sec); else stopRecording(); } return; }
     if (k.type === 'vibrate') { // { type: 'vibrate', slot, kind: 'charge' | 'win' | 'off' } from a dashboard goes to that slot's phone
       if (role !== 'dashboard' || !['charge', 'win', 'off'].includes(k.kind)) return;
       for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, { type: 'vibrate', kind: k.kind });
@@ -154,7 +171,7 @@ wss.on('connection', (ws, req) => {
       if (ms > 0) for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, { type: 'flash', ms });
       return;
     }
-    if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); }
+    if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); if (rec && (k.type === 'imu' || k.type === 'ar')) { rec.out.write(JSON.stringify({ ...k, rx: Date.now() / 1000 }) + '\n'); rec.n++; } }
   });
   ws.on('close', (code, reason) => {
     dashboards.delete(ws);

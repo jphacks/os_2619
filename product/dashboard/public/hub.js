@@ -34,6 +34,7 @@ export function createHub() {
     ws.onmessage = m => {
       if (typeof m.data !== 'string') return;
       let k; try { k = JSON.parse(m.data); } catch { return; }
+      if (k.type === 'recording') return hub.onRecording?.(k); // the sensor recording's state (server.mjs): connect.js shows it
       if (k.type === 'marker') hub.marker = k.marker; // the floor sheets' marker (server.mjs); app.js reloads when it differs from world.js
       else if (k.type === 'phones') {
         for (const [id, s] of Object.entries(st)) {
