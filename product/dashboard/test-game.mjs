@@ -17,7 +17,7 @@ function setup({ rules = {}, matchSec = 60, test = false, dummy = false } = {}) 
   let t = 1000, ids = 1;
   const fx = { aura() {}, charge() {}, shot: () => ids++, moveShot() {}, endShot() {}, hit() {}, guard() {}, block() {} };
   const cfg = { posSrc: 'start', aim: 'motion', hand: 'R', stickLen: { A: .8, B: .8 }, useTruth: true, test,
-    rules: { ...RULES, chargeHold: 0, ...rules, dmg: { ...RULES.dmg, ...rules.dmg }, size: { ...RULES.size, ...rules.size } } };
+    rules: { ...RULES, t1: 2, t2: 5, chargeHold: 0, ...rules, dmg: { ...RULES.dmg, ...rules.dmg }, size: { ...RULES.size, ...rules.size } } };
   const pos = { A: [-1.2, 0], B: [1.2, 0] };
   // dummy: the dummy room's frame (app.js getDummyFrame), players where the script puts them, as the dummy room draws them
   const frame = () => ({ players: Object.fromEntries(['A', 'B'].map(sl => { const [x, z] = pos[sl], sg = sl === 'A' ? 1 : -1;
@@ -179,6 +179,11 @@ scenario('ボタンで撃つとき（棒が動いていない）は、小は体�
 });
 
 // ---- 溜めのリスク ----
+scenario('今の溜め時間は 1 秒で中、2.5 秒で大', () => {
+  eq(RULES.t1, 1, '中になる秒数'); eq(RULES.t2, 2.5, '大になる秒数');
+  const S = setup({ rules: { t1: RULES.t1, t2: RULES.t2 } }); S.fight(); S.charge('A');
+  S.run(.9); eq(S.A.tier, 's', '0.9 秒'); S.run(.2); eq(S.A.tier, 'm', '1.1 秒'); S.run(1.5); eq(S.A.tier, 'l', '2.6 秒'); eq(S.A.charge, 1, 'メーター');
+});
 scenario('歩きながら棒を回し続けると、3m 動いても溜めは続き、中を撃てる', () => {
   const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); S.charge('A');
   for (let i = 0; i < 30; i++) { S.walk('A', 0, .1, .1); S.charge('A'); } // 3 s, 3 m

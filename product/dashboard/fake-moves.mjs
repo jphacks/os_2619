@@ -32,8 +32,8 @@ const SCRIPT = [
   { say: '溜めなしで振り下ろす（上から前へ、0.12 秒）', steps: swingDown },
   { say: '溜めなしで横に払う（左から正面の少し右へ）', steps: [move(.6, IDLE, LEFT), hold(.4, LEFT), move(.12, LEFT, RIGHT), hold(.8, RIGHT), move(.25, RIGHT, IDLE)] },
   { say: '溜め 小：1周回して（1.5 秒）すぐ振る → 溜め時間 約 0.4 秒', steps: charged(1) },
-  { say: '溜め 中：3周回して（4.5 秒）振る → 溜め時間 約 3.4 秒', steps: charged(3) },
-  { say: '溜め 大：5周回して（7.5 秒）振る → 溜め時間 約 6.4 秒', steps: charged(5) },
+  { say: '溜め 中：2周回して（3 秒）振る → 溜め時間 約 1.9 秒', steps: charged(2) },
+  { say: '溜め 大：3周回して（4.5 秒）振る → 溜め時間 約 3.4 秒', steps: charged(3) },
   { say: 'ゆっくり回す（1周 3 秒）：溜めにならないはず。そのあと振る', steps: [move(.6, IDLE, UP), circle(3, 1), hold(.3, UP), move(.12, UP, FWD_LOW), hold(.8, FWD_LOW), move(.6, FWD_LOW, IDLE)] },
   { say: '構えて待つ（次の周へ）', steps: [hold(2, IDLE)] },
 ];

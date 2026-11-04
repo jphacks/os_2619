@@ -76,7 +76,7 @@ export function createPlayable({ vsrc, game, cfg, save, isActive }) {
     let el, az;
     if (still) { el = .25; az = 0; }
     else if (s.guarding && !s.charging) { el = .02; az = -1.45; } // held level across the body (looks like a guard; game.js guards any still stick)
-    else if (s.charging) { const k = Math.min(1, (time - s.chargeAt) / 5); el = 1.15 + .04 * (1 + 2 * k) * Math.sin(time * (8 + 10 * k)); az = .05 * Math.sin(time * 3); } // raised, trembling more as it grows
+    else if (s.charging) { const k = Math.min(1, (time - s.chargeAt) / cfg.rules.t2); el = 1.15 + .04 * (1 + 2 * k) * Math.sin(time * (8 + 10 * k)); az = .05 * Math.sin(time * 3); } // raised, trembling more as it grows
     else if (swinging) { const u = sw / SWING; el = 1.2 - 1.7 * u; az = 0; }  // down toward the opponent
     else { el = .25 + .12 * Math.sin(1.6 * time); az = .15 * Math.sin(.9 * time); } // idle sway
     const dir = W.app3(bp.R, [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)]);

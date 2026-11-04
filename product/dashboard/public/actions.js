@@ -41,8 +41,6 @@ export function createActions() {
       // the body's slow turning, taken off the gyro for the charge: walking round or turning while circling the stick must not hide the reversals
       if (gap || !S.gAvg) S.gAvg = [...k.gyro];
       const hp = k.gyro.map((g, i) => g - (S.gAvg[i] += (g - S.gAvg[i]) * Math.min(1, gdt / .4)));
-      // walking (the chest moving for 1 s or more; one step or a turn is not walking): footsteps shake the stick too, so a charge is only kept by reversals as big as those that start one
-      const moving = k.t - (S.arAt ?? -9) < .5 && S.walkFrom != null && k.t - S.walkFrom >= 1, keepN = () => (moving ? S.revBig : S.rev).length;
 
       // Charge: unwrap the tilt direction of the upright stick; one full turn inside 2 s
       if (d[2] > Math.cos(45 * D) && Math.hypot(d[0], d[1]) > 0.1 && !gap) {
@@ -70,11 +68,11 @@ export function createActions() {
           }
           while (rev.length && rev[0] < k.t - 1) rev.shift();
         }
-        if ((S.chargeOn ? keepN() >= 4 : S.revBig.length >= 5) && k.t > S.spinCool) { // keeps firing while the shaking goes on: the game drops the charge when it stops
+        if ((S.chargeOn ? S.rev.length >= 4 : S.revBig.length >= 5) && k.t > S.spinCool) { // keeps firing while the shaking goes on: the game drops the charge when it stops
           emit('Charge', `gyro: ${S.rev.length} direction changes in 1 s`, k.t, { keep: S.chargeOn }); S.chargeOn = true; S.spinCool = k.t + .15; S.ring = [];
         }
       }
-      if (S.chargeOn && keepN() < 4 && k.t - S.spinCool > 2) S.chargeOn = false; // as long as the game keeps a paused charge (2 s): resuming uses the keep rule
+      if (S.chargeOn && S.rev.length < 4 && k.t - S.spinCool > 2) S.chargeOn = false; // as long as the game keeps a paused charge (2 s): resuming uses the keep rule
 
       // Swing: starts where the stick was last calm, ends when it slows down again
       if (gap) S.sw = null;
@@ -109,7 +107,6 @@ export function createActions() {
       const o = S.ar[0], dt = k.t - o.t;
       if (dt >= 0.1 && dt < 0.4) {
         const v = [(k.wp[0] - o.p[0]) / dt, 0, (k.wp[2] - o.p[2]) / dt], sp = Math.hypot(...v);
-        S.arAt = k.t; if (sp > .3) S.walkFrom ??= k.t; else S.walkFrom = null;
         if (sp > 1.2 && !S.dodging) {
           const f = qrot(k.wq, [0, 0, -1]), fwd = norm([f[0], 0, f[2]]), right = cross(fwd, [0, 1, 0]);
           const r = dot(v, right), fw = dot(v, fwd);

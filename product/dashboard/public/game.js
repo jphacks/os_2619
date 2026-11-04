@@ -29,7 +29,7 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷' };
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: 1 }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × (all tiers)
+export const RULES = { t1: 1, t2: 2.5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: 1 }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × (all tiers)
 // how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
 // a little larger than the ball looks so near misses still count (10/18: .12 / .28 / .5 were too strict)
 const TIER = {
