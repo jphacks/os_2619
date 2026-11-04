@@ -31,6 +31,8 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
     var rttMs: Double { lock.lock(); defer { lock.unlock() }; return _rttMs }
     /// The floor sheets' marker the PC chose: "april" or "rune". Older servers say nothing: april.
     var marker: String { lock.lock(); defer { lock.unlock() }; return _marker }
+    /// The PC says this phone's player was hit: light the torch for this many ms. Set before connect; called on the socket's queue.
+    var onFlash: ((Int) -> Void)?
 
     init(id: String, name: String) {
         self.id = id
@@ -127,6 +129,8 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
             lock.unlock()
         case "marker":
             if let m = k["marker"] as? String { lock.lock(); _marker = m; lock.unlock() }
+        case "flash":
+            if let ms = (k["ms"] as? NSNumber)?.intValue { onFlash?(ms) }
         case "full":
             lock.lock(); _status = "PC already has 2 phones"; lock.unlock()
         default:

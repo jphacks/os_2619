@@ -33,18 +33,18 @@ export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, mo
 // how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
 // a little larger than the ball looks so near misses still count (10/18: .12 / .28 / .5 were too strict)
 const TIER = {
-  s: { power: .15, big: .7, speed: 11, radius: .2, hit: .25 },
-  m: { power: .6, big: 1.5, speed: 8, radius: .38, hit: .65 },
-  l: { power: 1, big: 2.8, speed: 6.5, radius: .62, hit: 1 },
+  s: { power: .15, big: .7, speed: 11, radius: .2, hit: .25, flash: 120 },
+  m: { power: .6, big: 1.5, speed: 8, radius: .38, hit: .65, flash: 250 },
+  l: { power: 1, big: 2.8, speed: 6.5, radius: .62, hit: 1, flash: 500 },
 };
 export const POS_JA = { auto: '自動', phones: '胸スマホ', start: '立ち位置' };
 
 /**
- * createGame({ fx, drone, sfx: () => audio | null, cfg, onFlash, clock? }) → { players, match, shots, events, step, onSensed, command, canAct, ... }
+ * createGame({ fx, drone, sfx: () => audio | null, cfg, onFlash, onHit?, clock? }) → { players, match, shots, events, step, onSensed, command, canAct, ... }
  * cfg (live object): posSrc 'auto'|'phones'|'camera'|'start', hand 'R'|'L', aim 'stick'|'eye', stickLen { A, B }, test (no HP loss),
  * rules (RULES: tier seconds, damage, rapid-fire interval, how far you may move while charging).
  */
-export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {}, clock = null, getDummyFrame = () => null }) {
+export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {}, onHit = () => {}, clock = null, getDummyFrame = () => null }) {
   const now = clock ?? (() => performance.now() / 1000); // test-game.mjs drives a fake clock
   const events = []; // newest first: { at: Date.now(), slot, kind, text }
   const log = (slot, kind, text) => { events.unshift({ at: Date.now(), slot, kind, text }); if (events.length > 200) events.pop(); };
@@ -231,6 +231,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       if (hit) {
         fx.hit(s.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.element, panOf(s.pos), T.hit, s.tier);
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
+        onHit(foe.slot, T.flash); // the phone of the player who was hit lights its torch for this many ms (app.js, server.mjs)
         if (!s.test) damage(foe, s.owner, s.tier, s.mul ?? 1); // try-out shots only show
       }
       const end = hit ? 'hit' : s.pos.y < 0 ? 'floor' : now() - s.born > 1.6 / Math.max(.3, rules().speed ?? 1) ? 'timeout' : null; // y < 0: into the floor; slower balls live longer, so they still reach

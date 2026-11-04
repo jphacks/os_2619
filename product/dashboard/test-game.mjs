@@ -22,7 +22,8 @@ function setup({ rules = {}, matchSec = 60, test = false, dummy = false } = {}) 
   // dummy: the dummy room's frame (app.js getDummyFrame), players where the script puts them, as the dummy room draws them
   const frame = () => ({ players: Object.fromEntries(['A', 'B'].map(sl => { const [x, z] = pos[sl], sg = sl === 'A' ? 1 : -1;
     return [sl, { chest: [x, 1.3, z], yaw: sl === 'A' ? 0 : Math.PI, base: [x + .2 * sg, 1.2, z], tip: [x + 1 * sg, 1.2, z], dir: [sg, 0, 0] }]; })) });
-  const g = createGame({ fx, drone: null, cfg, clock: () => t, ...(dummy && { getDummyFrame: frame }) });
+  const flashes = [];
+  const g = createGame({ fx, drone: null, cfg, clock: () => t, onHit: (slot, ms) => flashes.push([slot, ms]), ...(dummy && { getDummyFrame: frame }) });
   const put = (slot, x, z) => { // chest 1.3 m up, stick held at the chest pointing straight at the other start mark
     pos[slot] = [x, z];
     const s = slot === 'A' ? 1 : -1;
@@ -37,7 +38,7 @@ function setup({ rules = {}, matchSec = 60, test = false, dummy = false } = {}) 
   const run = sec => { for (let i = 0; i < Math.round(sec / DT); i++) { t += DT; for (const sl of ['A', 'B']) if (wob[sl]) bob(sl); g.step(DT, DT, null); } };
   g.command({ cmd: 'matchSec', value: matchSec });
   const S = {
-    g, cfg, run, put, wob,
+    g, cfg, run, put, wob, flashes,
     get A() { return g.players.A; }, get B() { return g.players.B; },
     fight() { g.command({ cmd: 'phase', phase: 'fight' }); run(3.05); },
     swing: slot => g.onSensed({ slot, name: 'Swing', power: .7 }),
@@ -244,6 +245,14 @@ scenario('真一文字に構えると、小は跳ね返って撃った A に当�
   eq(S.B.guarding, true, 'B のガード');
   S.swing('A'); S.run(1.5);
   eq(S.B.hp, 100, 'B の HP'); eq(S.A.hp, 90, '跳ね返った小を受けた A の HP（小 5 × 反射 2 倍）');
+});
+scenario('当たられた側のスマホだけが光る。小をガードで跳ね返すと、撃った側が光る', () => {
+  const S = setup(); S.fight();
+  S.swing('A'); S.run(1.5);
+  eq(JSON.stringify(S.flashes), '[["B",120]]', '小が B に当たったときのライト');
+  S.flashes.length = 0; guardB(S); S.run(.4);
+  S.swing('A'); S.run(1.5);
+  eq(JSON.stringify(S.flashes), '[["A",120]]', '跳ね返った小が A に当たったときのライト');
 });
 scenario('反射のダメージ倍率を変えると、跳ね返った小のダメージも変わる', () => {
   const S = setup({ rules: { reflectMul: 3 } }); S.fight(); guardB(S); S.run(.4);

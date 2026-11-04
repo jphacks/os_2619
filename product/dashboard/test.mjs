@@ -41,6 +41,14 @@ a.ws.send(JSON.stringify({ type: 'ping', t0: 5 }));
 const pong = await wait(() => a.inbox.find(k => k.type === 'pong'));
 assert.equal(pong.t0, 5); assert.ok(Math.abs(pong.ts - Date.now() / 1000) < 1);
 
+// a hit: the dashboard's flash goes to that slot's phone only; a phone cannot flash another phone
+dash.ws.send(JSON.stringify({ type: 'flash', slot: 'B', ms: 250 }));
+assert.equal((await wait(() => b.inbox.find(k => k.type === 'flash'))).ms, 250);
+a.ws.send(JSON.stringify({ type: 'flash', slot: 'B', ms: 999 }));
+dash.ws.send(JSON.stringify({ type: 'flash', slot: 'B', ms: 99999 }));
+assert.equal((await wait(() => b.inbox.find(k => k.type === 'flash' && k.ms !== 250))).ms, 2000);
+assert.ok(!a.inbox.some(k => k.type === 'flash')); assert.ok(!dash.inbox.some(k => k.type === 'flash'));
+
 const a2 = await open({ type: 'hello', role: 'phone', id: 'p1', name: 'one' }); // same id: keeps slot A
 assert.equal((await wait(() => a2.inbox.find(k => k.type === 'welcome'))).slot, 'A');
 b.ws.close(); // B leaves: slot B is free again
