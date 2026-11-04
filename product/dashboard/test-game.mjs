@@ -136,9 +136,9 @@ scenario('大ボタンを押すと、実際に溜めて小→中→大と上が�
   eq(mid, 'm', '3秒後の段階'); eq(S.A.shots, 1, '発射数'); eq(S.A.charging, false, '撃ったあと溜め中か'); eq(S.B.hp, 40, 'B の HP（大1発）');
   return '押す → 3秒で中 → 5.3秒で撃つ';
 });
-scenario('大ボタンで溜めている途中に動くと失敗し、撃たない', () => {
+scenario('大ボタンで溜めている途中に動いても失敗せず、大を撃つ', () => {
   const S = setup(); S.fight(); S.g.command({ cmd: 'special', slot: 'A' }); S.run(2); S.walk('A', 0, .6); S.run(5);
-  eq(S.A.fails, 1, '失敗数'); eq(S.A.shots, 0, '発射数'); eq(S.B.hp, 100, 'B の HP');
+  eq(S.A.fails, 0, '失敗数'); eq(S.A.shots, 1, '発射数');
 });
 
 // ---- 撃つ方向（止める直前の棒の先の動き） ----
@@ -179,15 +179,17 @@ scenario('ボタンで撃つとき（棒が動いていない）は、小は体�
 });
 
 // ---- 溜めのリスク ----
-scenario('溜め中に30cm動いても溜めは続く', () => {
-  const S = setup(); S.fight(); S.charge('A'); S.run(1); S.walk('A', 0, .3); S.run(.5);
-  eq(S.A.charging, true, '溜め中か'); eq(S.A.fails, 0, '失敗数');
+scenario('歩きながら棒を回し続けると、3m 動いても溜めは続き、中を撃てる', () => {
+  const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); S.charge('A');
+  for (let i = 0; i < 30; i++) { S.walk('A', 0, .1, .1); S.charge('A'); } // 3 s, 3 m
+  eq(S.A.charging, true, '溜め中か'); eq(S.A.fails, 0, '失敗数'); eq(S.A.tier, 'm', '溜めの段階');
+  S.put('A', -1.2, 0); S.run(.1); S.swing('A'); S.run(1);
+  eq(S.B.hp, 80, 'B の HP（中1発）');
 });
-scenario('溜め中に60cm動くと溜めが消え、そのあと振っても小しか出ない', () => {
-  const S = setup(); S.fight(); S.charge('A'); S.run(3); S.walk('A', 0, .6);
+scenario('歩いていても棒を回すのをやめると溜めは切れる', () => {
+  const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); S.charge('A');
+  for (let i = 0; i < 20; i++) S.walk('A', 0, .1, .1);
   eq(S.A.charging, false, '溜め中か'); eq(S.A.fails, 1, '失敗数');
-  S.put('A', -1.2, 0); S.run(.3); S.swing('A'); S.run(1);
-  eq(S.B.hp, 95, 'B の HP（小1発）');
   return S.log().find(l => l.includes('溜め失敗'));
 });
 scenario('溜めている間は無防備：相手の小を受け続ける', () => {

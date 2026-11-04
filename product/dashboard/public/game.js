@@ -4,7 +4,7 @@
 // detectors (actions.js: Charge / Swing) and from the keys / buttons. Rules (GAME_DESIGN.md, 10/17):
 //   Swing without charging → 小 (weak, can be repeated every `rapid` s)
 //   Charge (circle the stick) → charging; Swing releases it: under t1 s 小, t1..t2 s 中, t2 s and more 大 (special move)
-//   moving the chest more than `moveFail` m while charging drops the charge
+//   the player may walk while charging; a charging player cannot guard
 //   every tier is a projectile along the aim: dodging is just moving out of its way (no invulnerable dodge)
 //   guard (10/18): the stick held still, lying sideways (within 45° of horizontal), for guardHold s (not while charging, not right after a swing), or the guard button: a 小 that
 //   reaches the guard bounces back at its shooter; 中 and 大 go through it (full damage)
@@ -29,7 +29,7 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷' };
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: 1 }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × (all tiers)
+export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: 1 }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × (all tiers)
 // how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
 // a little larger than the ball looks so near misses still count (10/18: .12 / .28 / .5 were too strict)
 const TIER = {
@@ -54,7 +54,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   };
 
   function makePlayer(slot) {
-    return { slot, element: ELEMENT[slot], hp: cfg.rules?.hp ?? RULES.hp, hpMax: cfg.rules?.hp ?? RULES.hp, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, chargeFrom: null, tier: null, act: null, guarding: false, guardBtn: false,
+    return { slot, element: ELEMENT[slot], hp: cfg.rules?.hp ?? RULES.hp, hpMax: cfg.rules?.hp ?? RULES.hp, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, tier: null, act: null, guarding: false, guardBtn: false,
       body: W.bodyPose(W.START[slot].pos, W.START[slot].yaw), chest: V(), base: V(), tip: V(), dir: V(1, 0, 0), trail: [], lastShot: -9, src: 'start', stickSrc: '-',
       shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 };
   }
@@ -243,7 +243,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   // ---- moves ----
   function startCharge(p) {
     if (!canAct() || p.charging) return;
-    Object.assign(p, { charging: true, chargeSeen: now(), charge: 0, chargeT: 0, tier: 's', chargeFrom: p.chest.clone(), autoRelease: null });
+    Object.assign(p, { charging: true, chargeSeen: now(), charge: 0, chargeT: 0, tier: 's', autoRelease: null });
     showAct(p, '溜め'); log(p.slot, 'charge', '溜め開始');
   }
   /** Swing while charging: the tier comes from how long it was held. */
@@ -279,9 +279,6 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function stepCharge(dt) {
     const R = rules();
     for (const p of Object.values(players)) if (p.charging) {
-      // feet must stay put: the chest may sway, but more than moveFail m (horizontal) from where the charge began drops it
-      const moved = p.chargeFrom ? Math.hypot(p.chest.x - p.chargeFrom.x, p.chest.z - p.chargeFrom.z) : 0;
-      if (moved > R.moveFail) { failCharge(p, `${Math.round(moved * 100)} cm 動いた`); continue; }
       if (R.chargeHold > 0 && p.autoRelease == null && p.tier !== 'l' && now() - p.chargeSeen > R.chargeHold) { failCharge(p, '棒の動きが止まった'); continue; } // short pauses are fine; a long stop drops it (a full charge just waits for the swing)
       // the charge only grows while the stick is being circled (Charge events keep coming); once the circling stops it is held
       // as it is, for chargeHold s, waiting for the swing down that fires it (10/18: circle, stop, swing down = fire).

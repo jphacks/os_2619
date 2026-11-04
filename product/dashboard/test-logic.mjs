@@ -41,6 +41,43 @@ import { STICK } from './public/world.js';
   console.log('charge ok: tremor does not start it, a shake does, a smaller shake keeps it');
 }
 
+// charge on the move: a shake on top of the body's turning still counts; footsteps alone neither start a charge nor keep one
+{
+  const A = createActions(), ev = [];
+  let t = 700, x = 0;
+  const shake = (i, a) => (i % 16 < 8 ? a : -a), step = i => 45 * Math.sin(2 * Math.PI * 2 * i / 100); // 2 steps a second
+  const run = (dur, f, speed = 0) => {
+    for (let i = 0; i < dur * 100; i++, t += 0.01) {
+      x += speed * .01;
+      ev.push(...A.ingest({ type: 'imu', slot: 'A', t, ...f(i) }, [1, 0, 0]));
+      ev.push(...A.ingest({ type: 'ar', slot: 'A', t, tracking: 'TRACKING', wp: [x, 1.3, 0], wq: [0, 0, 0, 1] }));
+    }
+  };
+  const charges = () => ev.filter(e => e.name === 'Charge').length;
+  run(1, () => ({ euler: [0, -50, 0], gyro: [0, 0, 0] }));
+  run(1.5, i => ({ euler: [0, -50, 0], gyro: [0, 150 + shake(i, 200), 0] }), 1); // walking and turning at 150°/s: the raw gyro is 350 / -50
+  assert.ok(charges() > 0, 'a shake while turning did not start a charge');
+  assert.ok(ev.filter(e => e.name === 'Dodge').length === 0, 'walking at 1 m/s dodged');
+
+  run(1, i => ({ euler: [0, -50, 0], gyro: [0, 150 + shake(i, 80), 0] }), 1); // a smaller shake keeps it on the move
+  ev.length = 0; run(.6, i => ({ euler: [0, -50, 0], gyro: [0, shake(i, 80), 0] }), 1);
+  assert.ok(charges() > 0, 'a shake on the move did not keep the charge');
+
+  run(2, () => ({ euler: [0, -50, 0], gyro: [0, 0, 0] })); // stops, and the charge is over
+  run(2.5, () => ({ euler: [0, -50, 0], gyro: [0, 0, 0] }));
+  ev.length = 0; run(3, i => ({ euler: [0, -50, 0], gyro: [step(i), step(i + 12), 0] }), 1);
+  assert.equal(charges(), 0, 'footsteps started a charge');
+
+  const B = createActions(), evB = []; let tb = 900, xb = 0; // once charging, footsteps alone do not keep it
+  const runB = (dur, f, speed = 0) => { for (let i = 0; i < dur * 100; i++, tb += 0.01) { xb += speed * .01; evB.push(...B.ingest({ type: 'imu', slot: 'B', t: tb, ...f(i) }, [1, 0, 0])); evB.push(...B.ingest({ type: 'ar', slot: 'B', t: tb, tracking: 'TRACKING', wp: [xb, 1.3, 0], wq: [0, 0, 0, 1] })); } };
+  runB(1, i => ({ euler: [0, -50, 0], gyro: [0, shake(i, 200), 0] }), 1);
+  assert.ok(evB.some(e => e.name === 'Charge'), 'no charge to keep');
+  runB(1.1, i => ({ euler: [0, -50, 0], gyro: [step(i), step(i + 12), 0] }), 1); // the last second's reversals run out
+  evB.length = 0; runB(1, i => ({ euler: [0, -50, 0], gyro: [step(i), step(i + 12), 0] }), 1);
+  assert.equal(evB.filter(e => e.name === 'Charge').length, 0, 'footsteps kept a charge');
+  console.log('charge on the move ok: a shake counts while turning, footsteps do not');
+}
+
 // phonealign: 20 s of the fake world (raw ARCore frames with their own yaw / origin) -> chest positions in the field world
 {
   const sim = createSim({ seed: 3, noise: 1 }), PA = createPhoneAlign(), t0 = 1000;
