@@ -182,15 +182,18 @@ vec3 grass(vec2 uv) { // the clovers must not line up: a triangle grid over the 
   vec3 sum = (grassCopy(uv, dx, dy, a) - m) * w.x + (grassCopy(uv, dx, dy, b) - m) * w.y + (grassCopy(uv, dx, dy, c) - m) * w.z;
   return m + sum / sqrt(dot(w, w));
 }
+float turfHeight(vec2 q) { return .6 * texture2D(cN, mat2(.825, .565, -.565, .825) * q * .63).r + .4 * texture2D(cN, mat2(.454, -.891, .891, .454) * q * 1.07 + .37).g; }
 vec3 lawnColor(vec2 p) {
   vec2 e = abs(p - vec2(0., ${((LAWN.z0 + LAWN.z1) / 2).toFixed(2)})) - vec2(${LAWN.x.toFixed(1)}, ${((LAWN.z1 - LAWN.z0) / 2).toFixed(2)});
   float out_ = max(e.x, e.y), onLawn = 1. - smoothstep(-.015, .015, out_);
-  vec3 g = grass(p / ${LAWN.tile.toFixed(1)});
+  // inside the field's outline, one whole copy of the image, as it is; around it, the turned copies, fading in just past the outline
+  vec3 g = mix(grass(p / ${LAWN.tile.toFixed(1)}), texture2D(cG, vec2(.5 + p.x / ${LAWN.tile.toFixed(1)}, .5 - p.y / ${LAWN.tile.toFixed(1)})).rgb, 1. - smoothstep(${(LAWN.tile / 2).toFixed(1)}, ${(LAWN.tile / 2 + .6).toFixed(1)}, max(abs(p.x), abs(p.y))));
   float big = texture2D(cN, p * .05 + .7).r, tuft = texture2D(cN, p * .23 + .3).g;
   g *= .92 + big * .1 + tuft * .08; // slow changes of tone, so the far lawn does not go flat
-  // the turf's gentle lumps, only in the light: the noise read as a height, the sun on its slope (the surface stays flat)
-  float e1 = .02, h1 = texture2D(cN, p * .8).r;
-  vec2 slope = vec2(texture2D(cN, (p + vec2(e1, 0.)) * .8).r - h1, texture2D(cN, (p + vec2(0., e1)) * .8).r - h1) / e1 * .03;
+  // the turf's gentle lumps, only in the light: a height, the sun on its slope (the surface stays flat). So they do not repeat: two noises at unrelated turns and scales, stronger in some places than others
+  // (moving the noise about instead, by another noise, stretched the lumps into streaks)
+  float e1 = .02, h1 = turfHeight(p);
+  vec2 slope = vec2(turfHeight(p + vec2(e1, 0.)) - h1, turfHeight(p + vec2(0., e1)) - h1) / e1 * (.015 + .03 * big);
   g *= clamp(dot(normalize(vec3(-slope.x, 1., -slope.y)), cSun) / cSun.y, .82, 1.16);
   // the paths: pale flagstones
   vec2 q = p / vec2(1.3, .8); float row = floor(q.y); q.x += mod(row, 2.) * .5; vec2 fq = abs(fract(q) - .5) * 2., cell = floor(q);
