@@ -67,7 +67,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   let winner = null;
   const canAct = () => !match.paused && match.phase === 'fight';
   const rules = () => cfg.rules ?? RULES;
-  const MOVE_GRACE = 2.5; // s added to chargeHold while the player steps or turns: the hand slows down then, and that must not empty the charge
+  const MOVE_GRACE = .5; // s added to chargeHold while the player steps or turns. Measured: while circling, Charge events stop for at most 1 s; a longer wait keeps a stopped charge (and the vibration) alive while just walking
   const CHARGE_LIVE = .4; // s after a Charge event the circling counts as still going (actions.js sends one every ~.15 s while it does)
   const speedOf = T => T.speed * (rules().speed ?? 1); // m/s, the dashboard's ball-speed slider applied
   const tierOf = t => t < rules().t1 ? 's' : t < rules().t2 ? 'm' : 'l';
