@@ -80,7 +80,7 @@ npm run test:game    # ゲームのルールだけを、台本どおりのシナ
 
 ## 被弾のライト
 
-弾が当たると、当たられた側のスマホのライトが光る（小 120 ms、中 250 ms、大 500 ms。`game.js` の `TIER`）。ダッシュボードが `{ type: 'flash', slot, ms }` をサーバーに送り、サーバーがそのスロットのスマホに `{ type: 'flash', ms }` を送る。iOS アプリのみ対応で、Android アプリはこのメッセージを無視する。
+弾が当たると、当たられた側のスマホのライトが光る（小 120 ms、中 250 ms、大 500 ms。`game.js` の `TIER`）。ダッシュボードが `{ type: 'flash', slot, ms }` をサーバーに送り、サーバーがそのスロットのスマホに `{ type: 'flash', ms }` を送る。iOS は端末のライトを直接、Android は ARCore のセッション設定（`Config.FlashMode`）で点ける。
 
 ## 位置の求め方
 

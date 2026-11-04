@@ -92,6 +92,9 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     @Volatile private var camPose: ArPose? = null
     @Volatile private var arOrigin: ArPose? = null
     @Volatile var arText = "AR: starting"
+    // a hit: the torch stays on until this time (elapsedRealtime, ms). ARCore owns the camera, so the GL thread switches it through the session config.
+    @Volatile private var torchUntilMs = 0L
+    private var torchOn = false // GL thread
 
     private val convertW = Worker("convert")
     private val tagW = Worker("tags")
@@ -111,6 +114,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
 
         val id = prefs.getString("id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("id", it).apply() }
         link = Link(id, Build.MODEL)
+        link.onFlash = { ms -> torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + ms) } // another hit can only make it last longer
         imu = Imu(this) { s ->
             link.send(JSONObject().put("type", "imu").put("t", link.pcTime(s.wallMs))
                 .put("euler", arr(s.euler)).put("acc", arr(s.acc)).put("gyro", arr(s.gyro))
@@ -215,6 +219,11 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     override fun onDrawFrame(g: GL10?) {
         val s = session ?: return
         if (texSession !== s) { s.setCameraTextureName(tex); texSession = s }
+        val torch = SystemClock.elapsedRealtime() < torchUntilMs
+        if (torch != torchOn) { // a camera without a flash just stays dark
+            torchOn = torch
+            try { s.configure(s.config.apply { flashMode = if (torch) Config.FlashMode.TORCH else Config.FlashMode.OFF }) } catch (e: Exception) { Log.w("SensorLink", "torch", e) }
+        }
         val f = try { s.update() } catch (e: Exception) { return }
         val cam = f.camera
         // ARCore image timestamps are on the boot clock on practically all devices; fall back to now otherwise
