@@ -20,7 +20,7 @@ const toMat = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3
 export const GUIDE_CAM = { x: 0, y: 1.7, z: 3.5, yaw: 0, pitch: -16, roll: 0, fov: 45 };
 export const DRONE_JA = { fixed: '定点（最終映像と同じ）', auto: '自動演出', orbit: '周回', chaseA: 'A の肩越し', chaseB: 'B の肩越し', top: '真上', side: '真横', free: '自由操作' };
 
-const RK = W.MARKER === 'rune' ? '-mahoujin' + W.RUNE_SCALE : ''; // a scan belongs to the sheets it saw: the mahoujin (at its scale) or the AprilTag square
+const RK = W.MARKER === 'rune' ? '-mahoujinA' + W.RUNE_SCALE : ''; // a scan belongs to the sheets it saw: the mahoujin (T0 on A's side, at its scale) or the AprilTag square
 const FIELD_KEY = 'pd-field-fixed3-' + W.LAYOUT + RK, CAM_KEY = 'pd-tagcam-fixed3' + RK; // v3: drops scans made with map4 sheets taken as standing (phone C turned 180° from the phones); a saved scan only holds the sheets' turns and phone C
 
 export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay = null }) { // overlay.compose(src, w, h, dt): the picture with the recognition layers (visionfx.js) or null
@@ -108,7 +108,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
       S.tagCam = cam; try { localStorage.setItem(CAM_KEY, JSON.stringify(cam)); } catch {}
       const good = cam.reprojErrPx < 3; S.ready = S.ready || good;
       S.msg = good ? `スキャン完了：タグ ${cam.ids.join(',')}　誤差 ${cam.reprojErrPx.toFixed(1)}px　縦画角 ${cam.fovY.toFixed(1)}°${cam.focalFitted ? '（測定）' : '（設定値）'}`
-        : `スキャン不十分：誤差 ${cam.reprojErrPx.toFixed(1)}px が大きい。${W.MARKER === 'rune' ? `魔法陣の向き（T0 がカメラの反対側）と倍率 ${W.RUNE_SCALE}` : `タグの置き方（時計回り 0→1→2→3、同じ向き、一辺 ${(W.TAG_PITCH * 1000).toFixed(0)} mm）`}を確かめる`;
+        : `スキャン不十分：誤差 ${cam.reprojErrPx.toFixed(1)}px が大きい。${W.MARKER === 'rune' ? `魔法陣の向き（T0 が A のスタート側）と倍率 ${W.RUNE_SCALE}` : `タグの置き方（時計回り 0→1→2→3、同じ向き、一辺 ${(W.TAG_PITCH * 1000).toFixed(0)} mm）`}を確かめる`;
       resize(); return;
     }
     const need = modeIds(), src = video.__dummy?.canvas ?? video;

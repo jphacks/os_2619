@@ -254,7 +254,7 @@ export function createSpace({ view, legendEl, panelEl, hub, PA, getStage, getGam
     grid.visible = axes.visible = on.grid; tagsGrp.visible = on.tags && (W.FIXED_FIELD || !!getStage()?.state.scanned); detGrp.visible = on.tags; // fixed sheets are drawn where they are; other tags where they were first seen
     placeC();
     const st = getStage()?.state;
-    note.textContent = W.FIXED_FIELD && W.MARKER === 'rune' ? `魔法陣のタグ 0〜6 に固定（床。半径 ${Math.hypot(...W.runeTagPos(0)).toFixed(3)} m の円、0 が奥、上から見て時計回り）${st?.scanned ? '' : '。スキャンはスマホ C の位置用'}` : W.FIXED_FIELD ? `タグ 0〜3 は中心に接して大きな正方形（床。時計回りに 0→1→2→3、隣の中心まで ${W.TAG_PITCH} m）に固定${st?.scanned ? '' : '。スキャンはスマホ C の位置用'}` : !st?.scanned ? 'フィールド未スキャン：タグは見えた場所に表示（スキャンするとフィールドの形も出る）' : on.mapjs && !roomToWorld ? 'map.js：床のタグ 2 枚以上を両スマホが見るまで照合できない' : '';
+    note.textContent = W.FIXED_FIELD && W.MARKER === 'rune' ? `魔法陣のタグ 0〜6 に固定（床。半径 ${Math.hypot(...W.runeTagPos(0)).toFixed(3)} m の円、0 が A のスタート側、上から見て時計回り）${st?.scanned ? '' : '。スキャンはスマホ C の位置用'}` : W.FIXED_FIELD ? `タグ 0〜3 は中心に接して大きな正方形（床。時計回りに 0→1→2→3、隣の中心まで ${W.TAG_PITCH} m）に固定${st?.scanned ? '' : '。スキャンはスマホ C の位置用'}` : !st?.scanned ? 'フィールド未スキャン：タグは見えた場所に表示（スキャンするとフィールドの形も出る）' : on.mapjs && !roomToWorld ? 'map.js：床のタグ 2 枚以上を両スマホが見るまで照合できない' : '';
   }
 
   // ---- right panel: raw numbers, DOM touched only when the text changes ----

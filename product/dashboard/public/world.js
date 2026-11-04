@@ -44,8 +44,8 @@ const H = 2; // the full / today tag poles stay where they were put (2 m out); t
 // Sizes: a tag36h11 sheet has a white margin of 1/10 of its side on each side, so the black square (TAGS[id].size, what the distance
 // maths measures) is 0.8 x the paper. tagSquare() draws the paper at size x 10/8.
 // MARKER 'rune': map4 is the mahoujin instead, one printed magic circle (mahoujin/magic-circle-576808920-A3.pdf) whose 7 RuneTags
-// T0-T6 are ids 0-6, every one upright like the poster, centres on a circle of RUNE.circle round the origin: T0 straight ahead (-z, the
-// poster's top edge away from the camera), then clockwise seen from above. Their detectors report the corners of a virtual square of
+// T0-T6 are ids 0-6, every one upright like the poster, centres on a circle of RUNE.circle round the origin. The poster lies turned RUNE_YAW:
+// T0 and the poster's top edge towards A's start (-x), then clockwise seen from above. Their detectors report the corners of a virtual square of
 // RUNE.square / RUNE.sheet = 0.8 of the patch disc, so the same 10/8 paper rule holds. Worn tags 8-11 and the other layouts stay tag36h11.
 // RUNE_SCALE: printed / designed size of the whole mahoujin (tags and circle alike), measured after assembly (dots Ø 270 mm by design);
 // set on the connection screen (server settings.json) or env RUNE_SCALE.
@@ -55,8 +55,10 @@ const SHEET = PRINTED.april;
 const PITCH = (typeof location !== 'undefined' && +new URLSearchParams(location.search).get('pitch')) || (typeof process !== 'undefined' && +process.env?.PITCH) || SHEET;
 export const TAG_PITCH = PITCH;
 const HP = PITCH / 2, FS = SHEET * .8; // map4 sheet size (black square)
+/** How the whole mahoujin lies on the floor: turned 90° counter-clockwise seen from above from T0 at -z, so T0 is on A's side. */
+export const RUNE_YAW = Math.PI / 2;
 /** Mahoujin tag i on the floor: [x, 0, z] in m. */
-export const runeTagPos = i => { const a = i * 2 * Math.PI / 7, r = RUNE.circle * RUNE_SCALE; return [r * Math.sin(a), 0, -r * Math.cos(a)]; };
+export const runeTagPos = i => { const a = i * 2 * Math.PI / 7 - RUNE_YAW, r = RUNE.circle * RUNE_SCALE; return [r * Math.sin(a), 0, -r * Math.cos(a)]; };
 const LAYOUTS = {
   full: {
     0: { size: 0.16, pos: [-H, CHEST_H, -H] },
@@ -70,7 +72,7 @@ const LAYOUTS = {
     0: { size: 0.16, pos: [H, CHEST_H, 0], flip: true },
     1: { size: 0.16, pos: [-H, CHEST_H, 0], flip: true },
   },
-  map4: MARKER === 'rune' ? Object.fromEntries(RUNE_IDS.map(id => [id, { size: RUNE.square * RUNE_SCALE, pos: runeTagPos(id), floor: true, yaw: 0, yawKnown: true }])) : {
+  map4: MARKER === 'rune' ? Object.fromEntries(RUNE_IDS.map(id => [id, { size: RUNE.square * RUNE_SCALE, pos: runeTagPos(id), floor: true, yaw: RUNE_YAW, yawKnown: true }])) : {
     0: { size: FS, pos: [-HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
     1: { size: FS, pos: [HP, 0, -HP], floor: true, yaw: 0, yawKnown: true },
     2: { size: FS, pos: [HP, 0, HP], floor: true, yaw: 0, yawKnown: true },
