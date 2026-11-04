@@ -54,7 +54,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   };
 
   function makePlayer(slot) {
-    return { slot, element: ELEMENT[slot], hp: cfg.rules?.hp ?? RULES.hp, hpMax: cfg.rules?.hp ?? RULES.hp, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, tier: null, act: null, guarding: false, guardBtn: false,
+    return { slot, element: ELEMENT[slot], hp: cfg.rules?.hp ?? RULES.hp, hpMax: cfg.rules?.hp ?? RULES.hp, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, tier: null, act: null, guarding: false, guardKey: null,
       body: W.bodyPose(W.START[slot].pos, W.START[slot].yaw), chest: V(), base: V(), tip: V(), dir: V(1, 0, 0), trail: [], lastShot: -9, src: 'start', stickSrc: '-',
       shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 };
   }
@@ -131,7 +131,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       const dev = Math.max(...h.map(x => p.dir.angleTo(x.dir))); // the furthest any sample in the window is from now: a wobble's turning point is not still
       const level = Math.abs(p.dir.y) < Math.sin(GUARD_LEVEL); // 10/18: only a stick lying sideways (within 45° above / below horizontal) guards; held upright it does nothing
       const still = level && t - h[0].t >= win - 1e-6 && dev < GUARD_STILL && t - (p.swingAt ?? -9) > AFTER_SWING; // held still for the whole hold
-      const on = canAct() && !p.charging && (p.guardBtn || still);
+      const on = canAct() && !p.charging && (p.guardKey ?? still); // a keyboard player says so itself (playable.js); a real stick guards by being held still
       if (on && !p.guarding) { showAct(p, 'ガード'); log(p.slot, 'guard', 'ガード'); sfx()?.guard('up', panOf(p.chest)); }
       p.guarding = on;
     }
@@ -227,7 +227,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
           foe.reflects = (foe.reflects ?? 0) + 1; showAct(foe, '反射！'); log(foe.slot, 'guard', `${other(foe).slot} の小を反射`);
           continue;
         }
-        sfx()?.guard('break', panOf(s.pos)); log(foe.slot, 'guard', `${TIER_JA[s.tier]}にガードを貫通された`);
+        log(foe.slot, 'guard', `${TIER_JA[s.tier]}にガードを貫通された`);
       }
       if (hit) {
         fx.hit(s.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.element, panOf(s.pos), T.hit, s.tier);
@@ -352,7 +352,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       case 'special': // test button: really charge (小 → 中 → 大, moving still fails it), then swing just past the 大 line
         if (!p || !canAct()) return;
         startCharge(p); p.autoRelease = rules().t2 + .3; return;
-      case 'guard': if (p) p.guardBtn = !!c.on; return; // test button: guard while held
+      case 'guard': if (p) p.guardKey = c.on; return; // true / false: a keyboard player's guard (playable.js); null: back to the stick held still
       case 'charge': if (!p) return;
         if (c.on) startCharge(p); else release(p);
         return;

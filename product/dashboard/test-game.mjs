@@ -13,7 +13,7 @@ register('data:text/javascript,' + encodeURIComponent(`
 const { createGame, RULES } = await import('./public/game.js');
 
 const DT = 1 / 60;
-function setup({ rules = {}, matchSec = 60, test = false, dummy = false } = {}) {
+function setup({ rules = {}, matchSec = 60, test = false, dummy = false, sfx = null } = {}) {
   let t = 1000, ids = 1;
   const fx = { aura() {}, charge() {}, shot: () => ids++, moveShot() {}, endShot() {}, hit() {}, guard() {}, block() {} };
   const cfg = { posSrc: 'start', aim: 'motion', hand: 'R', stickLen: { A: .8, B: .8 }, useTruth: true, test,
@@ -23,7 +23,7 @@ function setup({ rules = {}, matchSec = 60, test = false, dummy = false } = {}) 
   const frame = () => ({ players: Object.fromEntries(['A', 'B'].map(sl => { const [x, z] = pos[sl], sg = sl === 'A' ? 1 : -1;
     return [sl, { chest: [x, 1.3, z], yaw: sl === 'A' ? 0 : Math.PI, base: [x + .2 * sg, 1.2, z], tip: [x + 1 * sg, 1.2, z], dir: [sg, 0, 0] }]; })) });
   const flashes = [], vibes = [];
-  const g = createGame({ fx, drone: null, cfg, clock: () => t, onHit: (slot, ms) => flashes.push([slot, ms]), onVibrate: (slot, kind) => vibes.push(slot + ' ' + kind), ...(dummy && { getDummyFrame: frame }) });
+  const g = createGame({ fx, drone: null, sfx: () => sfx, cfg, clock: () => t, onHit: (slot, ms) => flashes.push([slot, ms]), onVibrate: (slot, kind) => vibes.push(slot + ' ' + kind), ...(dummy && { getDummyFrame: frame }) });
   const put = (slot, x, z) => { // chest 1.3 m up, stick held at the chest pointing straight at the other start mark
     pos[slot] = [x, z];
     const s = slot === 'A' ? 1 : -1;
@@ -345,12 +345,23 @@ scenario('中と大はガードを貫通する', () => {
   S.chargeShot('A', 2.5); eq(S.B.hp, 80, '中のあとの B の HP');
   S.chargeShot('A', 5.5); eq(S.B.hp, 20, '大のあとの B の HP'); eq(S.A.hp, 100, 'A の HP');
 });
-scenario('ガードボタンを押している間はガード、離すと小が当たる', () => {
-  const S = setup(); S.fight();
-  S.g.command({ cmd: 'guard', slot: 'B', on: true }); S.run(DT); S.swing('A'); S.run(1.5);
-  eq(S.A.hp, 90, '跳ね返りを受けた A の HP（小 5 × 反射 2 倍）');
-  S.g.command({ cmd: 'guard', slot: 'B', on: false }); S.run(.3); S.swing('A'); S.run(1.5);
-  eq(S.B.hp, 95, 'B の HP');
+scenario('キーボード操作のガードは指示どおりで、棒の静止では決まらない', () => {
+  const S = setup(); S.fight(); guardB(S);
+  S.g.command({ cmd: 'guard', slot: 'B', on: false }); S.run(.5);
+  eq(S.B.guarding, false, '棒が止まっていても、キーを押していない B のガード');
+  S.swing('A'); S.run(1.5); eq(S.B.hp, 95, '小を受けた B の HP');
+  S.g.command({ cmd: 'guard', slot: 'B', on: true }); S.run(DT);
+  eq(S.B.guarding, true, 'キーを押している B のガード');
+  S.g.command({ cmd: 'guard', slot: 'B', on: null }); S.run(.5);
+  eq(S.B.guarding, true, 'センサーに戻すと、棒が止まっているのでガード');
+});
+scenario('ガードの音：中と大が当たっても鳴らず、小の反射だけ鳴る', () => {
+  const sounds = [], sfx = new Proxy({ guard: kind => { if (kind !== 'up') sounds.push(kind); } }, { get: (o, n) => o[n] ?? (() => {}) });
+  const S = setup({ sfx }); S.fight(); guardB(S);
+  S.chargeShot('A', 2.5); S.chargeShot('A', 5.5);
+  eq(S.B.hp, 20, '中と大のあとの B の HP'); eq(sounds.length, 0, '中と大で鳴ったガードの音');
+  S.swing('A'); S.run(1.5);
+  eq(sounds.join(), 'reflect', '小で鳴ったガードの音');
 });
 
 // ---- デモ試合（ホーミング） ----

@@ -40,7 +40,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
   const S = { shake: 0, mode: 'game', box: null, w: 1, h: 1, aspect: 16 / 9, msg: '', tagCam: null, scanned: false, scannedIds: null, ready: false, intr: {} };
   fx.opts.onShake = a => { S.shake = Math.max(S.shake, a); };
 
-  // ---- debug world (G): grid, field tags, phone C's frustum ----
+  // ---- debug world: grid, field tags, phone C's frustum ----
   const world3d = new THREE.Group(); scene.add(world3d); world3d.visible = false;
   const grid = new THREE.GridHelper(8, 16, 0x888888, 0x444444); world3d.add(grid);
   const camHelper = new THREE.CameraHelper(camera); world3d.add(camHelper);
@@ -281,14 +281,14 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
       if (S.fixed) { // where phone C is, as on screen 4 (the dummy room's exact pose, else the scan, else the guide camera)
         applyCam(); if (video.__dummy) { toThreeCamera(video.__dummy.truePose, camera); camera.aspect = S.aspect; }
         camera.zoom = zoom; camera.updateProjectionMatrix(); camera.updateMatrixWorld(); keepView(camera);
-        renderer.setViewport(0, 0, S.w, S.h); fx.render();
+        renderer.setViewport(0, 0, S.w, S.h); fx.render(field.setPass);
         camera.zoom = 1; camera.updateProjectionMatrix(); return; // the final render shares this camera
       }
       overCam.aspect = S.aspect; overCam.updateProjectionMatrix();
       const keep = { p: camera.position.clone(), q: camera.quaternion.clone(), fov: camera.fov };
       camera.position.copy(overCam.position); camera.quaternion.copy(overCam.quaternion); camera.fov = overCam.fov; camera.aspect = S.aspect; camera.zoom = zoom; camera.updateProjectionMatrix();
       camera.updateMatrixWorld(); keepView(camera);
-      renderer.setViewport(0, 0, S.w, S.h); fx.render();
+      renderer.setViewport(0, 0, S.w, S.h); fx.render(field.setPass);
       camera.position.copy(keep.p); camera.quaternion.copy(keep.q); camera.fov = keep.fov; camera.zoom = 1; camera.updateProjectionMatrix();
       return;
     }

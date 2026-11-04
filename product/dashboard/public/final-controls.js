@@ -51,7 +51,7 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
           <button id="scanBtn" class="go">タグでスキャン<kbd>K</kbd></button>
           <span class="kv" id="tagCheck"></span><span class="msg" id="finalMsg"></span>
           <div class="seg" id="fpvs"><button data-fpv="">第三者カメラ</button><button data-fpv="A">A の胸</button><button data-fpv="B">B の胸</button></div>
-          <button data-tog="pip">小窓に 3D</button><button data-tog="mirrorX">3D の左右を反転</button><button data-tog="mirrorY">3D の上下を反転</button><button data-tog="swordFlip">剣の左右を逆にする</button><button id="fullBtn">全画面<kbd>F</kbd></button>
+          <button data-tog="pip">小窓に 3D</button><button data-tog="mirrorX">3D の左右を反転</button><button data-tog="mirrorY">3D の上下を反転</button><button data-tog="swordFlip">剣の左右を逆にする</button><button id="fullBtn">全画面</button>
         </div>
       </div>
     </div>`;
@@ -92,13 +92,13 @@ export function createFinalControls({ bar, stage, game, vsrc, cfg, save, scan, f
     const s = charge[slot], seconds = secondsAt(s, time), tier = finalChargeTier(seconds);
     const label = bar.querySelector(`[data-charge-status="${slot}"]`);
     // the keyboard player's key goes to the match (playable.js), not to this preview
-    if (playable?.keyboard(slot)) { label.textContent = `${slot === 'A' ? '炎' : '電気'}：${slot}キーは試合の溜め（キーボード操作中）`; label.classList.toggle('ok', playable.charging); return; }
+    if (playable?.keyboard(slot)) { label.textContent = `${slot === 'A' ? '炎' : '電気'}：${playable.chargeKey(slot)} キーで試合の溜め（キーボード操作中）`; label.classList.toggle('ok', playable.charging(slot)); return; }
     label.textContent = `${slot === 'A' ? '炎' : '電気'}：${keyFor(slot)}キー ${s.held ? `チャージ中 ${seconds.toFixed(1)}秒 ${tierJa[tier]}` : '長押しでチャージ、離して発射'}`;
     label.classList.toggle('ok', s.held || seconds > 0);
   };
   addEventListener('keydown', e => {
     if (!active() || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
-    const slot = chargeKeys[e.key.toLowerCase()]; if (!slot) return;
+    const slot = chargeKeys[e.key.toLowerCase()]; if (!slot || playable?.keyboard(slot)) return;
     e.preventDefault(); const s = charge[slot]; if (s.held) return;
     s.held = true; s.startedAt = performance.now() / 1000;
   });

@@ -86,7 +86,7 @@ varying vec2 vP;
 void main() { vec4 w = modelMatrix * vec4(position, 1.); vP = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const FLOOR_FS = `
 uniform float uTime, uR; uniform vec2 uX; uniform vec2 uPoly[${MAXP}]; uniform int uN;
-uniform vec4 uP[2]; uniform vec3 uCA, uCB, uBodySun; uniform vec2 uSA, uSB; uniform float uRock;
+uniform vec4 uP[2]; uniform vec3 uCA, uCB, uBodySun; uniform vec2 uSA, uSB; uniform float uRock, uHpOnly;
 varying vec2 vP;
 ${SAND_GLSL}
 ${LAWN_GLSL}
@@ -107,6 +107,15 @@ float sdPoly(vec2 p) { // signed distance to the outline, < 0 inside (any simple
 }
 void main() {
   vec2 p = vP; float r = length(p), d = sdPoly(p), inside = step(d, 0.);
+  if (uHpOnly > .5) { // the HP arcs alone, drawn again over a darkened ground (a status, not the background)
+    for (int i = 0; i < 2; i++) {
+      vec4 P = uP[i]; if (P.w <= 0.) continue;
+      vec2 q = p - P.xy;
+      float on = ring(p, P.xy, .46, uRock > .5 ? .035 : .015) * P.w * step(fract(atan(q.x, -q.y) / 6.2831853 + .5), P.z);
+      if (on > 0.) { gl_FragColor = vec4(i == 0 ? uCA : uCB, on); return; }
+    }
+    discard;
+  }
   vec3 team = p.x < 0. ? uCA : uCB;
   vec3 c = mix(vec3(.028, .034, .052), vec3(.05, .06, .09), inside);
   c += inside * vec3(.035, .04, .06) * exp(-r * r / 5.);                                           // soft centre spot
@@ -548,7 +557,7 @@ export function createField(scene, opts = {}) {
     uCA: { value: new THREE.Color().setHex(TEAM.A, THREE.LinearSRGBColorSpace) }, uCB: { value: new THREE.Color().setHex(TEAM.B, THREE.LinearSRGBColorSpace) }, // the shader writes display colours: unconverted, or they come out darker than the HP bars
     uSA: { value: new THREE.Vector2() }, uSB: { value: new THREE.Vector2() },
     uP: { value: [new THREE.Vector4(), new THREE.Vector4()] },
-    uRock: { value: 0 }, uBodySun: { value: V(0, 1, 1).normalize() },
+    uRock: { value: 0 }, uHpOnly: { value: 0 }, uBodySun: { value: V(0, 1, 1).normalize() },
     tN: { value: null }, tG: { value: null }, tSh: { value: null }, uSun: { value: V(0, 1, 0) }, uExt: { value: 64 }, // the canyon's, set when it is built
     cN: { value: null }, cSh: { value: null }, cG: { value: null }, cSun: { value: V(0, 1, 0) }, cExt: { value: 64 }, // the courtyard's
   };
@@ -614,6 +623,16 @@ export function createField(scene, opts = {}) {
       });
     },
     setLayoutDebug(on) { debug.visible = on; for (const a of Object.values(avatars)) a.ax.visible = on; },
+    /** For a darkened background (effects.js), in this order: 'back' the look, floor and letters; 'front' the avatars, their HP bars and HP arcs; null all of it. */
+    setPass(pass) {
+      for (const a of Object.values(avatars)) {
+        if (pass === 'back') { a.shown = [a.root.visible, a.world.visible]; a.root.visible = a.world.visible = false; } // update() decides who is shown: only hide them for this pass
+        else if (pass === 'front') [a.root.visible, a.world.visible] = a.shown;
+      }
+      if (arena) arena.visible = pass !== 'front';
+      if (activeLook) built[activeLook].group.visible = pass !== 'front';
+      uniforms.uHpOnly.value = pass === 'front' ? 1 : 0;
+    },
     /** name: 'court' (courtyard.js), 'rock' (backdrop.js), anything else the plain dark arena. The tag boards stand in the plain arena, elsewhere only with `debug`. */
     setLook(name, debug = false) {
       const look = LOOKS[name], rock = !!look, active = look ? lookOf(name) : null;

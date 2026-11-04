@@ -136,7 +136,7 @@ gameCtrl.innerHTML = `
   <div class="players2">${['A', 'B'].map(s => `
     <div class="pc" data-s="${s}"><div class="row" style="justify-content:space-between"><b style="color:var(--${s})">${s} ${ELEMENT_JA[s === 'A' ? 'fire' : 'thunder']}</b><span class="num hpv"></span></div>
       <div class="facts"></div>
-      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="2.5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button><button data-act="guard" title="押している間ガード（小は跳ね返し、中・大は貫通）">押してガード</button></div></div>`).join('')}
+      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="2.5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
   </div>
   <h3>プレイヤーの動き（ダミー映像）</h3>
   <div id="playGame"></div>
@@ -162,11 +162,11 @@ gameCtrl.innerHTML = `
   <div class="seg" id="fxStyles"><button data-fxstyle="smash">プログラム版</button><button data-fxstyle="textured">画像素材版</button><button data-fxstyle="classic">いつもの</button></div>
   <p class="muted" style="font-size:12px;margin:4px 0">試合中でなくても出る。ダメージは入らない。弾は相手の胸に向けて撃つ。「溜め」は押している間溜まり、離すとその段階の技を撃つ</p>
   <div class="fxtry">${['A', 'B'].map(s => `<div class="row"><b style="color:var(--${s});width:1.4em">${s}</b>${['s', 'm', 'l'].map(t => `<button data-fxshot="${t}" data-s="${s}">${TIER_JA[t]}</button>`).join('')}<button data-fxcharge data-s="${s}">溜め（押している間）</button></div>`).join('')}</div>
-  <h3>カメラ（ドローン視点）<kbd>D</kbd></h3>
+  <h3>カメラ（ドローン視点）</h3>
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
   <div class="row" id="zoomRow"><label title="今のカメラのズーム。カメラごとに覚える。1 が元の大きさ">ズーム <input id="zoom" type="range" min="0.5" max="3" step="0.05" style="width:130px;vertical-align:middle"> <span id="zoomOut" class="num"></span> 倍</label><button id="zoomReset">1 倍に戻す</button><span class="muted" id="zoomFor" style="font-size:12px"></span></div>
   <h3>表示</h3>
-  <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="debug">デバッグ<kbd>G</kbd></button></div>
+  <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="debug">デバッグ</button></div>
   <div class="row"><span class="muted" style="font-size:12px">背景</span><span class="seg" id="backdrops"><button data-backdrop="court">中庭</button><button data-backdrop="rock">岩場</button><button data-backdrop="plain">無地</button></span></div>
   <div class="row"><button data-tog="mimic" title="第三者視点カメラの映像を MediaPipe で見て、アバターに同じ姿勢をとらせる（別スレッドで 1 秒に最大 15 回）">カメラの姿勢をアバターに反映</button><span class="muted" id="mimicStatus" style="font-size:12px"></span></div>
   <h3>攻撃・防御の記録</h3>
@@ -221,8 +221,7 @@ $('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg }
 showRules();
 for (const pc of gameCtrl.querySelectorAll('.pc')) for (const b of pc.querySelectorAll('[data-act]')) {
   const slot = pc.dataset.s, a = b.dataset.act;
-  if (a === 'guard') { b.onpointerdown = () => game.command({ cmd: 'guard', slot, on: true }); b.onpointerup = b.onpointerleave = () => game.command({ cmd: 'guard', slot, on: false }); }
-  else if (a === 'charge') { b.onpointerdown = () => game.command({ cmd: 'charge', slot, on: true }); b.onpointerup = b.onpointerleave = () => game.command({ cmd: 'charge', slot, on: false }); b.title = '押している間溜める'; }
+  if (a === 'charge') { b.onpointerdown = () => game.command({ cmd: 'charge', slot, on: true }); b.onpointerup = b.onpointerleave = () => game.command({ cmd: 'charge', slot, on: false }); b.title = '押している間溜める'; }
   else b.onclick = () => game.command({ cmd: a, slot });
 }
 for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.onclick = () => { stage.drone.setMode(b.dataset.drone); cfg.drone = b.dataset.drone; save(); };
@@ -273,7 +272,8 @@ drawer.innerHTML = `
   <section><h3>キー操作</h3><table class="keys">
     <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ試合開始（撃った瞬間に相手を狙う）・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
     <tr><td>Space / Enter</td><td>A / B が小の攻撃（溜めなし）</td></tr><tr><td>Q / P 長押し</td><td>A / B が溜める（離した時の溜め時間で小・中・大）</td></tr>
-    <tr><td>K</td><td>タグでスキャン</td></tr><tr><td>D</td><td>ドローン視点の切り替え</td></tr><tr><td>M / G</td><td>ミニマップ / デバッグ表示</td></tr><tr><td>F</td><td>最終映像を全画面</td></tr><tr><td>S</td><td>設定</td></tr></table></section>`;
+    <tr><td>K</td><td>タグでスキャン</td></tr><tr><td>M</td><td>試合 BGM を流す / 止める</td></tr>
+    <tr><td>A のキーボード操作</td><td>WASD で移動、F 長押しで溜め・離して撃つ、止まって G 長押しでガード</td></tr><tr><td>B のキーボード操作</td><td>十字キーで移動、. 長押しで溜め・離して撃つ、止まって / 長押しでガード</td></tr></table></section>`;
 $('#openSettings').onclick = () => drawer.classList.toggle('open');
 $('#closeSettings').onclick = () => drawer.classList.remove('open');
 for (const g of drawer.querySelectorAll('[data-seg]')) for (const b of g.querySelectorAll('button')) b.onclick = () => {
@@ -310,11 +310,7 @@ addEventListener('keydown', e => {
   if (held[k] && screen !== 'final') return game.command({ cmd: 'charge', slot: held[k], on: true });
   if (KEYS[k]) return game.command(KEYS[k]);
   if (k === 'k') scan();
-  else if (k === 'd') { stage.drone.next(); cfg.drone = stage.drone.mode; save(); }
   else if (k === 'm') $('#bgmPreview').click(); // 試合 BGM を流す / 止める (also while the slides are open: tutorial.js lets M through); the minimap is its button only
-  else if (k === 'g') toggle('debug');
-  else if (k === 'f' && screen === 'final') fullscreen();
-  else if (k === 's') drawer.classList.toggle('open');
   else if (k === 'Escape') drawer.classList.remove('open');
 });
 addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k] && screen !== 'final') game.command({ cmd: 'charge', slot: held[k], on: false }); });
