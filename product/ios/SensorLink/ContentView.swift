@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Camera picture with the detected tags drawn on top, the status lines, and the buttons (IMU / Calibrate / LAN / Flash test).
+/// Camera picture with the detected tags drawn on top, the status lines, and the three buttons (IMU / Calibrate / LAN).
 struct ContentView: View {
     @EnvironmentObject var model: Model
     @State private var showImu = false
@@ -32,7 +32,6 @@ struct ContentView: View {
                     Button("IMU") { showImu = true }
                     Button("Calibrate") { model.calibrate() }
                     Button("LAN") { showLan = true }
-                    Button("Flash") { model.flashTest() }
                 }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity)
