@@ -70,7 +70,7 @@ const vfx = createVisionFx();
 const overlay = { compose: (src, w, h, dt) => vfx.compose(src, w, h, dt, vision, cfg.visOn ? { draw: cfg.visDraw, ghost: cfg.visGhost, spot: cfg.visSpot, trail: cfg.visTrail } : {}, { A: EL_COLOR[game.players.A.element], B: EL_COLOR[game.players.B.element] }) };
 const stage = createStage({ video, cfg, hub, PA, isSetup: () => game.match.phase === 'setup', overlay });
 const hudFlash = { el: null };
-const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), onHit: (slot, ms) => hub.send?.({ type: 'flash', slot, ms }), getDummyFrame: () => vsrc.dummy?.frame });
+const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), onHit: (slot, ms) => hub.send?.({ type: 'flash', slot, ms }), onVibrate: (slot, kind) => hub.send?.({ type: 'vibrate', slot, kind }), getDummyFrame: () => vsrc.dummy?.frame });
 stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: プログラム版 (smash, default) / 画像素材版 (textured) / いつもの (classic)
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
 // A / B: keyboard / random / still (screens 3 / 4, dummy room only), through the dummy's truth input and game.command

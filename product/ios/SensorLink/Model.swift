@@ -35,6 +35,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     private let detector = TagDetector()
     private let ciContext = CIContext()
     private let arQueue = DispatchQueue(label: "ar", qos: .userInitiated)
+    private let vibe = Vibe()
     private let torchQ = DispatchQueue(label: "torch") // lockForConfiguration can block
     private var torchOff = DispatchTime(uptimeNanoseconds: 0) // on torchQ: when the torch goes off
 
@@ -71,6 +72,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
             ])
         }
         link.onFlash = { [weak self] ms in self?.flash(ms: ms) }
+        link.onVibrate = { [weak self] kind in self?.vibe.handle(kind) }
         session.delegate = self
         session.delegateQueue = arQueue
     }

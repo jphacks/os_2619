@@ -48,6 +48,14 @@ a.ws.send(JSON.stringify({ type: 'flash', slot: 'B', ms: 999 }));
 dash.ws.send(JSON.stringify({ type: 'flash', slot: 'B', ms: 99999 }));
 assert.equal((await wait(() => b.inbox.find(k => k.type === 'flash' && k.ms !== 250))).ms, 2000);
 assert.ok(!a.inbox.some(k => k.type === 'flash')); assert.ok(!dash.inbox.some(k => k.type === 'flash'));
+// the same for the vibration, and only the known kinds pass
+dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'charge' }));
+dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'nope' }));
+a.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'off' }));
+dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'win' }));
+await wait(() => b.inbox.some(k => k.type === 'vibrate' && k.kind === 'win'));
+assert.deepEqual(b.inbox.filter(k => k.type === 'vibrate').map(k => k.kind), ['charge', 'win']);
+assert.ok(!a.inbox.some(k => k.type === 'vibrate'));
 
 const a2 = await open({ type: 'hello', role: 'phone', id: 'p1', name: 'one' }); // same id: keeps slot A
 assert.equal((await wait(() => a2.inbox.find(k => k.type === 'welcome'))).slot, 'A');

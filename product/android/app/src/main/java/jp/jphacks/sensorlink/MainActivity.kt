@@ -95,6 +95,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     // a hit: the torch stays on until this time (elapsedRealtime, ms). ARCore owns the camera, so the GL thread switches it through the session config.
     @Volatile private var torchUntilMs = 0L
     private var torchOn = false // GL thread
+    private val vibe by lazy { Vibe(this) }
 
     private val convertW = Worker("convert")
     private val tagW = Worker("tags")
@@ -114,6 +115,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
 
         val id = prefs.getString("id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("id", it).apply() }
         link = Link(id, Build.MODEL)
+        link.onVibrate = { vibe.handle(it) }
         link.onFlash = { ms -> torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + ms) } // another hit can only make it last longer
         imu = Imu(this) { s ->
             link.send(JSONObject().put("type", "imu").put("t", link.pcTime(s.wallMs))
@@ -196,7 +198,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
 
     override fun onDestroy() {
         super.onDestroy()
-        link.close(); imu.disconnect()
+        link.close(); imu.disconnect(); vibe.handle("off")
         listOf(convertW, tagW).forEach { it.shutdown() }
         session?.close()
     }

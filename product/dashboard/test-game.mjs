@@ -22,8 +22,8 @@ function setup({ rules = {}, matchSec = 60, test = false, dummy = false } = {}) 
   // dummy: the dummy room's frame (app.js getDummyFrame), players where the script puts them, as the dummy room draws them
   const frame = () => ({ players: Object.fromEntries(['A', 'B'].map(sl => { const [x, z] = pos[sl], sg = sl === 'A' ? 1 : -1;
     return [sl, { chest: [x, 1.3, z], yaw: sl === 'A' ? 0 : Math.PI, base: [x + .2 * sg, 1.2, z], tip: [x + 1 * sg, 1.2, z], dir: [sg, 0, 0] }]; })) });
-  const flashes = [];
-  const g = createGame({ fx, drone: null, cfg, clock: () => t, onHit: (slot, ms) => flashes.push([slot, ms]), ...(dummy && { getDummyFrame: frame }) });
+  const flashes = [], vibes = [];
+  const g = createGame({ fx, drone: null, cfg, clock: () => t, onHit: (slot, ms) => flashes.push([slot, ms]), onVibrate: (slot, kind) => vibes.push(slot + ' ' + kind), ...(dummy && { getDummyFrame: frame }) });
   const put = (slot, x, z) => { // chest 1.3 m up, stick held at the chest pointing straight at the other start mark
     pos[slot] = [x, z];
     const s = slot === 'A' ? 1 : -1;
@@ -38,7 +38,7 @@ function setup({ rules = {}, matchSec = 60, test = false, dummy = false } = {}) 
   const run = sec => { for (let i = 0; i < Math.round(sec / DT); i++) { t += DT; for (const sl of ['A', 'B']) if (wob[sl]) bob(sl); g.step(DT, DT, null); } };
   g.command({ cmd: 'matchSec', value: matchSec });
   const S = {
-    g, cfg, run, put, wob, flashes,
+    g, cfg, run, put, wob, flashes, vibes,
     get A() { return g.players.A; }, get B() { return g.players.B; },
     fight() { g.command({ cmd: 'phase', phase: 'fight' }); run(3.05); },
     swing: slot => g.onSensed({ slot, name: 'Swing', power: .7 }),
@@ -253,6 +253,31 @@ scenario('当たられた側のスマホだけが光る。小をガードで跳�
   S.flashes.length = 0; guardB(S); S.run(.4);
   S.swing('A'); S.run(1.5);
   eq(JSON.stringify(S.flashes), '[["A",120]]', '跳ね返った小が A に当たったときのライト');
+});
+scenario('溜めている間だけ、溜めている人のスマホが振動し続ける', () => {
+  const S = setup(); S.fight(); S.vibes.length = 0;
+  S.charge('A'); S.run(1);
+  eq(S.vibes.every(v => v === 'A charge'), true, '溜め中の振動は A だけ');
+  expect(S.vibes.length >= 3 && S.vibes.length <= 5, `0.25 秒ごとのはずが 1 秒で ${S.vibes.length} 回`);
+  S.vibes.length = 0; S.swing('A'); S.run(.1);
+  eq(S.vibes.join(), 'A off', '撃ったあとの振動');
+});
+scenario('勝った人のスマホに勝利の振動が 1 回送られ、溜め中に勝ってもあとから止められない', () => {
+  const S = setup({ matchSec: 10 }); S.fight();
+  S.swing('A'); S.run(1.2); eq(S.B.hp, 95, 'B の HP');
+  S.vibes.length = 0;
+  for (let i = 0; i < 120 && S.g.match.phase === 'fight'; i++) { S.charge('A'); S.run(.1); }
+  eq(S.g.winner?.slot, 'A', '時間切れの勝者'); S.run(.5);
+  const i = S.vibes.indexOf('A win');
+  expect(i > 0, `勝利の振動がない: ${S.vibes.join()}`);
+  eq(S.vibes[i - 1], 'A off', '勝利の前の振動');
+  eq(i, S.vibes.length - 1, '勝利の振動の位置（最後のはず）');
+  S.vibes.length = 0; S.g.command({ cmd: 'phase', phase: 'setup' });
+  eq(S.vibes.join(), 'A off,B off', 'やり直しで止める');
+});
+scenario('引き分けでは勝利の振動を送らない', () => {
+  const S = setup({ matchSec: 10 }); S.fight(); S.run(10.5);
+  eq(S.g.match.phase, 'result', '試合の段階'); eq(S.vibes.some(v => v.endsWith('win')), false, '勝利の振動');
 });
 scenario('反射のダメージ倍率を変えると、跳ね返った小のダメージも変わる', () => {
   const S = setup({ rules: { reflectMul: 3 } }); S.fight(); guardB(S); S.run(.4);

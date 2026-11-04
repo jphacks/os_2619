@@ -36,6 +36,8 @@ class Link(private val id: String, private val name: String) {
     @Volatile var marker = "april"; private set
     /** The PC says this phone's player was hit: light the torch for this many ms. Called on OkHttp's thread. */
     @Volatile var onFlash: ((Int) -> Unit)? = null
+    /** The PC's vibration word: charge, win or off (Vibe.kt). Called on OkHttp's thread. */
+    @Volatile var onVibrate: ((String) -> Unit)? = null
 
     /** Phone wall time converted to the PC clock, seconds. */
     fun pcTime(wallMs: Long = System.currentTimeMillis()) = wallMs / 1000.0 + offset
@@ -87,6 +89,7 @@ class Link(private val id: String, private val name: String) {
                 "welcome" -> { slot = k.optString("slot", "-"); marker = k.optString("marker", "april"); status = "connected" }
                 "marker" -> marker = k.optString("marker", marker)
                 "flash" -> onFlash?.invoke(k.optInt("ms"))
+                "vibrate" -> onVibrate?.invoke(k.optString("kind"))
                 "full" -> status = "PC already has 2 phones"
             }
         }

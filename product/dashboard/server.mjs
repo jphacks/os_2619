@@ -143,6 +143,11 @@ wss.on('connection', (ws, req) => {
     }
     if (k.type === 'setMarker' && role === 'dashboard') return setMarker(k.marker);
     if (k.type === 'setRuneScale' && role === 'dashboard') return setRuneScale(k.scale);
+    if (k.type === 'vibrate') { // { type: 'vibrate', slot, kind: 'charge' | 'win' | 'off' } from a dashboard goes to that slot's phone
+      if (role !== 'dashboard' || !['charge', 'win', 'off'].includes(k.kind)) return;
+      for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, { type: 'vibrate', kind: k.kind });
+      return;
+    }
     if (k.type === 'flash') { // a hit: { type: 'flash', slot, ms } from a dashboard lights the torch of that slot's phone
       if (role !== 'dashboard') return;
       const ms = Math.min(+k.ms || 0, 2000);

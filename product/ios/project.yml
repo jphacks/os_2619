@@ -37,6 +37,7 @@ targets:
       - sdk: CoreImage.framework
       - sdk: ARKit.framework
       - sdk: CoreBluetooth.framework
+      - sdk: CoreHaptics.framework
     info:
       path: SensorLink/Info.plist
       properties:

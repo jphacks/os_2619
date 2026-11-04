@@ -40,11 +40,11 @@ const TIER = {
 export const POS_JA = { auto: '自動', phones: '胸スマホ', start: '立ち位置' };
 
 /**
- * createGame({ fx, drone, sfx: () => audio | null, cfg, onFlash, onHit?, clock? }) → { players, match, shots, events, step, onSensed, command, canAct, ... }
+ * createGame({ fx, drone, sfx: () => audio | null, cfg, onFlash, onHit?, onVibrate?, clock? }) → { players, match, shots, events, step, onSensed, command, canAct, ... }
  * cfg (live object): posSrc 'auto'|'phones'|'camera'|'start', hand 'R'|'L', aim 'stick'|'eye', stickLen { A, B }, test (no HP loss),
  * rules (RULES: tier seconds, damage, rapid-fire interval, how far you may move while charging).
  */
-export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {}, onHit = () => {}, clock = null, getDummyFrame = () => null }) {
+export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {}, onHit = () => {}, onVibrate = () => {}, clock = null, getDummyFrame = () => null }) {
   const now = clock ?? (() => performance.now() / 1000); // test-game.mjs drives a fake clock
   const events = []; // newest first: { at: Date.now(), slot, kind, text }
   const log = (slot, kind, text) => { events.unshift({ at: Date.now(), slot, kind, text }); if (events.length > 200) events.pop(); };
@@ -303,6 +303,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function reset() {
     for (const p of Object.values(players)) Object.assign(p, { guarding: false, guardHist: [], hp: rules().hp ?? RULES.hp, hpMax: rules().hp ?? RULES.hp, charge: 0, chargeT: 0, charging: false, tier: null, autoRelease: null, act: null, lastShot: -9, shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 });
     for (const s of shots) fx.endShot(s.id); shots.length = 0; winner = null;
+    for (const p of Object.values(players)) { p.buzzAt = null; onVibrate(p.slot, 'off'); } // also ends a winner's vibration
     for (const p of Object.values(players)) p.preview = null;
   }
   /** ph: 'setup' | 'fight' | 'demo' (デモ試合: a fight where every shot is aimed at the other player when fired) */
@@ -314,8 +315,17 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   }
   function finish(w) {
     winner = w; match.phase = 'result';
-    for (const p of Object.values(players)) { p.charging = false; p.tier = null; }
+    for (const p of Object.values(players)) { p.charging = false; p.tier = null; if (p.buzzAt != null) { p.buzzAt = null; onVibrate(p.slot, 'off'); } }
+    if (w) onVibrate(w.slot, 'win'); // after the off: stepBuzz has nothing left to stop, so it cannot cut this short
     log(w?.slot ?? null, 'win', w ? `${w.slot} の勝ち` : '引き分け');
+  }
+  // the charging player's phone vibrates: 'charge' is repeated, and the phone stops by itself if the repeats end (Vibe.swift, Vibe.kt: 1 s)
+  function stepBuzz() {
+    for (const p of Object.values(players)) {
+      const on = p.charging && canAct();
+      if (on && now() - (p.buzzAt ?? -9) >= .25) { p.buzzAt = now(); onVibrate(p.slot, 'charge'); }
+      else if (!on && p.buzzAt != null) { p.buzzAt = null; onVibrate(p.slot, 'off'); }
+    }
   }
   function stepMatch(dt) {
     // a new HP setting shows at once while setting up; during a match it waits for the next one (reset)
@@ -358,7 +368,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       place(p, est, sensorOnly); effects(p);
       p.trail.push({ t: now(), p: p.tip.clone().sub(p.chest) }); while (p.trail.length && p.trail[0].t < now() - .5) p.trail.shift(); // for motionAim
     }
-    stepCharge(dt); stepGuard(); stepShots(dt);
+    stepCharge(dt); stepGuard(); stepShots(dt); stepBuzz();
     const s = sfx();
     if (s) {
       for (const p of Object.values(players)) s.charge(p.slot, p.charging && canAct(), p.charge, panOf(p.tip), p.tier ?? 's');
