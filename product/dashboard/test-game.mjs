@@ -186,10 +186,24 @@ scenario('歩きながら棒を回し続けると、3m 動いても溜めは続�
   S.put('A', -1.2, 0); S.run(.1); S.swing('A'); S.run(1);
   eq(S.B.hp, 80, 'B の HP（中1発）');
 });
-scenario('歩いていても棒を回すのをやめると溜めは切れる', () => {
+scenario('ステップの間は棒が2秒止まっても溜めは空にならず、増えもしない。また回すと続きから溜まる', () => {
   const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); S.charge('A');
-  for (let i = 0; i < 20; i++) S.walk('A', 0, .1, .1);
-  eq(S.A.charging, false, '溜め中か'); eq(S.A.fails, 1, '失敗数');
+  for (let i = 0; i < 25; i++) { S.run(.1); S.charge('A'); }
+  const t = S.A.chargeT; expect(t > 2, `溜め時間 ${t}`);
+  S.walk('A', 0, 1, 2);
+  eq(S.A.charging, true, '溜め中か'); eq(S.A.fails, 0, '失敗数'); expect(S.A.chargeT - t < .5, `止めている間に増えた: ${t} -> ${S.A.chargeT}`);
+  S.charge('A'); S.run(.1); expect(S.A.chargeT >= t, '続きから溜まる');
+});
+scenario('ゆっくり向きを変える間も、棒が2秒止まっても溜めは空にならない', () => {
+  const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); S.charge('A'); S.run(.1);
+  for (let i = 0; i < 120; i++) { const yaw = i / 60 * .6; S.g.ingest({ type: 'truth', slot: 'A', chest: [-1.2, 1.3, 0], yaw, base: [-1, 1.2, 0], dir: [1, 0, 0] }); S.run(1 / 60); } // about 34°/s
+  eq(S.A.charging, true, '溜め中か'); eq(S.A.fails, 0, '失敗数');
+});
+scenario('歩いていても棒を回すのを4秒やめると溜めは切れる。止まっていれば1.5秒で切れる', () => {
+  const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); S.charge('A');
+  S.walk('A', 0, 1.5, 3.5); eq(S.A.charging, true, '3.5 秒で溜め中か');
+  S.walk('A', 0, 1, 1); eq(S.A.charging, false, '4.5 秒で溜め中か'); eq(S.A.fails, 1, '失敗数');
+  S.charge('A'); S.run(1.6); eq(S.A.charging, false, '止まって 1.6 秒で溜め中か');
   return S.log().find(l => l.includes('溜め失敗'));
 });
 scenario('溜めている間は無防備：相手の小を受け続ける', () => {

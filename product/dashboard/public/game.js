@@ -67,6 +67,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   let winner = null;
   const canAct = () => !match.paused && match.phase === 'fight';
   const rules = () => cfg.rules ?? RULES;
+  const MOVE_GRACE = 2.5; // s added to chargeHold while the player steps or turns: the hand slows down then, and that must not empty the charge
   const CHARGE_LIVE = .4; // s after a Charge event the circling counts as still going (actions.js sends one every ~.15 s while it does)
   const speedOf = T => T.speed * (rules().speed ?? 1); // m/s, the dashboard's ball-speed slider applied
   const tierOf = t => t < rules().t1 ? 's' : t < rules().t2 ? 'm' : 'l';
@@ -243,7 +244,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   // ---- moves ----
   function startCharge(p) {
     if (!canAct() || p.charging) return;
-    Object.assign(p, { charging: true, chargeSeen: now(), charge: 0, chargeT: 0, tier: 's', autoRelease: null });
+    Object.assign(p, { charging: true, chargeSeen: now(), charge: 0, chargeT: 0, tier: 's', autoRelease: null, moveRef: null, moveAt: -9 });
     showAct(p, '溜め'); log(p.slot, 'charge', '溜め開始');
   }
   /** Swing while charging: the tier comes from how long it was held. */
@@ -279,7 +280,13 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function stepCharge(dt) {
     const R = rules();
     for (const p of Object.values(players)) if (p.charging) {
-      if (R.chargeHold > 0 && p.autoRelease == null && p.tier !== 'l' && now() - p.chargeSeen > R.chargeHold) { failCharge(p, '棒の動きが止まった'); continue; } // short pauses are fine; a long stop drops it (a full charge just waits for the swing)
+      const f = W.app3(p.body.R, [1, 0, 0]), yaw = Math.atan2(f[2], f[0]), ref = p.moveRef, age = ref ? now() - ref.t : 0;
+      if (!ref || age >= .1) { // the body moved over the last ~0.1 s: over 0.2 m/s, or turning over 20°/s
+        if (ref && (Math.hypot(p.chest.x - ref.x, p.chest.z - ref.z) / age > .2 || Math.abs(Math.atan2(Math.sin(yaw - ref.yaw), Math.cos(yaw - ref.yaw))) / age > 20 * Math.PI / 180)) p.moveAt = now();
+        p.moveRef = { t: now(), x: p.chest.x, z: p.chest.z, yaw };
+      }
+      const hold = R.chargeHold + (now() - p.moveAt < R.chargeHold ? MOVE_GRACE : 0);
+      if (R.chargeHold > 0 && p.autoRelease == null && p.tier !== 'l' && now() - p.chargeSeen > hold) { failCharge(p, '棒の動きが止まった'); continue; } // short pauses are fine; a long stop drops it (a full charge just waits for the swing)
       // the charge only grows while the stick is being circled (Charge events keep coming); once the circling stops it is held
       // as it is, for chargeHold s, waiting for the swing down that fires it (10/18: circle, stop, swing down = fire).
       // Without the stop rule (chargeHold 0) or for the 大 test button it grows with time as before.

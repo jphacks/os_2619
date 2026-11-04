@@ -41,8 +41,8 @@ export function createActions() {
       // the body's slow turning, taken off the gyro for the charge: walking round or turning while circling the stick must not hide the reversals
       if (gap || !S.gAvg) S.gAvg = [...k.gyro];
       const hp = k.gyro.map((g, i) => g - (S.gAvg[i] += (g - S.gAvg[i]) * Math.min(1, gdt / .4)));
-      // the chest moving: footsteps shake the stick too, so a charge is only kept by reversals as big as those that start one
-      const moving = k.t - (S.arAt ?? -9) < .5 && S.arSpeed > .3, keepN = () => (moving ? S.revBig : S.rev).length;
+      // walking (the chest moving for 1 s or more; one step or a turn is not walking): footsteps shake the stick too, so a charge is only kept by reversals as big as those that start one
+      const moving = k.t - (S.arAt ?? -9) < .5 && S.walkFrom != null && k.t - S.walkFrom >= 1, keepN = () => (moving ? S.revBig : S.rev).length;
 
       // Charge: unwrap the tilt direction of the upright stick; one full turn inside 2 s
       if (d[2] > Math.cos(45 * D) && Math.hypot(d[0], d[1]) > 0.1 && !gap) {
@@ -57,7 +57,8 @@ export function createActions() {
       // changing again and again. Count sign reversals of each gyro axis (past a dead band) in the last second; swing speed resets it.
       // 10/18: a held stick's tremor sometimes started a charge. Starting needs bigger, more frequent reversals; keeping it does not
       // 10/18: only a stick raised 45° or more counts as circling for a charge; a level or lowered one never charges
-      if (gap || Math.hypot(...hp) > 300 || d[2] < Math.sin(45 * D)) { S.rev = []; S.sign = [0, 0, 0]; S.revBig = []; S.signBig = [0, 0, 0]; }
+      // 45° to start one; a running charge survives the stick dipping to 30° in a step or a turn
+      if (gap || Math.hypot(...hp) > 300 || d[2] < Math.sin((S.chargeOn ? 30 : 45) * D)) { S.rev = []; S.sign = [0, 0, 0]; S.revBig = []; S.signBig = [0, 0, 0]; }
       else {
         for (const [rev, sign, band] of [[S.rev, S.sign, 30], [S.revBig, S.signBig, 60]]) {
           for (let i = 0; i < 3; i++) {
@@ -108,7 +109,7 @@ export function createActions() {
       const o = S.ar[0], dt = k.t - o.t;
       if (dt >= 0.1 && dt < 0.4) {
         const v = [(k.wp[0] - o.p[0]) / dt, 0, (k.wp[2] - o.p[2]) / dt], sp = Math.hypot(...v);
-        S.arSpeed = sp; S.arAt = k.t;
+        S.arAt = k.t; if (sp > .3) S.walkFrom ??= k.t; else S.walkFrom = null;
         if (sp > 1.2 && !S.dodging) {
           const f = qrot(k.wq, [0, 0, -1]), fwd = norm([f[0], 0, f[2]]), right = cross(fwd, [0, 1, 0]);
           const r = dot(v, right), fw = dot(v, fwd);

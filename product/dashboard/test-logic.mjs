@@ -76,6 +76,20 @@ import { STICK } from './public/world.js';
   evB.length = 0; runB(1, i => ({ euler: [0, -50, 0], gyro: [step(i), step(i + 12), 0] }), 1);
   assert.equal(evB.filter(e => e.name === 'Charge').length, 0, 'footsteps kept a charge');
   console.log('charge on the move ok: a shake counts while turning, footsteps do not');
+
+  // one step does not raise the bar: a smaller shake keeps the charge through it; and a running charge survives the stick dipping to 40°
+  const C = createActions(), evC = []; let tc = 1100, xc = 0;
+  const runC = (dur, f, speed = 0) => { for (let i = 0; i < dur * 100; i++, tc += 0.01) { xc += speed * .01; evC.push(...C.ingest({ type: 'imu', slot: 'A', t: tc, ...f(i) }, [1, 0, 0])); evC.push(...C.ingest({ type: 'ar', slot: 'A', t: tc, tracking: 'TRACKING', wp: [xc, 1.3, 0], wq: [0, 0, 0, 1] })); } };
+  const small = i => ({ euler: [0, -50, 0], gyro: [0, i % 16 < 8 ? 45 : -45, 0] }), chargesC = () => evC.filter(e => e.name === 'Charge').length;
+  runC(1, i => ({ euler: [0, -40, 0], gyro: [0, i % 16 < 8 ? 200 : -200, 0] }));
+  assert.equal(chargesC(), 0, 'a shake at 40° started a charge');
+  runC(1, i => ({ euler: [0, -50, 0], gyro: [0, i % 16 < 8 ? 200 : -200, 0] }));
+  assert.ok(chargesC() > 0, 'no charge to keep');
+  evC.length = 0; runC(.2, small, 1); evC.length = 0; runC(.6, small, 1);
+  assert.ok(chargesC() >= 2, 'one step stopped the charge');
+  evC.length = 0; runC(.8, i => ({ euler: [0, -40, 0], gyro: [0, i % 16 < 8 ? 45 : -45, 0] }));
+  assert.ok(chargesC() >= 2, 'the stick dipping to 40° stopped the charge');
+  console.log('charge through a step ok: one step does not raise the bar, a dip to 40° does not stop it');
 }
 
 // phonealign: 20 s of the fake world (raw ARCore frames with their own yaw / origin) -> chest positions in the field world
