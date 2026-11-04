@@ -1,4 +1,5 @@
 import ARKit
+import AVFoundation
 import CoreImage
 import SwiftUI
 import UIKit
@@ -34,6 +35,9 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     private let detector = TagDetector()
     private let ciContext = CIContext()
     private let arQueue = DispatchQueue(label: "ar", qos: .userInitiated)
+    private let vibe = Vibe()
+    private let torchQ = DispatchQueue(label: "torch") // lockForConfiguration can block
+    private var torchOff = DispatchTime(uptimeNanoseconds: 0) // on torchQ: when the torch goes off
 
     // written on the AR / worker queues, read on main for the status text
     private let lock = NSLock()
@@ -67,6 +71,8 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
                 "q": s.q.map { r4($0) },
             ])
         }
+        link.onFlash = { [weak self] ms in self?.flash(ms: ms) }
+        link.onVibrate = { [weak self] kind in self?.vibe.handle(kind) }
         session.delegate = self
         session.delegateQueue = arQueue
     }
@@ -80,6 +86,24 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         cfg.isAutoFocusEnabled = true
         session.run(cfg)
         Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.refresh() }
+    }
+
+    /// A hit: the torch on for `ms`. Another hit while it is on can only make it last longer. Failures (no torch, too hot) just mean no light.
+    private func flash(ms: Int) {
+        torchQ.async { [weak self] in
+            guard let self = self, let dev = AVCaptureDevice.default(for: .video), dev.hasTorch else { return }
+            let off = DispatchTime.now() + .milliseconds(ms)
+            guard off > self.torchOff else { return }
+            self.torchOff = off
+            guard (try? dev.lockForConfiguration()) != nil else { return }
+            try? dev.setTorchModeOn(level: 1.0)
+            dev.unlockForConfiguration()
+            self.torchQ.asyncAfter(deadline: off) { [weak self] in
+                guard let self = self, self.torchOff == off, (try? dev.lockForConfiguration()) != nil else { return }
+                dev.torchMode = .off
+                dev.unlockForConfiguration()
+            }
+        }
     }
 
     // MARK: ARSessionDelegate (AR queue)
