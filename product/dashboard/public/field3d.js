@@ -9,6 +9,7 @@ import { createBackdrop, SAND_GLSL } from './backdrop.js';
 import { createCourtyard, LAWN_GLSL } from './courtyard.js';
 import { makeWizard } from './wizard.js';
 import { makeWizardModel } from './wizardmodel.js';
+import { stickGeometry } from './stickmesh.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
@@ -336,7 +337,17 @@ function makeAvatar(slot) {
   // stick (world space)
   const metal = slot === 'A' ? 0xc8ccd2 : 0xd4af37; // A silver, B gold
   const stickMat = new THREE.MeshStandardMaterial({ color: metal, metalness: .85, roughness: .28, emissive: metal, emissiveIntensity: .25 });
-  const stick = mesh(new THREE.CylinderGeometry(1, 1, 1, 6), stickMat, world); stick.userData.r = .02;
+  const stick = mesh(new THREE.CylinderGeometry(1, 1, 1, 6), stickMat, world); stick.userData.r = .02; stick.userData.glow = .25;
+  const plainStick = stick.geometry;
+  /** The scanned model (stickscan.js) in place of the metal rod, or back to the rod with null. */
+  function setStick(m) {
+    if (stick.geometry !== plainStick) { stick.geometry.dispose(); stickMat.map?.dispose(); }
+    const g = m && stickGeometry(m);
+    stick.geometry = g ? g.geometry : plainStick; stickMat.map = g ? g.texture : null;
+    stickMat.color.set(g ? 0xffffff : metal); stickMat.metalness = g ? 0 : .85; stickMat.roughness = g ? .6 : .28;
+    stick.userData.r = g ? 1 : .02; stick.userData.glow = g ? .06 : .25; // its own colours, only a hint of the team's
+    stickMat.needsUpdate = true;
+  }
   const tipMat = new THREE.MeshBasicMaterial({ color: metal });
   const tip = joint(.04, tipMat, world);
   root.traverse(o => { if (o.isMesh) o.visible = false; }); // the rig: only the wireframe figure is drawn
@@ -387,7 +398,7 @@ function makeAvatar(slot) {
       const d = V().subVectors(tipP, base).normalize(); // held in both hands, more of it shows below them
       between(stick, base.clone().addScaledVector(d, -.08 - .22 * st.grip), tipP); stick.scale.x = stick.scale.z = stick.userData.r;
       tip.position.copy(tipP);
-      stickMat.emissiveIntensity = p.charging ? .5 + 1.2 * (p.charge ?? 0) * (.7 + .3 * Math.sin(st.time * 30)) : .25;
+      stickMat.emissiveIntensity = p.charging ? .5 + 1.2 * (p.charge ?? 0) * (.7 + .3 * Math.sin(st.time * 30)) : stick.userData.glow;
       tip.scale.setScalar(.04 * (1 + (p.charging ? (p.charge ?? 0) : 0)));
     }
     stick.visible = tip.visible = !!(base && tipP);
@@ -466,7 +477,7 @@ function makeAvatar(slot) {
 
 
   return {
-    root, world, slot,
+    root, world, slot, setStick,
     update(dt, p) {
       const vis = !!p?.body;
       root.visible = vis && !p.hideBody; world.visible = vis; // hideBody: the real skeleton from the camera is drawn instead
@@ -622,6 +633,8 @@ export function createField(scene, opts = {}) {
         uniforms.uP.value[i].set(r?.x ?? 0, r?.z ?? 0, r?.hp ?? 0, r ? r.vis : 0);
       });
     },
+    /** slot's stick drawn as the scanned model m (stickscan.js), or the plain rod with null */
+    setStick(slot, m) { avatars[slot]?.setStick(m); },
     setLayoutDebug(on) { debug.visible = on; for (const a of Object.values(avatars)) a.ax.visible = on; },
     /** For a darkened background (effects.js), in this order: 'back' the look, floor and letters; 'front' the avatars, their HP bars and HP arcs; null all of it. */
     setPass(pass) {

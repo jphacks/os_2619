@@ -10,3 +10,4 @@ settings.json
 rules.json
 # sensor recordings made on the connection screen (server.mjs)
 recordings/
+sticks.json

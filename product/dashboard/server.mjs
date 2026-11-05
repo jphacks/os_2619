@@ -120,6 +120,23 @@ function setRuneScale(v) {
   toDashboards(markerMsg()); // the phones measure at the designed size; the pages rescale
 }
 
+// The scanned stick models (public/stickscan.js), one per slot, built by a dashboard from a phone's 'scan' pictures: sticks.json next to
+// this file (not in git). A dashboard sends { type: 'setStick', slot, model | null }; every dashboard (now and on hello) and the slot's
+// phone get { type: 'stick', slot, model }.
+const sticksFile = join(root, 'sticks.json');
+let sticks = {}; try { sticks = JSON.parse(readFileSync(sticksFile, 'utf8')) ?? {}; } catch {}
+const okStick = m => m && typeof m === 'object' && m.length > .1 && m.length < 2 && Number.isInteger(m.rings) && Number.isInteger(m.around)
+  && Array.isArray(m.r) && m.r.length === m.rings && m.r.every(v => v > 0 && v < .2)
+  && Array.isArray(m.rgb) && m.rgb.length === m.rings * m.around * 3 && m.rgb.every(v => Number.isInteger(v) && v >= 0 && v < 256);
+function setStick(slot, model) {
+  if (!SLOTS.includes(slot) || (model !== null && !okStick(model))) return;
+  if (model) sticks[slot] = model; else delete sticks[slot];
+  try { writeFileSync(sticksFile, JSON.stringify(sticks)); } catch (e) { console.warn('sticks:', e.message); }
+  log(model ? `stick ${slot}: model saved, ${model.length} m` : `stick ${slot}: model removed`);
+  const k = JSON.stringify({ type: 'stick', slot, model: model ?? null });
+  toDashboards(k); for (const p of phones.values()) if (p.slot === slot && p.ws.readyState === 1) p.ws.send(k);
+}
+
 const wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
 wss.on('connection', (ws, req) => {
   let role = null, id = null;
@@ -146,7 +163,7 @@ wss.on('connection', (ws, req) => {
     }
     if (k.type === 'hello') {
       role = String(k.role); id = String(k.id).slice(0, 64);
-      if (role === 'dashboard') { dashboards.add(ws); send(ws, { type: 'marker', marker, runeScale }); return status(); }
+      if (role === 'dashboard') { dashboards.add(ws); send(ws, { type: 'marker', marker, runeScale }); for (const [slot, model] of Object.entries(sticks)) send(ws, { type: 'stick', slot, model }); return status(); }
       if (role !== 'phone') return;
       const old = phones.get(id); // same phone reconnecting keeps its slot
       const slot = old?.slot ?? SLOTS.find(s => ![...phones.values()].some(q => q.slot === s));
@@ -171,6 +188,7 @@ wss.on('connection', (ws, req) => {
       if (ms > 0) for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, { type: 'flash', ms });
       return;
     }
+    if (k.type === 'setStick' && role === 'dashboard') return setStick(k.slot, k.model);
     if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); if (rec && (k.type === 'imu' || k.type === 'ar')) { rec.out.write(JSON.stringify({ ...k, rx: Date.now() / 1000 }) + '\n'); rec.n++; } }
   });
   ws.on('close', (code, reason) => {

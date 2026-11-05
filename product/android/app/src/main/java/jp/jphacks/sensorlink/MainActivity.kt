@@ -81,6 +81,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     private val prefs by lazy { getSharedPreferences("cfg", Context.MODE_PRIVATE) }
     private lateinit var link: Link
     private lateinit var imu: Imu
+    private lateinit var scan: Scan
     private lateinit var gl: GLSurfaceView
     private lateinit var overlay: Overlay
 
@@ -123,6 +124,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + ms) // another hit can only make it last longer
             runOnUiThread { hitRed.animate().cancel(); hitRed.alpha = HIT_ALPHA; hitRed.animate().alpha(0f).setStartDelay(ms.toLong()).setDuration(300) }
         }
+        scan = Scan(link)
         imu = Imu(this) { s ->
             link.send(JSONObject().put("type", "imu").put("t", link.pcTime(s.wallMs))
                 .put("euler", arr(s.euler)).put("acc", arr(s.acc)).put("gyro", arr(s.gyro))
@@ -145,6 +147,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             btn("IMU") { imuDialog() }
             btn("Calibrate") { calibrate() }
             btn("LAN") { lanDialog() }
+            btn("Scan") { scanButton(it) }
         }
         setContentView(FrameLayout(this).apply {
             // ARCore needs a GL context to run; the picture itself is drawn by Overlay from the CPU image
@@ -285,6 +288,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
 
     private fun onImage(nv21: ByteArray, withColour: Boolean, w: Int, h: Int, t: Double, fl: FloatArray, pp: FloatArray) {
         // the detectors read the camera's Y plane as it is, rotated upright (no colour round trip)
+        var colour: Bitmap? = null
         grayL.create(h, w, CvType.CV_8UC1)
         grayL.put(0, 0, nv21, 0, w * h)
         Core.rotate(grayL, grayU, Core.ROTATE_90_CLOCKWISE)
@@ -294,9 +298,9 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             yuv.put(0, 0, nv21)
             Imgproc.cvtColor(yuv, rgbaL, Imgproc.COLOR_YUV2RGBA_NV21)
             Core.rotate(rgbaL, rgbaU, Core.ROTATE_90_CLOCKWISE)
-            val bmp = Bitmap.createBitmap(h, w, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(rgbaU, bmp)
-            preview = bmp
+            colour = Bitmap.createBitmap(h, w, Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(rgbaU, colour)
+            preview = colour
         }
         // shortcut: assumes the back camera sensor is mounted at 90° (true for nearly all phones); read SENSOR_ORIENTATION if a device shows it sideways
         // rotating (x, y) -> (h-1-y, x) swaps the focal lengths and moves the principal point
@@ -307,8 +311,9 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         tagW.offer {
             val r = (tagDet ?: TagDetector().also { tagDet = it }).detect(fr, link.marker == "rune")
             tags = r
-            link.send(JSONObject().put("type", "tags").put("t", fr.t).put("tags", r)
-                .put("k", JSONArray().put(r4(fr.fx / fr.width)).put(r4(fr.fy / fr.height)).put(r4(fr.cx / fr.width)).put(r4(fr.cy / fr.height))))
+            val kk = JSONArray().put(r4(fr.fx / fr.width)).put(r4(fr.fy / fr.height)).put(r4(fr.cx / fr.width)).put(r4(fr.cy / fr.height))
+            link.send(JSONObject().put("type", "tags").put("t", fr.t).put("tags", r).put("k", kk))
+            colour?.let { scan.offer(it, r, kk) }
         }
     }
 
@@ -319,6 +324,34 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         arOrigin = camPose
         link.send(JSONObject().put("type", "calib").put("t", link.pcTime()))
         Toast.makeText(this, if (camPose == null) "IMU zeroed (AR not tracking yet)" else "IMU zeroed, AR origin set here", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Scan -> (step 1: the empty circle) -> Stick placed -> (step 2: the stick on it) -> Finish. The PC builds the model (dashboard stickscan.js). */
+    private fun scanButton(b: Button) {
+        when (scan.step) {
+            Scan.Step.OFF -> AlertDialog.Builder(this).setTitle("Scan the stick  1/2: the empty magic circle")
+                .setMessage("The PC turns photos into a 3D model of your stick. Open the PC dashboard first (connection screen).\n\n" +
+                    "1. Lay the magic circle flat, with nothing on it yet.\n" +
+                    "2. Tap Start, then walk once around the circle holding the phone 0.8-1.2 m away, pointed at its centre.\n" +
+                    "3. A photo is taken every half second while 2 or more tags show green. Keep your shadow off the circle.\n\n" +
+                    "When it says ${Scan.MAX_BG} pictures (or after one lap), tap \"Stick placed\".")
+                .setPositiveButton("Start") { _, _ -> scan.start(); b.text = "Stick placed" }
+                .setNegativeButton("Cancel", null).show()
+            Scan.Step.BG -> AlertDialog.Builder(this).setTitle("Scan the stick  2/2: the stick")
+                .setMessage("1. Lay the stick straight across the middle of the circle, its TIP toward tag T0 (the top of the poster).\n" +
+                    "2. From now on don't move the circle or the stick.\n" +
+                    "3. Tap Start and walk slowly around it twice: once high, looking down, and once low, about 30° above the floor. " +
+                    "Keep 2+ tags green; get the whole stick in the picture.\n" +
+                    "4. Tap Finish (after ~25 pictures). The model appears on the PC's connection screen and in the game.")
+                .setPositiveButton("Start") { _, _ -> scan.next(); b.text = "Finish" }
+                .setNeutralButton("Cancel scan") { _, _ -> scan.cancel(); b.text = "Scan" }
+                .setNegativeButton("Back", null).show()
+            Scan.Step.STICK -> AlertDialog.Builder(this).setTitle("Finish the scan?")
+                .setMessage("${scan.nBg} pictures of the circle, ${scan.nStick} of the stick. The PC needs 3 and 6 at least; more angles give a better model.")
+                .setPositiveButton("Send to PC") { _, _ -> scan.finish(); b.text = "Scan"; Toast.makeText(this, "Sent: the PC builds the model", Toast.LENGTH_LONG).show() }
+                .setNeutralButton("Cancel scan") { _, _ -> scan.cancel(); b.text = "Scan" }
+                .setNegativeButton("Keep scanning", null).show()
+        }
     }
 
     private fun imuDialog() {
@@ -367,7 +400,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         arError ?: arText,
         "Hz  cam %.0f  tag %.0f".format(convertW.hz, tagW.hz),
         "tags: " + (tags?.let { a -> (0 until a.length()).joinToString { a.getJSONObject(it).getInt("id").toString() } } ?: ""),
-    )
+    ) + listOfNotNull(scan.status())
 
     private fun arr(a: FloatArray) = JSONArray().apply { a.forEach { put(r4(it)) } }
 }

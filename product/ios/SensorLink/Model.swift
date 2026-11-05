@@ -27,8 +27,10 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     /// A hit: the whole screen red (ContentView), as long as the torch, then fading out
     @Published var hitRed = 0.0
     private var hitGen = 0
+    @Published var scanStep = Scan.Step.off
 
     let link: Link
+    let scan: Scan
     private(set) var imu: Imu!
     let session = ARSession()
 
@@ -65,6 +67,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
             UserDefaults.standard.set(id, forKey: "id")
         }
         link = Link(id: id, name: UIDevice.current.name)
+        scan = Scan(link: link)
         super.init()
         imu = Imu { [weak self] s in
             guard let self = self else { return }
@@ -186,10 +189,9 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
                 guard let self = self else { return }
                 let r = self.detector.detect(fr, rune: self.link.marker == "rune")
                 let w = Double(gray.width), hh = Double(gray.height)
-                self.link.send([
-                    "type": "tags", "t": fr.t, "tags": r,
-                    "k": [r4(fr.fx / w), r4(fr.fy / hh), r4(fr.cx / w), r4(fr.cy / hh)],
-                ])
+                let kk = [r4(fr.fx / w), r4(fr.fy / hh), r4(fr.cx / w), r4(fr.cy / hh)]
+                self.link.send(["type": "tags", "t": fr.t, "tags": r, "k": kk])
+                self.scan.offer(pb, tags: r, k: kk)
                 let marks: [TagMark] = r.compactMap { tag in
                     guard let id = tag["id"] as? Int, let c = tag["c"] as? [[Double]] else { return nil }
                     return TagMark(id: id, corners: c, distance: (tag["p"] as? [Double])?[2])
@@ -283,6 +285,13 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
             String(format: "Hz  cam %.0f  tag %.0f", convertW.hz, tagW.hz),
             "tags: " + tags.map(String.init).joined(separator: ", "),
             info,
-        ]
+        ] + [scan.status()].compactMap { $0 }
     }
+
+    // MARK: stick scan (Scan.swift); the button and the instructions are in ContentView
+
+    func scanStart() { scan.start(); scanStep = .bg }
+    func scanNext() { scan.next(); scanStep = .stick }
+    func scanFinish() { scan.finish(); scanStep = .off; showToast("Sent: the PC builds the model") }
+    func scanCancel() { scan.cancel(); scanStep = .off }
 }
