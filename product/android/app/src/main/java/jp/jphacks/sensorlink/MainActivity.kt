@@ -96,6 +96,9 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     @Volatile private var torchUntilMs = 0L
     private var torchOn = false // GL thread
     private val vibe by lazy { Vibe(this) }
+    // a hit: the whole screen red for as long as the torch, then fading out (never takes touches: not clickable)
+    private val hitRed by lazy { View(this).apply { setBackgroundColor(Color.RED); alpha = 0f } }
+    private val HIT_ALPHA = .65f
 
     private val convertW = Worker("convert")
     private val tagW = Worker("tags")
@@ -116,7 +119,10 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         val id = prefs.getString("id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("id", it).apply() }
         link = Link(id, Build.MODEL)
         link.onVibrate = { vibe.handle(it) }
-        link.onFlash = { ms -> torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + ms) } // another hit can only make it last longer
+        link.onFlash = { ms ->
+            torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + ms) // another hit can only make it last longer
+            runOnUiThread { hitRed.animate().cancel(); hitRed.alpha = HIT_ALPHA; hitRed.animate().alpha(0f).setStartDelay(ms.toLong()).setDuration(300) }
+        }
         imu = Imu(this) { s ->
             link.send(JSONObject().put("type", "imu").put("t", link.pcTime(s.wallMs))
                 .put("euler", arr(s.euler)).put("acc", arr(s.acc)).put("gyro", arr(s.gyro))
@@ -145,6 +151,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             addView(gl, FrameLayout.LayoutParams(1, 1))
             addView(this@MainActivity.overlay, FrameLayout.LayoutParams(-1, -1))
             addView(bar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+            addView(hitRed, FrameLayout.LayoutParams(-1, -1)) // last: over everything, buttons too
         })
 
         val perms = mutableListOf(Manifest.permission.CAMERA)

@@ -39,6 +39,7 @@ struct ContentView: View {
                 .background(Color.black.opacity(0.6))
             }
             .padding(.horizontal, 8)
+            Color.red.opacity(model.hitRed).ignoresSafeArea().allowsHitTesting(false) // a hit: over everything, buttons too
         }
         .sheet(isPresented: $showImu) { ImuSheet().environmentObject(model) }
         .sheet(isPresented: $showLan) { LanSheet().environmentObject(model) }

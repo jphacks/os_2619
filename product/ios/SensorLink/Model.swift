@@ -24,6 +24,9 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     @Published var marks: [TagMark] = []
     @Published var toast: String?
     @Published var found: [ImuDevice] = []
+    /// A hit: the whole screen red (ContentView), as long as the torch, then fading out
+    @Published var hitRed = 0.0
+    private var hitGen = 0
 
     let link: Link
     private(set) var imu: Imu!
@@ -71,7 +74,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
                 "q": s.q.map { r4($0) },
             ])
         }
-        link.onFlash = { [weak self] ms in self?.flash(ms: ms) }
+        link.onFlash = { [weak self] ms in self?.flash(ms: ms); self?.redScreen(ms: ms) }
         link.onVibrate = { [weak self] kind in self?.vibe.handle(kind) }
         session.delegate = self
         session.delegateQueue = arQueue
@@ -86,6 +89,20 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         cfg.isAutoFocusEnabled = true
         session.run(cfg)
         Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.refresh() }
+    }
+
+    /// A hit: the screen red for `ms`, then a 0.3 s fade. A newer hit restarts it (the older one's fade is skipped).
+    private func redScreen(ms: Int) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.hitGen += 1
+            let g = self.hitGen
+            self.hitRed = 0.65
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ms)) { [weak self] in
+                guard let self = self, self.hitGen == g else { return }
+                withAnimation(.easeOut(duration: 0.3)) { self.hitRed = 0 }
+            }
+        }
     }
 
     /// A hit: the torch on for `ms`. Another hit while it is on can only make it last longer. Failures (no torch, too hot) just mean no light.
