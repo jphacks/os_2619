@@ -272,6 +272,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
 
     renderer.setScissorTest(false);
     field.setLook(cfg.backdrop, !!cfg.debug);
+    field.setTime(cfg.timeOfDay);
     if (S.mode === 'game') {
       canvas.style.transform = '';
       drawGuide2d(false);

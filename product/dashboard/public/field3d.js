@@ -7,6 +7,7 @@ import * as W from './world.js';
 import { tagCanvas } from './dummycam.js';
 import { createBackdrop, SAND_GLSL } from './backdrop.js';
 import { createCourtyard, LAWN_GLSL } from './courtyard.js';
+import { TOD_GLSL, todUniforms, DEFAULT_HOUR } from './sky.js';
 import { makeWizard } from './wizard.js';
 import { makeWizardModel } from './wizardmodel.js';
 import { stickGeometry } from './stickmesh.js';
@@ -89,6 +90,7 @@ const FLOOR_FS = `
 uniform float uTime, uR; uniform vec2 uX; uniform vec2 uPoly[${MAXP}]; uniform int uN;
 uniform vec4 uP[2]; uniform vec3 uCA, uCB, uBodySun; uniform vec2 uSA, uSB; uniform float uRock, uHpOnly;
 varying vec2 vP;
+${TOD_GLSL}
 ${SAND_GLSL}
 ${LAWN_GLSL}
 float aline(float d, float px) { return 1. - smoothstep(.5 * px, 1.5 * px, d); } // ~1.5 px wide line at distance d (px units)
@@ -571,13 +573,15 @@ export function createField(scene, opts = {}) {
     uRock: { value: 0 }, uHpOnly: { value: 0 }, uBodySun: { value: V(0, 1, 1).normalize() },
     tN: { value: null }, tG: { value: null }, tSh: { value: null }, uSun: { value: V(0, 1, 0) }, uExt: { value: 64 }, // the canyon's, set when it is built
     cN: { value: null }, cSh: { value: null }, cG: { value: null }, cSun: { value: V(0, 1, 0) }, cExt: { value: 64 }, // the courtyard's
+    ...todUniforms(), // the clock's sky and light (sky.js): one set, shared with whichever look is shown
   };
+  const tod = Object.fromEntries(Object.keys(uniforms).filter(k => k.startsWith('uTod')).map(k => [k, uniforms[k]]));
   // The looks behind the arena. Each is built the first time it is shown (they bake textures and lights), and the floor shares its ground's uniforms.
   const LOOKS = { rock: { make: createBackdrop, id: 1, shared: ['tN', 'tG', 'tSh', 'uSun', 'uExt'], ground: 0xb87a52 }, court: { make: createCourtyard, id: 2, shared: ['cN', 'cSh', 'cG', 'cSun', 'cExt'], ground: 0x6f9a45 } };
-  const built = {}; let activeLook = null, fieldR = 0;
+  const built = {}; let activeLook = null, fieldR = 0, hour = DEFAULT_HOUR, settleAt = 0, lastBakeMs = 0, shownLook;
   const lookOf = name => {
     if (!built[name]) {
-      const b = built[name] = LOOKS[name].make();
+      const b = built[name] = LOOKS[name].make(tod);
       b.fit(fieldR); for (const k of LOOKS[name].shared) uniforms[k] = b.uniforms[k];
       group.add(b.group);
     }
@@ -611,6 +615,16 @@ export function createField(scene, opts = {}) {
   const hemi = new THREE.HemisphereLight(0xa8c0ff, 0x1a1622, 1.6); group.add(hemi);
   const key = new THREE.DirectionalLight(0xfff2e0, 2.2); key.position.set(2, 6, 4); group.add(key, key.target);
   const rim = new THREE.DirectionalLight(0x8fb8ff, 1.4); rim.position.set(-3, 3, -5); group.add(rim, rim.target);
+  const KEY_DAY = new THREE.Color(0xfff2e0), RIM_DAY = new THREE.Color(0x8fb8ff), HEMI_SKY = new THREE.Color(0xbcd8ff);
+  const lum = c => .3 * c[0] + .59 * c[1] + .11 * c[2];
+  function lightAvatars(look, b) { // the avatars stand in the look's light at its hour (b.t, sky.js); at night a cool moonlight, kept bright enough to play by
+    const t = b.t, k = Math.max(lum(t.sun), .62) / Math.max(lum(t.sun), 1e-3), night = t.stars;
+    uniforms.uBodySun.value.copy(b.sun);
+    key.position.copy(b.sun).multiplyScalar(10); key.color.copy(KEY_DAY).multiply(new THREE.Color(...t.sun.map(v => v * k)));
+    key.intensity = 3.2;
+    hemi.color.copy(HEMI_SKY).multiply(new THREE.Color(...t.amb.map(v => Math.max(v, .55)))); hemi.groundColor.set(look.ground).multiply(new THREE.Color(...t.amb)); hemi.intensity = 1.5;
+    rim.color.copy(RIM_DAY).lerp(new THREE.Color(0xa8c4ff), night); rim.intensity = 1.4 + 1.8 * night; // a moonlit edge, so the figures stand off the dark
+  }
 
   const avatars = { A: makeAvatar('A'), B: makeAvatar('B') };
   for (const a of Object.values(avatars)) {
@@ -646,17 +660,30 @@ export function createField(scene, opts = {}) {
       if (activeLook) built[activeLook].group.visible = pass !== 'front';
       uniforms.uHpOnly.value = pass === 'front' ? 1 : 0;
     },
+    /**
+     * The clock (hours, sky.js) for the court and the canyon; call every frame, as setLook. While it changes, a quick small shadow bake;
+     * 300 ms after it stops, the full one (~0.2 s, once). The plain arena keeps its lights.
+     */
+    setTime(h) {
+      h = Number.isFinite(+h) ? +h : DEFAULT_HOUR;
+      const b = activeLook && built[activeLook], now = performance.now();
+      if (h !== hour) { hour = h; settleAt = now + 300; if (b) { lastBakeMs = b.setTime(h, false) || lastBakeMs; lightAvatars(LOOKS[activeLook], b); } }
+      else if (b && !b.final && now > settleAt) { lastBakeMs = b.setTime(h, true) || lastBakeMs; lightAvatars(LOOKS[activeLook], b); }
+    },
+    get timeStats() { return { hour, bakeMs: +lastBakeMs.toFixed(1), final: !!(activeLook && built[activeLook].final) }; },
     /** name: 'court' (courtyard.js), 'rock' (backdrop.js), anything else the plain dark arena. The tag boards stand in the plain arena, elsewhere only with `debug`. */
     setLook(name, debug = false) {
-      const look = LOOKS[name], rock = !!look, active = look ? lookOf(name) : null;
-      activeLook = look ? name : null;
+      const look = LOOKS[name], rock = !!look, active = look ? lookOf(name) : null, changed = name !== shownLook;
+      activeLook = look ? name : null; shownLook = name;
       for (const [k, b] of Object.entries(built)) b.group.visible = k === name;
       uniforms.uRock.value = look ? look.id : 0;
-      if (active) uniforms.uBodySun.value.copy(active.sun);
-      // in the canyon the avatars stand in the same sun: from its direction, blue from above, the bright sand from below
-      hemi.color.set(rock ? 0xbcd8ff : 0xa8c0ff); hemi.groundColor.set(rock ? look.ground : 0x1a1622); hemi.intensity = rock ? 1.5 : 1.6;
-      if (rock) key.position.copy(active.sun).multiplyScalar(10); else key.position.set(2, 6, 4);
-      key.intensity = rock ? 3.2 : 2.2;
+      // in the canyon and the court the avatars stand in the same sun: from its direction, blue from above, the ground's colour from below
+      if (!changed) {} // called every frame: the lights only move with the look or the clock
+      else if (active) { if (active.hour !== hour) active.setTime(hour, true); else active.setTime(hour, active.final); lightAvatars(look, active); } // the shared tod uniforms take this look's sun again
+      else {
+        hemi.color.set(0xa8c0ff); hemi.groundColor.set(0x1a1622); hemi.intensity = 1.6;
+        key.position.set(2, 6, 4); key.color.copy(KEY_DAY); key.intensity = 2.2; rim.color.copy(RIM_DAY); rim.intensity = 1.4;
+      }
       showTags = !rock || debug; if (tags) tags.visible = showTags;
       for (const l of letters) l.material.opacity = rock ? .95 : .55; // the gravel is busier than the plain floor
     },

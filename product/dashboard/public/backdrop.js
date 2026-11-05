@@ -1,17 +1,18 @@
 // The rocky canyon behind the game screen (screen 3): sky, layered sandstone mesas and the ground they stand on. The sky and the rocks
 // are generated here; the ground is one image (assets/backdrop/ground.png), used as it is. Only looks: nothing in the game knows about the rocks, and shots and players pass through them.
 // It lives in the field's group (field3d.js), so it shows wherever the arena does and never in the final render's picture.
-// The shaders write display colours directly and use their own fixed sun, so the avatars' lights do not touch them.
+// The shaders write display colours directly and use their own sun, moved by the clock (sky.js), so the avatars' lights do not touch them.
 // World frame: world.js (metres, y up). Phone C and the guide camera look from +z towards -z: the open side stays on +z.
 import * as THREE from 'three';
+import { TOD_GLSL, todUniforms, applyTod, timeOfDay, DEFAULT_HOUR } from './sky.js';
 
 const rng = seed => () => { seed |= 0; seed = seed + 0x6d2b79f5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 const TAU = Math.PI * 2;
-const SUN = new THREE.Vector3(-.5, .68, .54).normalize(); // high, from behind the left of the view: the cliffs facing the camera are lit, shadows fall away from the field
+const SUN = new THREE.Vector3(-.5, .68, .54).normalize(); // at DEFAULT_HOUR (sky.js): high, from behind the left of the view: the cliffs facing the camera are lit, shadows fall away from the field
 export const SUN_DIR = SUN;
 export const DEFAULT_R = 4 * Math.SQRT2; // the 8 m square field the layout was placed around; a larger field pushes the rocks out
 const CLEAR = 1.6; // m, boulders stay this far outside the field's radius
-const GROUND_M = 12, SHADOW_N = 1024; // m one repeat of the ground image covers, centred on the field; texels per side of the baked sunlight
+const GROUND_M = 12, SHADOW_N = 1024, QUICK_N = 256; // m one repeat of the ground image covers, centred on the field; texels per side of the baked sunlight
 
 const tilingNoise = (period, rand) => { // value noise over [0, 1)², tiling
   const g = Float32Array.from({ length: period * period }, rand);
@@ -88,6 +89,38 @@ export function bakeSunlight(pos, idx, ranges, ext, n = SHADOW_N, depth = new Fl
   const sharp = blur(cover, 1), wide = blur(blur(cover, 9), 9);
   for (let p = 0; p < n * n; p++) { ground[p * 4] = sharp[p] * 255; ground[p * 4 + 1] = wide[p] * 255; ground[p * 4 + 3] = 255; }
   return { depth, ground };
+}
+
+/**
+ * sunBaker(slots, n) -> { setGeometry(pos, idx, ranges, ext), bake(dir, final) -> ms, dispose() }: the baked sunlight of one look, again whenever the sun moves.
+ * slots: the uniforms it fills: depth (float texture), light (the ground's shadow texture), dir (the sun they were baked for, a Vector3).
+ * final: n texels a side (~0.2 s); else QUICK_N (~15 ms), for while the clock is being turned. A sun it already baked for costs nothing.
+ */
+export function sunBaker(slots, n = SHADOW_N) {
+  const make = n => {
+    const depth = new Float32Array(n * n), light = new Uint8Array(n * n * 4);
+    const tD = new THREE.DataTexture(depth, n, n, THREE.RedFormat, THREE.FloatType); // read four times by hand: floats do not filter everywhere
+    const tSh = new THREE.DataTexture(light, n, n, THREE.RGBAFormat);
+    tSh.minFilter = THREE.LinearMipmapLinearFilter; tSh.magFilter = THREE.LinearFilter; tSh.generateMipmaps = true;
+    return { n, depth, light, tD, tSh, dir: new THREE.Vector3(NaN, NaN, NaN) };
+  };
+  const hi = make(n), lo = make(QUICK_N);
+  let geo = null;
+  return {
+    setGeometry(pos, idx, ranges, ext) { geo = { pos, idx, ranges, ext }; hi.dir.set(NaN, NaN, NaN); lo.dir.set(NaN, NaN, NaN); },
+    bake(dir, final) {
+      const same = s => s.dir.distanceToSquared(dir) < 1e-8, s = same(hi) || final ? hi : lo;
+      let ms = 0;
+      if (!same(s)) {
+        const t0 = performance.now();
+        bakeSunlight(geo.pos, geo.idx, geo.ranges, geo.ext, s.n, s.depth, s.light, dir);
+        s.tD.needsUpdate = s.tSh.needsUpdate = true; s.dir.copy(dir); ms = performance.now() - t0;
+      }
+      slots.depth.value = s.tD; slots.light.value = s.tSh; slots.dir.value.copy(dir);
+      return ms;
+    },
+    dispose() { for (const s of [hi, lo]) { s.tD.dispose(); s.tSh.dispose(); } },
+  };
 }
 
 // ---- rock geometry: stacked strata. All rocks share the same layer heights, as real sediment does, so the bands line up across the view ----
@@ -167,12 +200,13 @@ vec3 sandColor(vec2 p) { // the ground image as it is; only the rocks' shadows g
   // the sun: rock shadows, cool and clean-edged, and a little dark around a rock's foot
   vec4 sh = texture2D(tSh, p / (2. * uExt) + .5);
   float lit = sh.r, foot = smoothstep(.15, .95, sh.g);
-  return c * mix(vec3(.30, .34, .50), vec3(1.07, 1.03, .98), lit) * mix(.72, 1., foot);
+  return c * (vec3(.30, .34, .50) * uTodAmb + vec3(.77, .69, .48) * uTodSun * lit) * mix(.72, 1., foot); // the sky's light, the sun's on top
 }`;
 const SKY_VS = `varying vec3 vD; void main() { vD = position; vec4 p = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.); gl_Position = p.xyww; }`;
 const SKY_FS = `
 uniform sampler2D tN; uniform float uTime; uniform vec3 uSun; varying vec3 vD;
-void main() {
+${TOD_GLSL}
+void main() { // the clock (sky.js) turns the day's sky into dawn, dusk or night
   vec3 d = normalize(vD); float y = max(d.y, 0.);
   vec3 c = mix(vec3(.76, .87, .97), vec3(.33, .62, .94), smoothstep(0., .17, y)); // clear: pale at the horizon, deep overhead
   c = mix(c, vec3(.07, .29, .70), smoothstep(.1, .72, y));
@@ -181,24 +215,26 @@ void main() {
   float a = texture2D(tN, q * vec2(.021, .05) + uTime * vec2(.0012, .0003)).r, b = texture2D(tN, q * vec2(.11, .26) - uTime * .0006).g, m = texture2D(tN, q * .009 + .3).g;
   float cloud = smoothstep(.70, .90, a * .72 + b * .32) * smoothstep(.52, .70, m) * smoothstep(.02, .14, y);
   c = mix(c, vec3(1.), cloud * .8);
-  gl_FragColor = vec4(c, 1.);
+  gl_FragColor = vec4(todSky(d, c, cloud * .8, uTime), 1.);
 }`;
 const GROUND_VS = `varying vec3 vW; void main() { vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const GROUND_FS = `
+${TOD_GLSL}
 ${SAND_GLSL}
 varying vec3 vW;
 void main() {
   vec3 c = sandColor(vW.xz);
-  gl_FragColor = vec4(mix(c, HAZE, smoothstep(34., 92., distance(vW, cameraPosition)) * .88), 1.);
+  gl_FragColor = vec4(mix(c, todHaze(HAZE), smoothstep(34., 92., distance(vW, cameraPosition)) * .88), 1.);
 }`;
 const ROCK_VS = `attribute float aO; varying vec3 vW; varying float vO; void main() { vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; vO = aO; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const ROCK_FS = `
+${TOD_GLSL}
 ${SAND_GLSL}
-uniform float uKeep; uniform highp sampler2D tD; varying vec3 vW; varying float vO;
-float sunlit(vec3 p) { // the baked depth, four taps: is anything higher up this point's sun ray?
-  vec2 g = (p.xz - uSun.xz / uSun.y * p.y) / (2. * uExt) + .5;
+uniform float uKeep; uniform highp sampler2D tD; uniform vec3 uSunB; varying vec3 vW; varying float vO;
+float sunlit(vec3 p) { // the baked depth, four taps: is anything higher up this point's sun ray? (uSunB: the sun it was baked for)
+  vec2 g = (p.xz - uSunB.xz / uSunB.y * p.y) / (2. * uExt) + .5;
   if (g.x < 0. || g.y < 0. || g.x > 1. || g.y > 1.) return 1.;
-  float t = max(p.y, 0.) / uSun.y + .42, o = .75 / ${SHADOW_N}.;
+  float t = max(p.y, 0.) / uSunB.y + .42, o = .75 / ${SHADOW_N}.;
   return (step(texture2D(tD, g + vec2(-o, -o)).r, t) + step(texture2D(tD, g + vec2(o, -o)).r, t) + step(texture2D(tD, g + vec2(-o, o)).r, t) + step(texture2D(tD, g + vec2(o, o)).r, t)) / 4.;
 }
 vec4 tri(vec3 p, vec3 w, float k) { // one noise sample per plane, squeezed along y so it reads as bedding
@@ -228,25 +264,23 @@ void main() {
   float up = smoothstep(.45, .85, N.y);
   alb = mix(alb, vec3(.72, .45, .29) * (.82 + d2.r * .36), up * .78); // ledges carry sand
   N = normalize(N + (vec3(d2.r, d3.g, d2.g) - .5) * .85 + (vec3(d3.a, d3.r, d3.g) - .5) * .35);
-  vec3 sun = vec3(1.32, 1.18, .98) * max(dot(N, uSun), 0.) * sunlit(vW);
+  vec3 sun = vec3(1.32, 1.18, .98) * uTodSun * max(dot(N, uSun), 0.) * sunlit(vW);
   vec3 sky = vec3(.34, .44, .64) * (.62 + .38 * N.y), bounce = vec3(.58, .36, .23) * max(-N.y * .6 + .4, 0.); // blue from above, the bright sand from below
-  vec3 c = alb * (sun + sky + bounce) * mix(vO, 1., .35);
-  gl_FragColor = vec4(mix(c, HAZE, smoothstep(30., 90., distance(vW, cameraPosition)) * .7), 1.);
+  vec3 c = alb * (sun + (sky + bounce) * uTodAmb) * mix(vO, 1., .35);
+  gl_FragColor = vec4(mix(c, todHaze(HAZE), smoothstep(30., 90., distance(vW, cameraPosition)) * .7), 1.);
 }`;
 
-/** createBackdrop() -> { group, uniforms (the floor shares them for its sand), update(dt), fit(R), dispose() } */
-export function createBackdrop() {
+const TOD = { sweep: -1 }; // the sun goes down on the right: the tall wall on the left would shade the field (sky.js)
+/** createBackdrop(tod) -> { group, uniforms (the floor shares them for its sand), sun (the light now), setTime(h, final), update(dt), fit(R), dispose() }. tod: sky.js todUniforms(). */
+export function createBackdrop(tod = todUniforms()) {
   const group = new THREE.Group(); group.name = 'backdrop';
   const uniforms = {
-    tN: { value: noiseTexture() }, uSun: { value: SUN.clone() }, uTime: { value: 0 }, uKeep: { value: DEFAULT_R },
-    tG: { value: null }, uExt: { value: 64 }, tD: { value: null }, tSh: { value: null },
+    tN: { value: noiseTexture() }, uSun: { value: SUN.clone() }, uSunB: { value: SUN.clone() }, uTime: { value: 0 }, uKeep: { value: DEFAULT_R },
+    tG: { value: null }, uExt: { value: 64 }, tD: { value: null }, tSh: { value: null }, ...tod,
   };
   loadGround(uniforms.tG);
-  const depth = new Float32Array(SHADOW_N * SHADOW_N), light = new Uint8Array(SHADOW_N * SHADOW_N * 4);
-  const tD = uniforms.tD.value = new THREE.DataTexture(depth, SHADOW_N, SHADOW_N, THREE.RedFormat, THREE.FloatType); // read four times by hand: floats do not filter everywhere
-  const tSh = uniforms.tSh.value = new THREE.DataTexture(light, SHADOW_N, SHADOW_N, THREE.RGBAFormat);
-  tSh.minFilter = THREE.LinearMipmapLinearFilter; tSh.magFilter = THREE.LinearFilter; tSh.generateMipmaps = true;
-  const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({ vertexShader: SKY_VS, fragmentShader: SKY_FS, uniforms, side: THREE.BackSide, depthTest: false, depthWrite: false }));
+  const baker = sunBaker({ depth: uniforms.tD, light: uniforms.tSh, dir: uniforms.uSunB });
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({ vertexShader: SKY_VS, fragmentShader: SKY_FS, uniforms, side: THREE.BackSide, depthTest: false, depthWrite: false, extensions: { derivatives: true } }));
   sky.frustumCulled = false; sky.renderOrder = -10;
   const ground = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.ShaderMaterial({ vertexShader: GROUND_VS, fragmentShader: GROUND_FS, uniforms }));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -.02;
@@ -266,13 +300,19 @@ export function createBackdrop() {
     const g = rocks.geometry = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('aO', new THREE.Float32BufferAttribute(ao, 1)); g.setIndex(idx);
     uniforms.uExt.value = 64 * scale;
-    bakeSunlight(pos, idx, ranges, 64 * scale, SHADOW_N, depth, light);
-    tD.needsUpdate = tSh.needsUpdate = true;
+    baker.setGeometry(pos, idx, ranges, 64 * scale);
+    baker.bake(uniforms.uSun.value, true);
   }
   fit(DEFAULT_R);
   return {
-    group, uniforms, fit, sun: SUN,
+    group, uniforms, fit, sun: uniforms.uSun.value, hour: DEFAULT_HOUR, final: true, t: timeOfDay(DEFAULT_HOUR, SUN, TOD),
+    /** The clock (hours), as courtyard.js. Returns the bake's ms. */
+    setTime(h, final) {
+      this.hour = h; this.final = final; this.t = timeOfDay(h, SUN, TOD);
+      applyTod(tod, this.t); uniforms.uSun.value.fromArray(this.t.lightDir);
+      return baker.bake(uniforms.uSun.value, final);
+    },
     update(dt) { uniforms.uTime.value += dt; },
-    dispose() { uniforms.tN.value.dispose(); uniforms.tG.value.dispose(); tD.dispose(); tSh.dispose(); for (const m of [sky, ground, rocks]) { m.geometry.dispose(); m.material.dispose(); } },
+    dispose() { uniforms.tN.value.dispose(); uniforms.tG.value.dispose(); baker.dispose(); for (const m of [sky, ground, rocks]) { m.geometry.dispose(); m.material.dispose(); } },
   };
 }
