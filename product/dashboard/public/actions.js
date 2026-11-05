@@ -5,8 +5,9 @@
 import { cross, dot, norm, qrot } from './map.js';
 
 const D = Math.PI / 180;
+const CHARGE_RMS = { start: 120, keep: 90 }; // °/s: see the gyro charge below
 export const ACTIONS = [
-  { name: 'Charge', how: 'only while the stick is raised 45° or more; gyro only: starts when the turning direction changes 5+ times within 1 s past 60°/s (stick circled or shaken at the base), then keeps going while it changes 4+ times past 30°/s; slower than a swing' },
+  { name: 'Charge', how: 'only while the stick is raised 45° or more; gyro only: starts when the stick moved 120°/s RMS over the last second and changed its turning direction 4+ times (stick circled or shaken at the base), then keeps going at 90°/s and 3+ times; slower than a swing' },
   { name: 'Swing', how: 'stick turns faster than 300°/s through more than 60° and stops dead (from over 250°/s to under 100°/s within 0.12 s); direction plus start and stop position' },
   { name: 'Dodge', how: 'chest phone moves faster than 1.2 m/s; left / right / back / forward' },
   { name: 'Guard', how: 'stick within 45° of horizontal (above or below) and still (under 60°/s) for 1 s; held upright it does nothing' },
@@ -26,7 +27,7 @@ const where = s => `elev ${deg(s.el)}°, heading ${deg(s.hd)}°`;
 
 export function createActions() {
   const P = {};
-  const st = s => P[s] ??= { yaw0: 0, last: null, ring: [], rev: [], sign: [0, 0, 0], revBig: [], signBig: [0, 0, 0], chargeOn: false, spinCool: 0, still: null, sw: null, guard: null, guarded: false, ar: [], dodging: false };
+  const st = s => P[s] ??= { yaw0: 0, last: null, ring: [], rev: [], sign: [0, 0, 0], chargeOn: false, spinCool: 0, still: null, sw: null, guard: null, guarded: false, ar: [], dodging: false };
 
   /** Feeds one packet; returns the actions it completes as { t, slot, name, detail, ...data }.
    *  Swing adds dir ('down-left' ...) and power 0..1 (stick speed, 1 at 1000°/s); Dodge adds dir and speed (m/s). */
@@ -36,8 +37,11 @@ export function createActions() {
     if (k.type === 'imu') {
       const d = eulerRot(k.euler, axis), w = Math.hypot(...k.gyro);
       const pos = { d, el: Math.asin(Math.max(-1, Math.min(1, d[2]))), hd: wrap(Math.atan2(d[1], d[0]) - S.yaw0 * D) };
-      const gap = !S.last || k.t - S.last.t > 0.25;
+      const gap = !S.last || k.t - S.last.t > 0.25, gdt = gap ? 0 : k.t - S.last.t;
       S.last = k;
+      // the body's slow turning, taken off the gyro for the charge: walking round or turning while circling the stick must not hide the reversals
+      if (gap || !S.gAvg) S.gAvg = [...k.gyro];
+      const hp = k.gyro.map((g, i) => g - (S.gAvg[i] += (g - S.gAvg[i]) * Math.min(1, gdt / .4)));
 
       // Charge: unwrap the tilt direction of the upright stick; one full turn inside 2 s
       if (d[2] > Math.cos(45 * D) && Math.hypot(d[0], d[1]) > 0.1 && !gap) {
@@ -48,27 +52,29 @@ export function createActions() {
         if (Math.abs(turn) >= 2 * Math.PI) { emit('Charge', turn > 0 ? 'counter-clockwise (from above)' : 'clockwise (from above)'); S.ring = []; }
       } else S.ring = [];
 
-      // Charge, gyro only (the sensor is at the base of the stick, so the angles stay small): what shows is the turning direction
-      // changing again and again. Count sign reversals of each gyro axis (past a dead band) in the last second; swing speed resets it.
-      // 10/18: a held stick's tremor sometimes started a charge. Starting needs bigger, more frequent reversals; keeping it does not
-      // 10/18: only a stick raised 45° or more counts as circling for a charge; a level or lowered one never charges
-      if (gap || w > 300 || d[2] < Math.sin(45 * D)) { S.rev = []; S.sign = [0, 0, 0]; S.revBig = []; S.signBig = [0, 0, 0]; }
+      // Charge, gyro only (the sensor is at the base of the stick, so the angles stay small): how hard the stick moved over the last second, and the turning
+      // direction changing. Measured (recordings of one player, 11/4: 20 s each): circling is about 1 turn a second, the same rhythm as walking, so the rhythm says nothing;
+      // the size does: 1 s RMS of the gyro with the slow turning taken off is at most 110°/s walking without circling, 120°/s and more circling, walking or not.
+      if (gap || d[2] < Math.sin((S.chargeOn ? 30 : 45) * D)) { S.rev = []; S.sign = [0, 0, 0]; S.gw = []; }
       else {
-        for (const [rev, sign, band] of [[S.rev, S.sign, 30], [S.revBig, S.signBig, 60]]) {
-          for (let i = 0; i < 3; i++) {
-            const g = k.gyro[i];
-            if (Math.abs(g) < band) continue;
-            const sg = Math.sign(g);
-            if (sign[i] && sg !== sign[i]) rev.push(k.t);
-            sign[i] = sg;
-          }
-          while (rev.length && rev[0] < k.t - 1) rev.shift();
+        (S.gw ??= []).push({ t: k.t, e: hp[0] ** 2 + hp[1] ** 2 + hp[2] ** 2 });
+        while (S.gw[0].t < k.t - 1) S.gw.shift();
+        if (Math.hypot(...hp) > 300) { S.rev = []; S.sign = [0, 0, 0]; } // a swing's speed is no reversal
+        else for (let i = 0; i < 3; i++) {
+          const g = hp[i];
+          if (Math.abs(g) < 30) continue;
+          const sg = Math.sign(g);
+          if (S.sign[i] && sg !== S.sign[i]) S.rev.push(k.t);
+          S.sign[i] = sg;
         }
-        if ((S.chargeOn ? S.rev.length >= 4 : S.revBig.length >= 5) && k.t > S.spinCool) { // keeps firing while the shaking goes on: the game drops the charge when it stops
-          emit('Charge', `gyro: ${S.rev.length} direction changes in 1 s`, k.t, { keep: S.chargeOn }); S.chargeOn = true; S.spinCool = k.t + .15; S.ring = [];
-        }
+        while (S.rev.length && S.rev[0] < k.t - 1) S.rev.shift();
       }
-      if (S.chargeOn && S.rev.length < 4 && k.t - S.spinCool > 2) S.chargeOn = false; // as long as the game keeps a paused charge (2 s): resuming uses the keep rule
+      const rms = S.gw?.length ? Math.sqrt(S.gw.reduce((q, w) => q + w.e, 0) / S.gw.length) : 0, seen = S.gw?.length ? k.t - S.gw[0].t : 0;
+      const keepOk = S.rev.length >= 3 && rms >= CHARGE_RMS.keep, startOk = S.rev.length >= 4 && rms >= CHARGE_RMS.start && seen >= .5;
+      if ((S.chargeOn ? keepOk : startOk) && k.t > S.spinCool) { // keeps firing while the circling goes on: the game drops the charge when it stops
+        emit('Charge', `gyro: ${rms.toFixed(0)}°/s, ${S.rev.length} direction changes in 1 s`, k.t, { keep: S.chargeOn }); S.chargeOn = true; S.spinCool = k.t + .15; S.ring = [];
+      }
+      if (S.chargeOn && !keepOk && k.t - S.spinCool > 2) S.chargeOn = false; // as long as the game keeps a paused charge (2 s): resuming uses the keep rule
 
       // Swing: starts where the stick was last calm, ends when it slows down again
       if (gap) S.sw = null;
@@ -84,6 +90,7 @@ export function createActions() {
           const v = pos.el - a.el, h = wrap(pos.hd - a.hd) * Math.cos((pos.el + a.el) / 2), m = Math.hypot(v, h);
           const dir = [Math.abs(v) > 0.4 * m ? (v > 0 ? 'up' : 'down') : '', Math.abs(h) > 0.4 * m ? (h > 0 ? 'left' : 'right') : ''].filter(Boolean).join('-');
           emit('Swing', `${dir}, ${deg(ang)}° in ${(dur * 1000).toFixed(0)} ms · from ${where(a)} · stop ${where(pos)}`, k.t, { dir, power: Math.min(1, ang / dur / (1000 * D)) });
+          S.chargeOn = false; S.rev = []; S.sign = [0, 0, 0]; S.gw = []; // a shot ends the charge: its speed must not read as circling
         }
         S.sw = null;
       }

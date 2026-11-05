@@ -292,10 +292,10 @@ export function createDummyCam({ width = 1280, height = 720, fovY = 55, pose = n
   const setTruth = (slot, k) => motion.setTruth(slot, k);
   let frame = null;
 
-  function render(time = performance.now() / 1000) {
+  function render(time = performance.now() / 1000, draw = true) { // draw false: only the motion moves on (game placement reads `frame`), the picture stays as it is
     frame = motion.sample(time);
     for (const s of ['A', 'B']) players[s].set(frame.players[s]);
-    renderer.render(scene, camera);
+    if (draw) renderer.render(scene, camera);
   }
 
   let raf = 0, ws = null, alive = true;

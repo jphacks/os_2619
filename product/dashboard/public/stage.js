@@ -20,7 +20,7 @@ const toMat = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3
 export const GUIDE_CAM = { x: 0, y: 1.7, z: 3.5, yaw: 0, pitch: -16, roll: 0, fov: 45 };
 export const DRONE_JA = { fixed: '定点（最終映像と同じ）', auto: '自動演出', orbit: '周回', chaseA: 'A の肩越し', chaseB: 'B の肩越し', top: '真上', side: '真横', free: '自由操作' };
 
-const RK = W.MARKER === 'rune' ? '-rune' : ''; // a scan belongs to the sheets it saw: RuneTags lie 250 mm apart, AprilTags 200 mm
+const RK = W.MARKER === 'rune' ? '-mahoujinA' + W.RUNE_SCALE : ''; // a scan belongs to the sheets it saw: the mahoujin (T0 on A's side, at its scale) or the AprilTag square
 const FIELD_KEY = 'pd-field-fixed3-' + W.LAYOUT + RK, CAM_KEY = 'pd-tagcam-fixed3' + RK; // v3: drops scans made with map4 sheets taken as standing (phone C turned 180° from the phones); a saved scan only holds the sheets' turns and phone C
 
 export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay = null }) { // overlay.compose(src, w, h, dt): the picture with the recognition layers (visionfx.js) or null
@@ -40,7 +40,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
   const S = { shake: 0, mode: 'game', box: null, w: 1, h: 1, aspect: 16 / 9, msg: '', tagCam: null, scanned: false, scannedIds: null, ready: false, intr: {} };
   fx.opts.onShake = a => { S.shake = Math.max(S.shake, a); };
 
-  // ---- debug world (G): grid, field tags, phone C's frustum ----
+  // ---- debug world: grid, field tags, phone C's frustum ----
   const world3d = new THREE.Group(); scene.add(world3d); world3d.visible = false;
   const grid = new THREE.GridHelper(8, 16, 0x888888, 0x444444); world3d.add(grid);
   const camHelper = new THREE.CameraHelper(camera); world3d.add(camHelper);
@@ -70,7 +70,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     if (W.LAYOUT === 'map4' && !S.scanned) return; // sheets not scanned yet: nothing to draw where they are
     const c = W.FIELD.poly.map(([x, z]) => V(x, 0, z));
     c.forEach((p, i) => guide.add(strip(p, c[(i + 1) % c.length], 0xffffff)));
-    for (const [slot, color, css] of [['A', 0xff3b3b, '#ff8a8a'], ['B', 0x2fd46a, '#8ae8a8']]) {
+    for (const [slot, color, css] of [['A', 0xff6600, '#ffb27a'], ['B', 0x0078ff, '#8ac0ff']]) {
       const st = W.START[slot], ring = new THREE.Mesh(new THREE.RingGeometry(.26, .32, 48), onTop(new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, opacity: .9 })));
       ring.rotation.x = -Math.PI / 2; ring.position.set(st.pos[0], .006, st.pos[2]); ring.renderOrder = 10;
       const tip = v3(W.apply(W.bodyPose(st.pos, st.yaw, .006), [.55, 0, 0]));
@@ -103,12 +103,12 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     let FM; try { FM = await import('./fieldmap.js'); } catch (e) { S.msg = 'スキャン失敗：fieldmap.js を読み込めない ' + e.message; return; }
     if (W.FIXED_FIELD) { // the fixed middle square: only phone C's pose is unknown
       const cam = await measureFixed();
-      if (!cam) { S.msg = 'スキャン失敗：床のタグ（ID 0〜3）が 1 枚も見えていない。カメラを高くするか、近づける'; return; }
+      if (!cam) { S.msg = `スキャン失敗：床のタグ（ID ${W.CORNER_IDS.join('・')}）が 1 枚も見えていない。カメラを高くするか、近づける`; return; }
       applyField({ poly: W.FIELD.poly.map(p => [...p]), tags: fixedTags() }); saveField();
       S.tagCam = cam; try { localStorage.setItem(CAM_KEY, JSON.stringify(cam)); } catch {}
       const good = cam.reprojErrPx < 3; S.ready = S.ready || good;
       S.msg = good ? `スキャン完了：タグ ${cam.ids.join(',')}　誤差 ${cam.reprojErrPx.toFixed(1)}px　縦画角 ${cam.fovY.toFixed(1)}°${cam.focalFitted ? '（測定）' : '（設定値）'}`
-        : `スキャン不十分：誤差 ${cam.reprojErrPx.toFixed(1)}px が大きい。タグの置き方（時計回り 0→1→2→3、同じ向き、一辺 ${(W.TAG_PITCH * 1000).toFixed(0)} mm）を確かめる`;
+        : `スキャン不十分：誤差 ${cam.reprojErrPx.toFixed(1)}px が大きい。${W.MARKER === 'rune' ? `魔法陣の向き（T0 が A のスタート側）と倍率 ${W.RUNE_SCALE}` : `タグの置き方（時計回り 0→1→2→3、同じ向き、一辺 ${(W.TAG_PITCH * 1000).toFixed(0)} mm）`}を確かめる`;
       resize(); return;
     }
     const need = modeIds(), src = video.__dummy?.canvas ?? video;
@@ -261,7 +261,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     if (needArena) {
       drone.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
       field.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot,
-        { body: p.body, base: p.base, tip: p.tip, hp: p.hp, hpMax: p.hpMax, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, skel: p.skel, calibAt: p.calibAt }])));
+        { body: p.body, base: p.base, tip: p.tip, hp: p.hp, hpMax: p.hpMax, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, skel: p.skel, calibAt: p.calibAt, lost: game.match.phase === 'result' && !!game.winner && game.winner !== p }])));
     }
     fx.step(dt);
     if (minimap) { const on = S.mode === 'game' && cfg.minimap && !setup; minimap.canvas.style.display = on ? '' : 'none'; if (on) minimap.draw(P, game.shots); }
@@ -271,6 +271,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     world3d.visible = S.mode === 'game' && cfg.debug;
 
     renderer.setScissorTest(false);
+    field.setLook(cfg.backdrop, !!cfg.debug);
     if (S.mode === 'game') {
       canvas.style.transform = '';
       drawGuide2d(false);
@@ -280,14 +281,14 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
       if (S.fixed) { // where phone C is, as on screen 4 (the dummy room's exact pose, else the scan, else the guide camera)
         applyCam(); if (video.__dummy) { toThreeCamera(video.__dummy.truePose, camera); camera.aspect = S.aspect; }
         camera.zoom = zoom; camera.updateProjectionMatrix(); camera.updateMatrixWorld(); keepView(camera);
-        renderer.setViewport(0, 0, S.w, S.h); fx.render();
+        renderer.setViewport(0, 0, S.w, S.h); fx.render(field.setPass);
         camera.zoom = 1; camera.updateProjectionMatrix(); return; // the final render shares this camera
       }
       overCam.aspect = S.aspect; overCam.updateProjectionMatrix();
       const keep = { p: camera.position.clone(), q: camera.quaternion.clone(), fov: camera.fov };
       camera.position.copy(overCam.position); camera.quaternion.copy(overCam.quaternion); camera.fov = overCam.fov; camera.aspect = S.aspect; camera.zoom = zoom; camera.updateProjectionMatrix();
       camera.updateMatrixWorld(); keepView(camera);
-      renderer.setViewport(0, 0, S.w, S.h); fx.render();
+      renderer.setViewport(0, 0, S.w, S.h); fx.render(field.setPass);
       camera.position.copy(keep.p); camera.quaternion.copy(keep.q); camera.fov = keep.fov; camera.zoom = 1; camera.updateProjectionMatrix();
       return;
     }

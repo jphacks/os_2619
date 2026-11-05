@@ -4,7 +4,7 @@
 // detectors (actions.js: Charge / Swing) and from the keys / buttons. Rules (GAME_DESIGN.md, 10/17):
 //   Swing without charging → 小 (weak, can be repeated every `rapid` s)
 //   Charge (circle the stick) → charging; Swing releases it: under t1 s 小, t1..t2 s 中, t2 s and more 大 (special move)
-//   moving the chest more than `moveFail` m while charging drops the charge
+//   the player may walk while charging; a charging player cannot guard
 //   every tier is a projectile along the aim: dodging is just moving out of its way (no invulnerable dodge)
 //   guard (10/18): the stick held still, lying sideways (within 45° of horizontal), for guardHold s (not while charging, not right after a swing), or the guard button: a 小 that
 //   reaches the guard bounces back at its shooter; 中 and 大 go through it (full damage)
@@ -29,22 +29,22 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷', water: '水', wind: '�
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 2, t2: 5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, moveFail: .5, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: 1 }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × (all tiers)
+export const RULES = { t1: 1, t2: 2.5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: 1 }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × (all tiers)
 // how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
 // a little larger than the ball looks so near misses still count (10/18: .12 / .28 / .5 were too strict)
 const TIER = {
-  s: { power: .15, big: .7, speed: 11, radius: .2, hit: .25 },
-  m: { power: .6, big: 1.5, speed: 8, radius: .38, hit: .65 },
-  l: { power: 1, big: 2.8, speed: 6.5, radius: .62, hit: 1 },
+  s: { power: .15, big: .7, speed: 11, radius: .2, hit: .25, flash: 120 },
+  m: { power: .6, big: 1.5, speed: 8, radius: .38, hit: .65, flash: 250 },
+  l: { power: 1, big: 2.8, speed: 6.5, radius: .62, hit: 1, flash: 500 },
 };
 export const POS_JA = { auto: '自動', phones: '胸スマホ', start: '立ち位置' };
 
 /**
- * createGame({ fx, drone, sfx: () => audio | null, cfg, onFlash, clock? }) → { players, match, shots, events, step, onSensed, command, canAct, ... }
+ * createGame({ fx, drone, sfx: () => audio | null, cfg, onFlash, onHit?, onVibrate?, clock? }) → { players, match, shots, events, step, onSensed, command, canAct, ... }
  * cfg (live object): posSrc 'auto'|'phones'|'camera'|'start', hand 'R'|'L', aim 'stick'|'eye', stickLen { A, B }, test (no HP loss),
  * rules (RULES: tier seconds, damage, rapid-fire interval, how far you may move while charging).
  */
-export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {}, clock = null, getDummyFrame = () => null }) {
+export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {}, onHit = () => {}, onVibrate = () => {}, clock = null, getDummyFrame = () => null }) {
   const now = clock ?? (() => performance.now() / 1000); // test-game.mjs drives a fake clock
   const events = []; // newest first: { at: Date.now(), slot, kind, text }
   const log = (slot, kind, text) => { events.unshift({ at: Date.now(), slot, kind, text }); if (events.length > 200) events.pop(); };
@@ -54,7 +54,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   };
 
   function makePlayer(slot) {
-    return { slot, element: ELEMENT[slot], stick: null, hp: cfg.rules?.hp ?? RULES.hp, hpMax: cfg.rules?.hp ?? RULES.hp, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, chargeFrom: null, tier: null, act: null, guarding: false, guardBtn: false,
+    return { slot, element: ELEMENT[slot], stick: null, hp: cfg.rules?.hp ?? RULES.hp, hpMax: cfg.rules?.hp ?? RULES.hp, online: false, imu: null, truth: null, charge: 0, chargeT: 0, charging: false, tier: null, act: null, guarding: false, guardKey: null,
       body: W.bodyPose(W.START[slot].pos, W.START[slot].yaw), chest: V(), base: V(), tip: V(), dir: V(1, 0, 0), trail: [], lastShot: -9, src: 'start', stickSrc: '-',
       shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 };
   }
@@ -72,6 +72,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const st = (p, k) => Math.min(3, Math.max(.3, +p?.stick?.stats?.[k] || 1)); // clamped: a bad record never stalls or breaks a match
   const hpOf = p => Math.round((rules().hp ?? RULES.hp) * st(p, 'hp'));
   const takeStick = p => { p.stick = assigned[p.slot]; p.element = p.stick?.element ?? ELEMENT[p.slot]; };
+  const MOVE_GRACE = .5; // s added to chargeHold while the player steps or turns. Measured: while circling, Charge events stop for at most 1 s; a longer wait keeps a stopped charge (and the vibration) alive while just walking
   const CHARGE_LIVE = .4; // s after a Charge event the circling counts as still going (actions.js sends one every ~.15 s while it does)
   const speedOf = (T, p) => T.speed * (rules().speed ?? 1) * st(p, 'speed'); // m/s, the dashboard's ball-speed slider and the stick applied
   const t2Of = p => rules().t2 / st(p, 'charge');
@@ -136,7 +137,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       const dev = Math.max(...h.map(x => p.dir.angleTo(x.dir))); // the furthest any sample in the window is from now: a wobble's turning point is not still
       const level = Math.abs(p.dir.y) < Math.sin(GUARD_LEVEL); // 10/18: only a stick lying sideways (within 45° above / below horizontal) guards; held upright it does nothing
       const still = level && t - h[0].t >= win - 1e-6 && dev < GUARD_STILL && t - (p.swingAt ?? -9) > AFTER_SWING; // held still for the whole hold
-      const on = canAct() && !p.charging && (p.guardBtn || still);
+      const on = canAct() && !p.charging && (p.guardKey ?? still); // a keyboard player says so itself (playable.js); a real stick guards by being held still
       if (on && !p.guarding) { showAct(p, 'ガード'); log(p.slot, 'guard', 'ガード'); sfx()?.guard('up', panOf(p.chest)); }
       p.guarding = on;
     }
@@ -232,11 +233,12 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
           foe.reflects = (foe.reflects ?? 0) + 1; showAct(foe, '反射！'); log(foe.slot, 'guard', `${other(foe).slot} の小を反射`);
           continue;
         }
-        sfx()?.guard('break', panOf(s.pos)); log(foe.slot, 'guard', `${TIER_JA[s.tier]}にガードを貫通された`);
+        log(foe.slot, 'guard', `${TIER_JA[s.tier]}にガードを貫通された`);
       }
       if (hit) {
         fx.hit(s.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.element, panOf(s.pos), T.hit, s.tier);
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
+        onHit(foe.slot, T.flash); // the phone of the player who was hit lights its torch for this many ms (app.js, server.mjs)
         if (!s.test) damage(foe, s.owner, s.tier, s.mul ?? 1); // try-out shots only show
       }
       const end = hit ? 'hit' : s.pos.y < 0 ? 'floor' : now() - s.born > 1.6 / Math.max(.3, (rules().speed ?? 1) * st(s.owner, 'speed')) ? 'timeout' : null; // y < 0: into the floor; slower balls live longer, so they still reach
@@ -248,7 +250,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   // ---- moves ----
   function startCharge(p) {
     if (!canAct() || p.charging) return;
-    Object.assign(p, { charging: true, chargeSeen: now(), charge: 0, chargeT: 0, tier: 's', chargeFrom: p.chest.clone(), autoRelease: null });
+    Object.assign(p, { charging: true, chargeSeen: now(), charge: 0, chargeT: 0, tier: 's', autoRelease: null, moveRef: null, moveAt: -9 });
     showAct(p, '溜め'); log(p.slot, 'charge', '溜め開始');
   }
   /** Swing while charging: the tier comes from how long it was held. */
@@ -284,10 +286,13 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function stepCharge(dt) {
     const R = rules();
     for (const p of Object.values(players)) if (p.charging) {
-      // feet must stay put: the chest may sway, but more than moveFail m (horizontal) from where the charge began drops it
-      const moved = p.chargeFrom ? Math.hypot(p.chest.x - p.chargeFrom.x, p.chest.z - p.chargeFrom.z) : 0;
-      if (moved > R.moveFail) { failCharge(p, `${Math.round(moved * 100)} cm 動いた`); continue; }
-      if (R.chargeHold > 0 && p.autoRelease == null && p.tier !== 'l' && now() - p.chargeSeen > R.chargeHold) { failCharge(p, '棒の動きが止まった'); continue; } // short pauses are fine; a long stop drops it (a full charge just waits for the swing)
+      const f = W.app3(p.body.R, [1, 0, 0]), yaw = Math.atan2(f[2], f[0]), ref = p.moveRef, age = ref ? now() - ref.t : 0;
+      if (!ref || age >= .1) { // the body moved over the last ~0.1 s: over 0.2 m/s, or turning over 20°/s
+        if (ref && (Math.hypot(p.chest.x - ref.x, p.chest.z - ref.z) / age > .2 || Math.abs(Math.atan2(Math.sin(yaw - ref.yaw), Math.cos(yaw - ref.yaw))) / age > 20 * Math.PI / 180)) p.moveAt = now();
+        p.moveRef = { t: now(), x: p.chest.x, z: p.chest.z, yaw };
+      }
+      const hold = R.chargeHold + (now() - p.moveAt < R.chargeHold ? MOVE_GRACE : 0);
+      if (R.chargeHold > 0 && p.autoRelease == null && p.tier !== 'l' && now() - p.chargeSeen > hold) { failCharge(p, '棒の動きが止まった'); continue; } // short pauses are fine; a long stop drops it (a full charge just waits for the swing)
       // the charge only grows while the stick is being circled (Charge events keep coming); once the circling stops it is held
       // as it is, for chargeHold s, waiting for the swing down that fires it (10/18: circle, stop, swing down = fire).
       // Without the stop rule (chargeHold 0) or for the 大 test button it grows with time as before.
@@ -309,6 +314,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     for (const p of Object.values(players)) { takeStick(p); p.hp = p.hpMax = hpOf(p); }
     for (const p of Object.values(players)) Object.assign(p, { guarding: false, guardHist: [], charge: 0, chargeT: 0, charging: false, tier: null, autoRelease: null, act: null, lastShot: -9, shots: 0, hits: 0, specials: 0, fails: 0, dealt: 0 });
     for (const s of shots) fx.endShot(s.id); shots.length = 0; winner = null;
+    for (const p of Object.values(players)) { p.buzzAt = null; onVibrate(p.slot, 'off'); } // also ends a winner's vibration
     for (const p of Object.values(players)) p.preview = null;
   }
   /** ph: 'setup' | 'fight' | 'demo' (デモ試合: a fight where every shot is aimed at the other player when fired) */
@@ -320,8 +326,17 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   }
   function finish(w) {
     winner = w; match.phase = 'result';
-    for (const p of Object.values(players)) { p.charging = false; p.tier = null; }
+    for (const p of Object.values(players)) { p.charging = false; p.tier = null; if (p.buzzAt != null) { p.buzzAt = null; onVibrate(p.slot, 'off'); } }
+    if (w) onVibrate(w.slot, 'win'); // after the off: stepBuzz has nothing left to stop, so it cannot cut this short
     log(w?.slot ?? null, 'win', w ? `${w.slot} の勝ち` : '引き分け');
+  }
+  // the charging player's phone vibrates: 'charge' is repeated, and the phone stops by itself if the repeats end (Vibe.swift, Vibe.kt: 1 s)
+  function stepBuzz() {
+    for (const p of Object.values(players)) {
+      const on = p.charging && canAct();
+      if (on && now() - (p.buzzAt ?? -9) >= .25) { p.buzzAt = now(); onVibrate(p.slot, 'charge'); }
+      else if (!on && p.buzzAt != null) { p.buzzAt = null; onVibrate(p.slot, 'off'); }
+    }
   }
   function stepMatch(dt) {
     // a new HP setting shows at once while setting up; during a match it waits for the next one (reset)
@@ -345,7 +360,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       case 'special': // test button: really charge (小 → 中 → 大, moving still fails it), then swing just past the 大 line
         if (!p || !canAct()) return;
         startCharge(p); p.autoRelease = t2Of(p) + .3; return;
-      case 'guard': if (p) p.guardBtn = !!c.on; return; // test button: guard while held
+      case 'guard': if (p) p.guardKey = c.on; return; // true / false: a keyboard player's guard (playable.js); null: back to the stick held still
       case 'charge': if (!p) return;
         if (c.on) startCharge(p); else release(p);
         return;
@@ -365,7 +380,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       place(p, est, sensorOnly); effects(p);
       p.trail.push({ t: now(), p: p.tip.clone().sub(p.chest) }); while (p.trail.length && p.trail[0].t < now() - .5) p.trail.shift(); // for motionAim
     }
-    stepCharge(dt); stepGuard(); stepShots(dt);
+    stepCharge(dt); stepGuard(); stepShots(dt); stepBuzz();
     const s = sfx();
     if (s) {
       for (const p of Object.values(players)) s.charge(p.slot, p.charging && canAct(), p.charge, panOf(p.tip), p.tier ?? 's');

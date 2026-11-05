@@ -11,7 +11,7 @@
     color-scheme: dark;
     --bg: #0a0c11; --surface: #11141b; --surface-2: #171b24; --line: #222836; --grid: #1b202b;
     --text: #e8eaf0; --text-2: #b3b9c7; --muted: #7d8597;
-    --A: #ff3b3b; --B: #2fd46a; --C: #ffd23d; --tag: #3ddc84;
+    --A: #ff6600; --B: #0078ff; --C: #ffd23d; --tag: #3ddc84;
     --good: #3ddc84; --warn: #ffcc4d; --bad: #ff6b6b; --accent: #a99dff;
     --s1: #4c9bff; --s2: #ff8a3d; --s3: #3ddc84;
     --radius: 10px;
@@ -144,38 +144,57 @@
   #finalBar .final-shared-controls { margin-left: auto; padding-left: 10px; border-left: 1px solid var(--line); }
 
   /* HUD (game + final) */
-  .hud { position: absolute; inset: 0; pointer-events: none; font-weight: 600; }
-  .hud .pl { position: absolute; top: 14px; width: 34%; text-shadow: 0 0 8px #000; }
-  .hud .pl.A { left: 18px; } .hud .pl.B { right: 18px; text-align: right; }
-  .hud .name { display: flex; gap: 10px; align-items: baseline; font-size: 20px; font-weight: 600; letter-spacing: .08em; }
+  /* the game screen's lettering: Barlow Condensed for Latin and numbers, Dela Gothic One for Japanese (each has one face, so nothing is synthesised) */
+  @font-face { font-family: 'Barlow Condensed'; src: url(assets/fonts/BarlowCondensed-ExtraBoldItalic.ttf) format('truetype'); font-weight: 800; font-style: italic; font-display: swap; }
+  @font-face { font-family: 'Dela Gothic One'; src: url(assets/fonts/DelaGothicOne-Regular.ttf) format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+  .hud { position: absolute; inset: 0; pointer-events: none; font-family: 'Barlow Condensed', 'Dela Gothic One', sans-serif; font-weight: 800; font-style: italic; font-synthesis: none; }
+  .hud .pl { position: absolute; top: 12px; width: 38%; text-shadow: 0 0 8px #000; display: grid; grid-template-columns: 92px minmax(0, 1fr); column-gap: 10px; align-content: start; }
+  .hud .pl > :not(.gauge) { grid-column: 2; }
+  .hud .pl.B { grid-template-columns: minmax(0, 1fr) 92px; } .hud .pl.B > :not(.gauge) { grid-column: 1; }
+  .hud .gauge { grid-row: 1 / span 2; position: relative; width: 92px; height: 91px; }
+  .hud .pl.B .gauge { grid-column: 2; }
+  .hud .gauge svg { width: 100%; height: 100%; display: block; overflow: visible; filter: url(#hardShadow); }
+  .hud .pl.B .gauge svg { transform: scaleX(-1); filter: url(#hardShadowB); } /* mirrored after the filter */
+  .hud .gauge .track { fill: rgba(8,10,16,.55); stroke: #fff; stroke-width: 1.25; stroke-linejoin: round; }
+  .hud .gauge .frame { fill: none; stroke: #fff; stroke-width: 1.25; stroke-linejoin: round; }
+  .hud .gauge .glow { fill: none; stroke: rgba(255,255,255,.85); stroke-width: 4.5; filter: blur(1.5px); }
+  .hud .gauge .fill { fill: #ffe600; }
+  .hud .gauge canvas { position: absolute; }
+  .hud .pl.B .gauge canvas { transform: scaleX(-1); }
+  .hud .gauge .edge { fill: none; stroke: #fff; stroke-width: 1; }
+  .hud .gauge .disc { fill: rgba(8,10,16,.55); stroke: #fff; stroke-width: 1; }
+  .hud .gauge .staff { fill: #fff; }
+  .hud .gauge .lv { position: absolute; left: 24px; top: 36px; transform: translate(-50%, -100%); white-space: nowrap; font-size: 68px; line-height: .74; font-weight: 900; font-style: italic; color: #fff; -webkit-text-stroke: 1px #000; paint-order: stroke fill; text-shadow: 0 2px 4px #000; letter-spacing: -.02em; }
+  .hud .pl.B .gauge .lv { left: auto; right: 24px; transform: translate(50%, -100%); } /* centred on one axis, so 1, 2 and Full line up: a digit's lower inner corner is one third into the square around the disc */
+  .hud .pl.A { left: 38px; } .hud .pl.B { right: 38px; text-align: right; } /* room for "Full" and the flame */
+  .hud .name { display: flex; gap: 10px; align-items: baseline; font-size: 40px; line-height: 1; font-weight: 600; letter-spacing: .08em; }
   .hud .pl.B .name { flex-direction: row-reverse; }
-  .hud .name small { font-size: 11px; font-weight: 400; color: #8a8f99; }
-  .hud .name .hpn { margin-left: auto; font-size: 22px; font-weight: 700; font-weight: 500; font-variant-numeric: tabular-nums; }
-  .hud .pl.B .name .hpn { margin-left: 0; margin-right: auto; }
+  .hud .name small { font-size: 32px; font-weight: 400; color: #8a8f99; }
+  .hud .barwrap { position: relative; }
+  /* on the bar's lower outer corner: its top third and its inner three quarters lie over the bar (left: where the slanted bar's lower corner is) */
+  .hud .hpn { position: absolute; top: 100%; left: 14px; transform: translate(-25%, -33.3%); font-size: 44px; line-height: .74; font-variant-numeric: tabular-nums; color: #fff; -webkit-text-stroke: 1px #000; paint-order: stroke fill; text-shadow: 0 2px 4px #000; }
+  .hud .pl.B .hpn { left: auto; right: 14px; transform: translate(25%, -33.3%); }
   .hud .meter { height: 4px; background: rgba(255,255,255,.1); overflow: hidden; margin-top: 6px; position: relative; }
   .hud .meter i { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; transition: width .15s; }
   .hud .pl.B .meter i { left: auto; right: 0; }
   .hud .pl.A .hp i { background: var(--A); } .hud .pl.B .hp i { background: var(--B); }
-  .hud .meter.hp { height: 18px; border-radius: 4px; background: rgba(255,255,255,.14); box-shadow: 0 0 0 2px rgba(0,0,0,.5); } /* thick and easy to read from a distance */
-  .hud .meter.ch { height: 2px; margin-top: 3px; overflow: visible; }
-  .hud .meter.ch i { transition: none; background: #fff6; }
-  .hud .meter.ch { position: relative; }
-  .hud .meter.ch b { position: absolute; top: -2px; bottom: -2px; width: 1px; background: #fff8; } /* where 中 begins (the bar ends at 大) */
-  .hud .meter.ch.m i { background: #ffd54a; }
-  .hud .meter.ch.l i { background: #ff6a3a; }
-  .hud .chips { display: flex; gap: 6px; margin-top: 6px; min-height: 22px; }
-  .hud .pl.B .chips { justify-content: flex-end; }
-  .hud .chips span { font-size: 12px; padding: 1px 9px; border-radius: 999px; background: rgba(0,0,0,.55); border: 1px solid currentColor; display: none; }
-  .hud .chips span.on { display: inline-block; }
-  .hud .chips .charge { color: #ffe08a; } .hud .chips .off { color: #888; }
-  .hud .act { font-size: 24px; font-weight: 900; letter-spacing: .08em; min-height: 32px; margin-top: 2px; }
+  .hud .pl.A .hp i.low, .hud .pl.B .hp i.low { background: #ff2a2a; } /* 20 % or less */
+  .hud .meter.hp { height: 30px; border: 1px solid #fff; background: rgba(8,10,16,.55); overflow: visible; transform: skewX(20deg); margin: 6px 8px 0; box-shadow: 2.54px 4px 0 #000; } /* thick and easy to read from a distance */
+  .hud .pl.B .meter.hp { transform: skewX(-20deg); box-shadow: 5.46px 4px 0 #000; }
+  .hud .meter.hp span { display: block; position: relative; height: 100%; overflow: hidden; }
+  .hud .meter.hp span::after { content: ''; position: absolute; inset: 0; box-shadow: inset 0 0 4px .5px rgba(255,255,255,.85); pointer-events: none; }
   .hud .mid { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); text-align: center; }
-  .hud .timer { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; text-shadow: 0 0 8px #000; }
+  .hud .timer { font-size: 85px; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; text-shadow: 0 0 8px #000; }
   .hud .phasepill { display: inline-block; margin-top: 2px; padding: 2px 14px; border-radius: 999px; background: rgba(0,0,0,.55); color: #c9cfdc; font-size: 13px; letter-spacing: .1em; }
   .hud .dmg { position: absolute; font-weight: 900; line-height: 1; color: #fff; white-space: nowrap; font-variant-numeric: tabular-nums;
     -webkit-text-stroke: 2px rgba(0,0,0,.9); paint-order: stroke fill; text-shadow: 0 2px 10px rgba(0,0,0,.8); }
   .hud .dmg.m { color: #ffc94a; } .hud .dmg.l { color: #ff5a3a; }
   .hud .banner { position: absolute; inset: 0; display: none; place-items: center; font-size: 76px; font-weight: 900; letter-spacing: .06em; text-shadow: 0 0 24px #000; }
+  /* one shadow for the whole HUD: a hard black silhouette, 4 px right and down, never under the see-through parts. Lettering: white, damage in red (the filters at the top of the body; field3d.js's letters do the same) */
+  .hud .gauge .lv, .hud .timer, .hud .banner, .hud .name, .hud .hpn { color: #fdfdff; -webkit-text-stroke: 0; text-shadow: none; filter: url(#ink); }
+  .hud .name small { color: inherit; -webkit-text-stroke: 0; text-shadow: none; }
+  .hud .dmg, .hud .dmg.m, .hud .dmg.l { color: #d7000a; -webkit-text-stroke: 0; text-shadow: none; filter: url(#ink); }
+  .hud .phasepill { color: #fdfdff; text-shadow: 2px 2px 0 #000; }
   .hud .flash { position: absolute; inset: 0; opacity: 0; transition: opacity .25s; }
   .hud .minimap { position: absolute; left: 14px; bottom: 14px; width: min(26%, 26vh); aspect-ratio: 1; }
   .hud .status { position: absolute; left: 14px; bottom: 8px; color: #aab; font-size: 11px; font-weight: 400; text-shadow: 0 0 4px #000; }
@@ -203,6 +222,22 @@
 <script src="./cdn/npm/qrcode-generator@1.4.4/qrcode.js" defer onerror="this.remove()"></script>
 </head>
 <body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+    <filter id="ink" x="-50%" y="-100%" width="200%" height="300%" color-interpolation-filters="sRGB">
+      <feOffset in="SourceAlpha" dx="4" dy="4"/><feComposite in2="SourceAlpha" operator="out" result="shadow"/>
+      <feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="hardShadow" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
+      <feComponentTransfer in="SourceAlpha" result="shape"><feFuncA type="discrete" tableValues="0 1 1 1 1 1 1 1"/></feComponentTransfer>
+      <feOffset dx="4" dy="4"/><feComposite in2="shape" operator="out" result="shadow"/>
+      <feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="hardShadowB" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
+      <feComponentTransfer in="SourceAlpha" result="shape"><feFuncA type="discrete" tableValues="0 1 1 1 1 1 1 1"/></feComponentTransfer>
+      <feOffset dx="-4" dy="4"/><feComposite in2="shape" operator="out" result="shadow"/>
+      <feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs></svg>
 <header class="bar">
   <div class="brand">Full Stick<small>ダッシュボード</small></div>
   <nav class="tabs" role="tablist">
@@ -220,7 +255,7 @@
     <span class="pill" id="pillLink"><i></i><span>サーバー</span></span>
     <span class="pill num" id="pillFps">-- fps</span>
   </div>
-  <button id="openSettings" title="設定（S）">設定</button>
+  <button id="openSettings" title="設定">設定</button>
 </header>
 
 <main>
@@ -259,16 +294,14 @@
     <div class="flash"></div>
     <canvas class="minimap"></canvas>
     <div class="pl A">
-      <div class="name"><span>A</span><small>炎</small><span class="hpn">100</span></div>
-      <div class="meter hp"><i></i></div><div class="meter ch"><i style="width:0"></i><b></b></div>
-      <div class="chips"><span class="off">オフライン</span><span class="charge">溜め中</span></div>
-      <div class="act"></div>
+      <div class="gauge"></div>
+      <div class="name"><span>A</span><small>炎</small></div>
+      <div class="barwrap"><div class="meter hp"><span><i></i></span></div><span class="hpn">100</span></div>
     </div>
     <div class="pl B">
-      <div class="name"><span>B</span><small>雷</small><span class="hpn">100</span></div>
-      <div class="meter hp"><i></i></div><div class="meter ch"><i style="width:0"></i><b></b></div>
-      <div class="chips"><span class="off">オフライン</span><span class="charge">溜め中</span></div>
-      <div class="act"></div>
+      <div class="gauge"></div>
+      <div class="name"><span>B</span><small>雷</small></div>
+      <div class="barwrap"><div class="meter hp"><span><i></i></span></div><span class="hpn">100</span></div>
     </div>
     <div class="mid"><div class="timer"></div><div class="phasepill"></div></div>
     <div class="banner"></div>

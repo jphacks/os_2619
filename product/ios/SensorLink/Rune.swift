@@ -1,20 +1,23 @@
 import Foundation
 
-/// RuneTag reader for the floor sheets 0-3 when the PC says marker = rune: a line-for-line port of Rune.kt, itself a port of
+/// RuneTag reader for the mahoujin's 7 tags (ids 0-6) when the PC says marker = rune: a line-for-line port of Rune.kt, itself a port of
 /// detectRunes in dashboard/public/runetag.js (the marker, its code and the method are described there; keep the three in step).
 /// Plain Swift on a grey byte array. Corners are those of the virtual RUNE square (side SQUARE), in OpenCV order:
 /// tag (-h,h), (h,h), (h,-h), (-h,-h).
 enum Rune {
-    static let SQUARE = 0.2
-    static let S = 18
-    private static let RINGS: [Double] = [0.108, 0.08, 0.05926]
-    private static let DOT = 0.085
-    static let IDS = 0...3
+    static let SQUARE = 0.224
+    static let S = 43
+    private static let RINGS: [Double] = [0.12782, 0.12782 * 5 / 6, 0.12782 * 4 / 6]
+    private static let DOT = 1 / 17.8
+    static let IDS = 0...6
     private static let CODES: [[Int]] = [
-        [5, 1, 6, 7, 4, 5, 3, 1, 7, 4, 3, 1, 2, 5, 4, 4, 7, 7],
-        [1, 7, 6, 1, 3, 1, 4, 6, 5, 2, 4, 3, 1, 2, 4, 7, 2, 5],
-        [2, 6, 6, 4, 4, 4, 3, 2, 1, 4, 2, 3, 1, 4, 1, 5, 5, 3],
-        [1, 3, 4, 3, 3, 6, 7, 7, 2, 3, 6, 2, 3, 7, 5, 6, 7, 6],
+        [2, 7, 7, 2, 4, 2, 2, 7, 7, 6, 1, 2, 7, 5, 3, 3, 6, 6, 6, 2, 5, 6, 5, 5, 6, 3, 7, 3, 7, 6, 4, 2, 3, 3, 5, 1, 4, 3, 7, 4, 4, 1, 3],
+        [4, 3, 3, 6, 2, 6, 2, 4, 5, 5, 4, 1, 5, 4, 3, 3, 7, 7, 4, 4, 3, 2, 6, 3, 2, 2, 3, 5, 1, 5, 1, 4, 4, 3, 2, 1, 2, 5, 7, 2, 5, 6, 5],
+        [2, 2, 2, 7, 5, 7, 3, 7, 1, 6, 6, 5, 4, 6, 2, 4, 3, 4, 4, 5, 2, 3, 1, 2, 3, 2, 5, 2, 5, 6, 6, 5, 1, 4, 4, 7, 2, 5, 6, 1, 3, 2, 4],
+        [3, 6, 6, 3, 7, 3, 4, 7, 5, 1, 7, 3, 2, 3, 3, 1, 2, 1, 4, 7, 1, 7, 6, 1, 7, 4, 3, 1, 5, 1, 7, 7, 3, 1, 7, 2, 3, 5, 5, 4, 6, 2, 6],
+        [4, 1, 1, 1, 1, 1, 4, 7, 1, 3, 3, 5, 3, 6, 5, 4, 4, 7, 6, 6, 3, 7, 1, 3, 7, 7, 3, 1, 7, 3, 6, 6, 7, 4, 4, 5, 6, 3, 5, 3, 3, 1, 7],
+        [6, 1, 1, 1, 1, 1, 4, 2, 3, 1, 4, 3, 3, 5, 7, 7, 3, 3, 7, 6, 4, 5, 7, 4, 5, 6, 1, 2, 6, 1, 7, 6, 1, 7, 3, 1, 1, 2, 5, 1, 4, 6, 2],
+        [2, 2, 2, 7, 5, 7, 5, 2, 6, 7, 4, 5, 3, 1, 5, 3, 6, 5, 4, 6, 7, 2, 2, 7, 2, 7, 6, 1, 3, 7, 6, 6, 4, 3, 7, 2, 1, 5, 4, 2, 1, 4, 6],
     ]
     private static let K = RINGS.count
     private static let STEP = 2 * Double.pi / Double(S)
@@ -47,18 +50,37 @@ enum Rune {
     private typealias Near = (Double, Double, Double, (Int) -> Void) -> Void
 
     private static func slotPos(_ k: Int, _ j: Int) -> [Double] {
-        let a = Double.pi / 2 - Double(j) * STEP
+        let a = -Double(j) * STEP
         return [RINGS[k] * cos(a), RINGS[k] * sin(a)]
     }
 
     private static func bit(_ id: Int, _ j: Int, _ k: Int) -> Int { (CODES[id][j] >> k) & 1 }
 
+    /// ROT[id][r][k]: ring k of code id as a 43-bit word, turned so that bit j is the code's sector (j + r) % S.
+    /// Comparing a read with a code is then a popcount per ring instead of 129 single-bit tests (10x fewer operations for 7 ids x 43 turns).
+    private static let ROT: [[[UInt64]]] = CODES.map { c in
+        (0..<S).map { r in
+            (0..<K).map { k -> UInt64 in
+                var m: UInt64 = 0
+                for j in 0..<S where (c[(j + r) % S] >> k) & 1 == 1 { m |= UInt64(1) << UInt64(j) }
+                return m
+            }
+        }
+    }
+
     static func detect(_ g: [UInt8], _ w: Int, _ h: Int, ids: ClosedRange<Int> = Rune.IDS) -> [Found] {
         var found = [Int: Found]()
         let m = Double(min(w, h))
         let rads = [max(4, Int((m / 40.0).rounded())), Int((m / 10.0).rounded())]
-        for rad in rads {
-            for f in pass(blobs(g, w, h, rad), w, h, ids) {
+        // the two blob sizes are independent: read them on two cores, then merge in the same order as one after the other
+        var passes = [[Found]](repeating: [], count: rads.count)
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: rads.count) { i in
+            let r = pass(blobs(g, w, h, rads[i]), w, h, ids)
+            lock.lock(); passes[i] = r; lock.unlock()
+        }
+        for fs in passes {
+            for f in fs {
                 if let o = found[f.id], !(f.n - 2 * f.err > o.n - 2 * o.err) { continue }
                 found[f.id] = f
             }
@@ -180,6 +202,13 @@ enum Rune {
                     if best == nil || inl.count > best!.count { best = inl }
                 }
             }
+            // the nearest 24 cover only an arc of a 43-sector layer: fit an ellipse through them and collect that layer's dots from every
+            // candidate (the layers are >= 1/6 apart, so 0.06 keeps the neighbours out)
+            for _ in 0..<2 {
+                guard let bb = best, bb.count >= 4, let e = fitEllipse([[0, 0]] + bb.map { $0.1 }) else { break }
+                let rr = sqrtSym(e.1)
+                best = cand.filter { o in let q = mul2(rr, o.1[0] - e.0[0], o.1[1] - e.0[1]); return abs(hypot(q[0], q[1]) - 1) < 0.06 }
+            }
             guard let bst = best, bst.count >= 5 else { continue }
             guard let m = readMarker(b, near, [si] + bst.map { $0.0 }, w, h, ids) else { continue }
             for i in m.1 { used[i] = true }
@@ -197,22 +226,35 @@ enum Rune {
             return [hypot(q[0], q[1]), atan2(q[1], q[0])]
         }
         if ang.contains(where: { abs($0[0] - 1) > 0.12 }) { return nil }
+        // number the dots by the sector gaps between neighbours (image angles grow clockwise as seen): the longest run of clean gaps
+        // (1-5 sectors), as perspective bends the angles too much to count all 43 round the ring. Relative numbers: decoding tries every turn
+        let n = p.count
         let ord = ang.indices.sorted { ang[$0][1] < ang[$1][1] }
-        var sec = [Int](repeating: 0, count: p.count)
-        var j = 0
-        for t in 0..<ord.count { // image angles grow clockwise as seen, like the sector numbers
-            sec[ord[t]] = j
-            var gap = ang[ord[(t + 1) % ord.count]][1] - ang[ord[t]][1]
-            if gap <= 0 { gap += 2 * Double.pi }
-            let m = Int((gap / STEP).rounded())
-            if m < 1 || abs(gap - Double(m) * STEP) > 0.4 * STEP { return nil }
-            j += m
+        let gaps = (0..<n).map { t -> Double in
+            var g = ang[ord[(t + 1) % n]][1] - ang[ord[t]][1]
+            if g <= 0 { g += 2 * Double.pi }
+            return g / STEP
         }
-        if j != S { return nil }
+        let good = gaps.map { g -> Bool in let m = g.rounded(); return m >= 1 && m <= 5 && abs(g - m) <= 0.4 }
+        var start = 0, len = n - 1
+        if good.contains(false) {
+            len = 0
+            for t in 0..<n where !good[(t + n - 1) % n] {
+                var l = 0
+                while good[(t + l) % n] { l += 1 }
+                if l > len { len = l; start = t }
+            }
+        }
+        if len < 4 { return nil }
+        var run = [[Double]](), sec = [Int](), j = 0
+        for t in 0...len {
+            let u = (start + t) % n
+            run.append(p[ord[u]]); sec.append(j); j += Int(gaps[u].rounded())
+        }
         var bestErr = 99, second = 99, bestId = -1, bestR = 0
         var bestRead: Read? = nil
         for k in 0..<K {
-            guard var hm = homography(sec.map { slotPos(k, $0) }, p) else { continue }
+            guard var hm = homography(sec.map { slotPos(k, $0) }, run) else { continue }
             var read: Read? = nil
             for _ in 0..<3 {
                 let rd = readSlots(b, near, hm, w, h)
@@ -222,15 +264,20 @@ enum Rune {
                 hm = nh
             }
             guard let rd = read, rd.known >= 30 else { continue }
+            // the read as one 43-bit word per ring: which sectors were seen, and which of those hold a dot
+            var seen = [UInt64](repeating: 0, count: K), dots = [UInt64](repeating: 0, count: K)
+            for kk in 0..<K {
+                for jj in 0..<S {
+                    let v = rd.bits[kk * S + jj]
+                    if v >= 0 { seen[kk] |= UInt64(1) << UInt64(jj) }
+                    if v == 1 { dots[kk] |= UInt64(1) << UInt64(jj) }
+                }
+            }
             for id in ids {
                 for rr in 0..<S { // observed sector jj is the code's sector jj + rr
+                    let word = ROT[id][rr]
                     var err = 0
-                    for jj in 0..<S {
-                        for kk in 0..<K {
-                            let v = rd.bits[kk * S + jj]
-                            if v >= 0 && v != bit(id, (jj + rr) % S, kk) { err += 1 }
-                        }
-                    }
+                    for kk in 0..<K { err += ((dots[kk] ^ word[kk]) & seen[kk]).nonzeroBitCount }
                     if err < bestErr {
                         second = min(second, bestErr)
                         bestErr = err; bestId = id; bestR = rr; bestRead = rd
@@ -241,18 +288,19 @@ enum Rune {
             }
         }
         guard let br = bestRead else { return nil }
-        if bestErr > 7 || second < bestErr + 6 { return nil }
+        // wrong bits allowed: 1 in 8 of those seen (>= 7); any two words differ in >= 45 of 129, so a right read also wins clearly
+        if bestErr > maxErr(br.known) || second < bestErr + 8 { return nil }
         // the true sector numbers from here on; read again through the refitted homography, keeping only dots where the code has one
         let fit = { (hs: [Hit]) -> [Double]? in
             homography(hs.map { slotPos($0.k, $0.j) }, hs.map { [b[$0.i].x, b[$0.i].y] })
         }
         var hits = br.hits.map { Hit(k: $0.k, j: ($0.j + bestR) % S, i: $0.i) }.filter { bit(bestId, $0.j, $0.k) == 1 }
-        var err = bestErr
+        var err = bestErr, known = br.known
         for _ in 0..<2 {
             if hits.count < 8 { break }
             guard let fh = fit(hits) else { break }
             let rd = readSlots(b, near, fh, w, h)
-            err = 0
+            err = 0; known = rd.known
             for k in 0..<K {
                 for jj in 0..<S {
                     let v = rd.bits[k * S + jj]
@@ -261,7 +309,7 @@ enum Rune {
             }
             hits = rd.hits.filter { bit(bestId, $0.j, $0.k) == 1 }
         }
-        if hits.count < 8 || err > 7 { return nil }
+        if hits.count < 8 || err > maxErr(known) { return nil }
         guard let hm = fit(hits) else { return nil }
         var ss = 0.0
         for o in hits {
@@ -280,6 +328,8 @@ enum Rune {
         }
         return (Found(id: bestId, corners: corners, err: err, n: hits.count, rms: sqrt(ss / Double(hits.count))), (br.hits + hits).map { $0.i })
     }
+
+    private static func maxErr(_ known: Int) -> Int { max(7, known >> 3) }
 
     /// Look for a dot at every slot through hm: bits (1 dot, 0 none, -1 unknown) and the dots it found.
     private static func readSlots(_ b: [Blob], _ near: Near, _ hm: [Double], _ w: Int, _ h: Int) -> Read {

@@ -15,7 +15,7 @@ import net from 'node:net';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { X509Certificate, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, extname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,18 +83,61 @@ const dashboards = new Set();
 const toDashboards = data => { for (const d of dashboards) if (d.readyState === 1) d.send(data); };
 const phoneList = () => [...phones.values()].map(({ slot, name, addr }) => ({ slot, name, addr }));
 const status = () => toDashboards(JSON.stringify({ type: 'phones', list: phoneList() }));
+// Sensor recording (to tune the charge detector on real motion): a dashboard's { type: 'record', label, sec } writes every phone's imu and ar packets, one JSON a line with the
+// server's receive time rx, to recordings/<label>-<time>.jsonl (not in git) for sec s; { type: 'record' } stops early. Dashboards hear { type: 'recording', on, label, sec | file, n }.
+const RECORD_LABELS = ['walk', 'walk-circle', 'still-circle'];
+let rec = null;
+function stopRecording() {
+  if (!rec) return;
+  const { label, file, n, out, timer } = rec; rec = null; clearTimeout(timer);
+  out.end(() => { log(`recording: ${n} packets in recordings/${file}`); toDashboards(JSON.stringify({ type: 'recording', on: false, label, file, n })); });
+}
+function startRecording(label, sec) {
+  if (rec || !RECORD_LABELS.includes(label)) return;
+  const s = Math.min(Math.max(+sec || 20, 1), 120), dir = join(root, 'recordings'), file = `${label}-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`;
+  mkdirSync(dir, { recursive: true });
+  rec = { label, file, n: 0, out: createWriteStream(join(dir, file)), timer: setTimeout(stopRecording, s * 1000) };
+  toDashboards(JSON.stringify({ type: 'recording', on: true, label, sec: s }));
+}
 // The floor sheets' marker, one choice for every page and phone (public/marker.js): saved in settings.json, served as /marker.js,
 // sent to phones in `welcome` and to everyone as { type: 'marker' } when a dashboard switches it ({ type: 'setMarker', marker }).
 const settingsFile = join(root, 'settings.json');
 let settings = {}; try { settings = JSON.parse(readFileSync(settingsFile, 'utf8')); } catch {}
 let marker = ['april', 'rune'].includes(process.env.MARKER) ? process.env.MARKER : settings.marker === 'rune' ? 'rune' : 'april';
+// the mahoujin's printed / designed size (world.js RUNE_SCALE), measured after assembly: { type: 'setRuneScale', scale }
+const okScale = v => +v > .5 && +v < 2;
+let runeScale = okScale(process.env.RUNE_SCALE) ? +process.env.RUNE_SCALE : okScale(settings.runeScale) ? +settings.runeScale : 0.975; // measured: 100 mm on the PDF printed 97.5 mm
+function saveSettings() { try { writeFileSync(settingsFile, JSON.stringify(settings, null, 2)); } catch (e) { console.warn('settings:', e.message); } }
+const markerMsg = () => JSON.stringify({ type: 'marker', marker, runeScale });
 function setMarker(m) {
   if (!['april', 'rune'].includes(m) || m === marker) return;
-  marker = m; settings.marker = m;
-  try { writeFileSync(settingsFile, JSON.stringify(settings, null, 2)); } catch (e) { console.warn('settings:', e.message); }
+  marker = m; settings.marker = m; saveSettings();
   log(`marker: ${m === 'rune' ? 'RuneTag' : 'AprilTag'} for the floor sheets`);
-  const k = JSON.stringify({ type: 'marker', marker });
+  const k = markerMsg();
   toDashboards(k); for (const p of phones.values()) if (p.ws.readyState === 1) p.ws.send(k);
+}
+function setRuneScale(v) {
+  if (!okScale(v) || +v === runeScale) return;
+  runeScale = settings.runeScale = +v; saveSettings();
+  log(`mahoujin scale ${runeScale}`);
+  toDashboards(markerMsg()); // the phones measure at the designed size; the pages rescale
+}
+
+// The scanned stick models (public/stickscan.js), one per slot, built by a dashboard from a phone's 'scan' pictures: sticks.json next to
+// this file (not in git). A dashboard sends { type: 'setStick', slot, model | null }; every dashboard (now and on hello) and the slot's
+// phone get { type: 'stick', slot, model }.
+const sticksFile = join(root, 'sticks.json');
+let sticks = {}; try { sticks = JSON.parse(readFileSync(sticksFile, 'utf8')) ?? {}; } catch {}
+const okStick = m => m && typeof m === 'object' && m.length > .1 && m.length < 2 && Number.isInteger(m.rings) && Number.isInteger(m.around)
+  && Array.isArray(m.r) && m.r.length === m.rings && m.r.every(v => v > 0 && v < .2)
+  && Array.isArray(m.rgb) && m.rgb.length === m.rings * m.around * 3 && m.rgb.every(v => Number.isInteger(v) && v >= 0 && v < 256);
+function setStick(slot, model) {
+  if (!SLOTS.includes(slot) || (model !== null && !okStick(model))) return;
+  if (model) sticks[slot] = model; else delete sticks[slot];
+  try { writeFileSync(sticksFile, JSON.stringify(sticks)); } catch (e) { console.warn('sticks:', e.message); }
+  log(model ? `stick ${slot}: model saved, ${model.length} m` : `stick ${slot}: model removed`);
+  const k = JSON.stringify({ type: 'stick', slot, model: model ?? null });
+  toDashboards(k); for (const p of phones.values()) if (p.slot === slot && p.ws.readyState === 1) p.ws.send(k);
 }
 
 let matchPhase = 'setup'; // the dashboard's game phase (setup / countdown / fight / result)
@@ -124,7 +167,7 @@ wss.on('connection', (ws, req) => {
     }
     if (k.type === 'hello') {
       role = String(k.role); id = String(k.id).slice(0, 64);
-      if (role === 'dashboard') { dashboards.add(ws); send(ws, { type: 'marker', marker }); ws.send(sticksMsg()); return status(); }
+      if (role === 'dashboard') { dashboards.add(ws); send(ws, { type: 'marker', marker, runeScale }); for (const [slot, model] of Object.entries(sticks)) send(ws, { type: 'stick', slot, model }); ws.send(sticksMsg()); return status(); }
       if (role !== 'phone') return;
       const old = phones.get(id); // same phone reconnecting keeps its slot
       const slot = old?.slot ?? SLOTS.find(s => ![...phones.values()].some(q => q.slot === s));
@@ -143,7 +186,21 @@ wss.on('connection', (ws, req) => {
       for (const q of phones.values()) if (q.ws.readyState === 1) q.ws.send(m);
       return;
     }
-    if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); }
+    if (k.type === 'setRuneScale' && role === 'dashboard') return setRuneScale(k.scale);
+    if (k.type === 'record') { if (role === 'dashboard') { if (k.label) startRecording(k.label, k.sec); else stopRecording(); } return; }
+    if (k.type === 'vibrate') { // { type: 'vibrate', slot, kind: 'charge' | 'win' | 'off' } from a dashboard goes to that slot's phone
+      if (role !== 'dashboard' || !['charge', 'win', 'off'].includes(k.kind)) return;
+      for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, { type: 'vibrate', kind: k.kind });
+      return;
+    }
+    if (k.type === 'flash') { // a hit: { type: 'flash', slot, ms } from a dashboard lights the torch of that slot's phone
+      if (role !== 'dashboard') return;
+      const ms = Math.min(+k.ms || 0, 2000);
+      if (ms > 0) for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, { type: 'flash', ms });
+      return;
+    }
+    if (k.type === 'setStick' && role === 'dashboard') return setStick(k.slot, k.model);
+    if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); if (rec && (k.type === 'imu' || k.type === 'ar')) { rec.out.write(JSON.stringify({ ...k, rx: Date.now() / 1000 }) + '\n'); rec.n++; } }
   });
   ws.on('close', (code, reason) => {
     dashboards.delete(ws);
@@ -208,7 +265,7 @@ camWss.on('connection', (ws, req) => {
 });
 
 // ---- static files + the CDN cache ----
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.wasm': 'application/wasm', '.mp3': 'audio/mpeg', '.svg': 'image/svg+xml' };
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.wasm': 'application/wasm', '.mp3': 'audio/mpeg', '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.txt': 'text/plain; charset=utf-8' };
 // exact versions only: the cache never goes stale. mp-models/... is MediaPipe's model bucket (versioned paths too)
 const pinned = p => (/^npm\/(@[\w.-]+\/)?[\w.-]+@\d+\.\d+\.\d+\/[\w./@-]+$/.test(p) || /^mp-models\/[\w-]+\/[\w-]+\/[\w-]+\/\d+\/[\w-]+\.task$/.test(p)) && !p.includes('..');
 const upstream = p => p.startsWith('mp-models/') ? 'https://storage.googleapis.com/mediapipe-models/' + p.slice(10) : 'https://cdn.jsdelivr.net/' + p;
@@ -332,7 +389,7 @@ async function onRequest(req, res) {
     // posix: '/' stays '/' on Windows too; backslashes become '/' first so they can't climb out of the folder
     let path = posix.normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/\\/g, '/')).replace(/^(\.\.[/\\])+/, '');
     if ((path === '/ca.pem' || path === '/ca.crt') && tls) return res.writeHead(200, { 'content-type': path.endsWith('.pem') ? 'application/x-pem-file' : 'application/x-x509-ca-cert', 'cache-control': 'no-store' }).end(tls.ca);
-    if (path === '/marker.js') return res.writeHead(200, { 'content-type': types['.js'], 'cache-control': 'no-store' }).end(`export const MARKER = '${marker}'; // server.mjs settings\n`);
+    if (path === '/marker.js') return res.writeHead(200, { 'content-type': types['.js'], 'cache-control': 'no-store' }).end(`export const MARKER = '${marker}', RUNE_SCALE = ${runeScale}; // server.mjs settings\n`);
     if (path === '/info') return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(info(req.headers.host)));
     if (path === '/rules') return rulesFile(req, res);
     if (path === '/sticks' || path.startsWith('/sticks/')) return sticksRoute(req, res, path);

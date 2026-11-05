@@ -13,16 +13,17 @@ register('data:text/javascript,' + encodeURIComponent(`
 const { createGame, RULES } = await import('./public/game.js');
 
 const DT = 1 / 60;
-function setup({ rules = {}, matchSec = 60, test = false, dummy = false } = {}) {
+function setup({ rules = {}, matchSec = 60, test = false, dummy = false, sfx = null } = {}) {
   let t = 1000, ids = 1;
   const fx = { aura() {}, charge() {}, shot: () => ids++, moveShot() {}, endShot() {}, hit() {}, guard() {}, block() {} };
   const cfg = { posSrc: 'start', aim: 'motion', hand: 'R', stickLen: { A: .8, B: .8 }, useTruth: true, test,
-    rules: { ...RULES, chargeHold: 0, ...rules, dmg: { ...RULES.dmg, ...rules.dmg }, size: { ...RULES.size, ...rules.size } } };
+    rules: { ...RULES, t1: 2, t2: 5, chargeHold: 0, ...rules, dmg: { ...RULES.dmg, ...rules.dmg }, size: { ...RULES.size, ...rules.size } } };
   const pos = { A: [-1.2, 0], B: [1.2, 0] };
   // dummy: the dummy room's frame (app.js getDummyFrame), players where the script puts them, as the dummy room draws them
   const frame = () => ({ players: Object.fromEntries(['A', 'B'].map(sl => { const [x, z] = pos[sl], sg = sl === 'A' ? 1 : -1;
     return [sl, { chest: [x, 1.3, z], yaw: sl === 'A' ? 0 : Math.PI, base: [x + .2 * sg, 1.2, z], tip: [x + 1 * sg, 1.2, z], dir: [sg, 0, 0] }]; })) });
-  const g = createGame({ fx, drone: null, cfg, clock: () => t, ...(dummy && { getDummyFrame: frame }) });
+  const flashes = [], vibes = [];
+  const g = createGame({ fx, drone: null, sfx: () => sfx, cfg, clock: () => t, onHit: (slot, ms) => flashes.push([slot, ms]), onVibrate: (slot, kind) => vibes.push(slot + ' ' + kind), ...(dummy && { getDummyFrame: frame }) });
   const put = (slot, x, z) => { // chest 1.3 m up, stick held at the chest pointing straight at the other start mark
     pos[slot] = [x, z];
     const s = slot === 'A' ? 1 : -1;
@@ -37,7 +38,7 @@ function setup({ rules = {}, matchSec = 60, test = false, dummy = false } = {}) 
   const run = sec => { for (let i = 0; i < Math.round(sec / DT); i++) { t += DT; for (const sl of ['A', 'B']) if (wob[sl]) bob(sl); g.step(DT, DT, null); } };
   g.command({ cmd: 'matchSec', value: matchSec });
   const S = {
-    g, cfg, run, put, wob,
+    g, cfg, run, put, wob, flashes, vibes,
     get A() { return g.players.A; }, get B() { return g.players.B; },
     fight() { g.command({ cmd: 'phase', phase: 'fight' }); run(3.05); },
     swing: slot => g.onSensed({ slot, name: 'Swing', power: .7 }),
@@ -135,9 +136,9 @@ scenario('大ボタンを押すと、実際に溜めて小→中→大と上が�
   eq(mid, 'm', '3秒後の段階'); eq(S.A.shots, 1, '発射数'); eq(S.A.charging, false, '撃ったあと溜め中か'); eq(S.B.hp, 40, 'B の HP（大1発）');
   return '押す → 3秒で中 → 5.3秒で撃つ';
 });
-scenario('大ボタンで溜めている途中に動くと失敗し、撃たない', () => {
+scenario('大ボタンで溜めている途中に動いても失敗せず、大を撃つ', () => {
   const S = setup(); S.fight(); S.g.command({ cmd: 'special', slot: 'A' }); S.run(2); S.walk('A', 0, .6); S.run(5);
-  eq(S.A.fails, 1, '失敗数'); eq(S.A.shots, 0, '発射数'); eq(S.B.hp, 100, 'B の HP');
+  eq(S.A.fails, 0, '失敗数'); eq(S.A.shots, 1, '発射数');
 });
 
 // ---- 撃つ方向（止める直前の棒の先の動き） ----
@@ -178,15 +179,36 @@ scenario('ボタンで撃つとき（棒が動いていない）は、小は体�
 });
 
 // ---- 溜めのリスク ----
-scenario('溜め中に30cm動いても溜めは続く', () => {
-  const S = setup(); S.fight(); S.charge('A'); S.run(1); S.walk('A', 0, .3); S.run(.5);
+scenario('今の溜め時間は 1 秒で中、2.5 秒で大', () => {
+  eq(RULES.t1, 1, '中になる秒数'); eq(RULES.t2, 2.5, '大になる秒数');
+  const S = setup({ rules: { t1: RULES.t1, t2: RULES.t2 } }); S.fight(); S.charge('A');
+  S.run(.9); eq(S.A.tier, 's', '0.9 秒'); S.run(.2); eq(S.A.tier, 'm', '1.1 秒'); S.run(1.5); eq(S.A.tier, 'l', '2.6 秒'); eq(S.A.charge, 1, 'メーター');
+});
+scenario('歩きながら棒を回し続けると、3m 動いても溜めは続き、中を撃てる', () => {
+  const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); S.charge('A');
+  for (let i = 0; i < 30; i++) { S.walk('A', 0, .1, .1); S.charge('A'); } // 3 s, 3 m
+  eq(S.A.charging, true, '溜め中か'); eq(S.A.fails, 0, '失敗数'); eq(S.A.tier, 'm', '溜めの段階');
+  S.put('A', -1.2, 0); S.run(.1); S.swing('A'); S.run(1);
+  eq(S.B.hp, 80, 'B の HP（中1発）');
+});
+scenario('ステップの間は棒が1.8秒止まっても溜めは空にならず、増えもしない。また回すと続きから溜まる', () => {
+  const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); S.charge('A');
+  for (let i = 0; i < 25; i++) { S.run(.1); S.charge('A'); }
+  const t = S.A.chargeT; expect(t > 2, `溜め時間 ${t}`);
+  S.walk('A', 0, 1, 1.8);
+  eq(S.A.charging, true, '溜め中か'); eq(S.A.fails, 0, '失敗数'); expect(S.A.chargeT - t < .5, `止めている間に増えた: ${t} -> ${S.A.chargeT}`);
+  S.charge('A'); S.run(.1); expect(S.A.chargeT >= t, '続きから溜まる');
+});
+scenario('ゆっくり向きを変える間も、棒が1.8秒止まっても溜めは空にならない', () => {
+  const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); S.charge('A'); S.run(.1);
+  for (let i = 0; i < 108; i++) { const yaw = i / 60 * .6; S.g.ingest({ type: 'truth', slot: 'A', chest: [-1.2, 1.3, 0], yaw, base: [-1, 1.2, 0], dir: [1, 0, 0] }); S.run(1 / 60); } // about 34°/s
   eq(S.A.charging, true, '溜め中か'); eq(S.A.fails, 0, '失敗数');
 });
-scenario('溜め中に60cm動くと溜めが消え、そのあと振っても小しか出ない', () => {
-  const S = setup(); S.fight(); S.charge('A'); S.run(3); S.walk('A', 0, .6);
-  eq(S.A.charging, false, '溜め中か'); eq(S.A.fails, 1, '失敗数');
-  S.put('A', -1.2, 0); S.run(.3); S.swing('A'); S.run(1);
-  eq(S.B.hp, 95, 'B の HP（小1発）');
+scenario('歩いていても棒を回すのを2秒やめると溜めは切れる。止まっていれば1.5秒で切れる', () => {
+  const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); S.charge('A');
+  S.walk('A', 0, .8, 1.8); eq(S.A.charging, true, '1.8 秒で溜め中か');
+  S.walk('A', 0, .5, .4); eq(S.A.charging, false, '2.2 秒で溜め中か'); eq(S.A.fails, 1, '失敗数');
+  S.charge('A'); S.run(1.6); eq(S.A.charging, false, '止まって 1.6 秒で溜め中か');
   return S.log().find(l => l.includes('溜め失敗'));
 });
 scenario('溜めている間は無防備：相手の小を受け続ける', () => {
@@ -245,6 +267,39 @@ scenario('真一文字に構えると、小は跳ね返って撃った A に当�
   S.swing('A'); S.run(1.5);
   eq(S.B.hp, 100, 'B の HP'); eq(S.A.hp, 90, '跳ね返った小を受けた A の HP（小 5 × 反射 2 倍）');
 });
+scenario('当たられた側のスマホだけが光る。小をガードで跳ね返すと、撃った側が光る', () => {
+  const S = setup(); S.fight();
+  S.swing('A'); S.run(1.5);
+  eq(JSON.stringify(S.flashes), '[["B",120]]', '小が B に当たったときのライト');
+  S.flashes.length = 0; guardB(S); S.run(.4);
+  S.swing('A'); S.run(1.5);
+  eq(JSON.stringify(S.flashes), '[["A",120]]', '跳ね返った小が A に当たったときのライト');
+});
+scenario('溜めている間だけ、溜めている人のスマホが振動し続ける', () => {
+  const S = setup(); S.fight(); S.vibes.length = 0;
+  S.charge('A'); S.run(1);
+  eq(S.vibes.every(v => v === 'A charge'), true, '溜め中の振動は A だけ');
+  expect(S.vibes.length >= 3 && S.vibes.length <= 5, `0.25 秒ごとのはずが 1 秒で ${S.vibes.length} 回`);
+  S.vibes.length = 0; S.swing('A'); S.run(.1);
+  eq(S.vibes.join(), 'A off', '撃ったあとの振動');
+});
+scenario('勝った人のスマホに勝利の振動が 1 回送られ、溜め中に勝ってもあとから止められない', () => {
+  const S = setup({ matchSec: 10 }); S.fight();
+  S.swing('A'); S.run(1.2); eq(S.B.hp, 95, 'B の HP');
+  S.vibes.length = 0;
+  for (let i = 0; i < 120 && S.g.match.phase === 'fight'; i++) { S.charge('A'); S.run(.1); }
+  eq(S.g.winner?.slot, 'A', '時間切れの勝者'); S.run(.5);
+  const i = S.vibes.indexOf('A win');
+  expect(i > 0, `勝利の振動がない: ${S.vibes.join()}`);
+  eq(S.vibes[i - 1], 'A off', '勝利の前の振動');
+  eq(i, S.vibes.length - 1, '勝利の振動の位置（最後のはず）');
+  S.vibes.length = 0; S.g.command({ cmd: 'phase', phase: 'setup' });
+  eq(S.vibes.join(), 'A off,B off', 'やり直しで止める');
+});
+scenario('引き分けでは勝利の振動を送らない', () => {
+  const S = setup({ matchSec: 10 }); S.fight(); S.run(10.5);
+  eq(S.g.match.phase, 'result', '試合の段階'); eq(S.vibes.some(v => v.endsWith('win')), false, '勝利の振動');
+});
 scenario('反射のダメージ倍率を変えると、跳ね返った小のダメージも変わる', () => {
   const S = setup({ rules: { reflectMul: 3 } }); S.fight(); guardB(S); S.run(.4);
   S.swing('A'); S.run(1.5);
@@ -290,12 +345,23 @@ scenario('中と大はガードを貫通する', () => {
   S.chargeShot('A', 2.5); eq(S.B.hp, 80, '中のあとの B の HP');
   S.chargeShot('A', 5.5); eq(S.B.hp, 20, '大のあとの B の HP'); eq(S.A.hp, 100, 'A の HP');
 });
-scenario('ガードボタンを押している間はガード、離すと小が当たる', () => {
-  const S = setup(); S.fight();
-  S.g.command({ cmd: 'guard', slot: 'B', on: true }); S.run(DT); S.swing('A'); S.run(1.5);
-  eq(S.A.hp, 90, '跳ね返りを受けた A の HP（小 5 × 反射 2 倍）');
-  S.g.command({ cmd: 'guard', slot: 'B', on: false }); S.run(.3); S.swing('A'); S.run(1.5);
-  eq(S.B.hp, 95, 'B の HP');
+scenario('キーボード操作のガードは指示どおりで、棒の静止では決まらない', () => {
+  const S = setup(); S.fight(); guardB(S);
+  S.g.command({ cmd: 'guard', slot: 'B', on: false }); S.run(.5);
+  eq(S.B.guarding, false, '棒が止まっていても、キーを押していない B のガード');
+  S.swing('A'); S.run(1.5); eq(S.B.hp, 95, '小を受けた B の HP');
+  S.g.command({ cmd: 'guard', slot: 'B', on: true }); S.run(DT);
+  eq(S.B.guarding, true, 'キーを押している B のガード');
+  S.g.command({ cmd: 'guard', slot: 'B', on: null }); S.run(.5);
+  eq(S.B.guarding, true, 'センサーに戻すと、棒が止まっているのでガード');
+});
+scenario('ガードの音：中と大が当たっても鳴らず、小の反射だけ鳴る', () => {
+  const sounds = [], sfx = new Proxy({ guard: kind => { if (kind !== 'up') sounds.push(kind); } }, { get: (o, n) => o[n] ?? (() => {}) });
+  const S = setup({ sfx }); S.fight(); guardB(S);
+  S.chargeShot('A', 2.5); S.chargeShot('A', 5.5);
+  eq(S.B.hp, 20, '中と大のあとの B の HP'); eq(sounds.length, 0, '中と大で鳴ったガードの音');
+  S.swing('A'); S.run(1.5);
+  eq(sounds.join(), 'reflect', '小で鳴ったガードの音');
 });
 
 // ---- デモ試合（ホーミング） ----

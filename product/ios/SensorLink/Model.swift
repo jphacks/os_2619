@@ -1,4 +1,5 @@
 import ARKit
+import AVFoundation
 import CoreImage
 import SwiftUI
 import UIKit
@@ -25,8 +26,13 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     @Published var inMatch = false   // a match runs on the PC: 枝 is greyed out
     @Published var lanUp = false
     @Published var found: [ImuDevice] = []
+    /// A hit: the whole screen red (ContentView), as long as the torch, then fading out
+    @Published var hitRed = 0.0
+    private var hitGen = 0
+    @Published var scanStep = Scan.Step.off
 
     let link: Link
+    let scan: Scan
     private(set) var imu: Imu!
     let session = ARSession()
 
@@ -36,6 +42,9 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     private let detector = TagDetector()
     private let ciContext = CIContext()
     private let arQueue = DispatchQueue(label: "ar", qos: .userInitiated)
+    private let vibe = Vibe()
+    private let torchQ = DispatchQueue(label: "torch") // lockForConfiguration can block
+    private var torchOff = DispatchTime(uptimeNanoseconds: 0) // on torchQ: when the torch goes off
 
     // written on the AR / worker queues, read on main for the status text
     private let lock = NSLock()
@@ -44,6 +53,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     private var arText = "AR: starting"
     private var arError: String?
     private var lastTags = [Int]()
+    private var tagInfo = "no frame yet"
     private var lastImgTs = 0.0
     private var lastPreview = 0.0
 
@@ -59,6 +69,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
             UserDefaults.standard.set(id, forKey: "id")
         }
         link = Link(id: id, name: UIDevice.current.name)
+        scan = Scan(link: link)
         super.init()
         imu = Imu { [weak self] s in
             guard let self = self else { return }
@@ -68,6 +79,8 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
                 "q": s.q.map { r4($0) },
             ])
         }
+        link.onFlash = { [weak self] ms in self?.flash(ms: ms); self?.redScreen(ms: ms) }
+        link.onVibrate = { [weak self] kind in self?.vibe.handle(kind) }
         session.delegate = self
         session.delegateQueue = arQueue
     }
@@ -81,6 +94,38 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         cfg.isAutoFocusEnabled = true
         session.run(cfg)
         Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.refresh() }
+    }
+
+    /// A hit: the screen red for `ms`, then a 0.3 s fade. A newer hit restarts it (the older one's fade is skipped).
+    private func redScreen(ms: Int) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.hitGen += 1
+            let g = self.hitGen
+            self.hitRed = 0.65
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ms)) { [weak self] in
+                guard let self = self, self.hitGen == g else { return }
+                withAnimation(.easeOut(duration: 0.3)) { self.hitRed = 0 }
+            }
+        }
+    }
+
+    /// A hit: the torch on for `ms`. Another hit while it is on can only make it last longer. Failures (no torch, too hot) just mean no light.
+    private func flash(ms: Int) {
+        torchQ.async { [weak self] in
+            guard let self = self, let dev = AVCaptureDevice.default(for: .video), dev.hasTorch else { return }
+            let off = DispatchTime.now() + .milliseconds(ms)
+            guard off > self.torchOff else { return }
+            self.torchOff = off
+            guard (try? dev.lockForConfiguration()) != nil else { return }
+            try? dev.setTorchModeOn(level: 1.0)
+            dev.unlockForConfiguration()
+            self.torchQ.asyncAfter(deadline: off) { [weak self] in
+                guard let self = self, self.torchOff == off, (try? dev.lockForConfiguration()) != nil else { return }
+                dev.torchMode = .off
+                dev.unlockForConfiguration()
+            }
+        }
     }
 
     // MARK: ARSessionDelegate (AR queue)
@@ -137,23 +182,23 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         let fx = Double(k[0][0]), fy = Double(k[1][1]), cx = Double(k[2][0]), cy = Double(k[2][1])
         let h = Double(res.height)
         convertW.offer { [weak self] in
-            guard let self = self, let gray = TagBridge.uprightGray(pb) else { return }
+            guard let self = self else { return }
+            self.showPreview(pb) // shown even if the grey conversion below fails
+            guard let gray = TagBridge.uprightGray(pb) else { return }
             // the picture is rotated 90° clockwise: (x, y) -> (h-1-y, x) swaps the focal lengths and moves the principal point
             let fr = TagFrame(gray: gray, t: t, fx: fy, fy: fx, cx: h - 1 - cy, cy: cx)
-            self.showPreview(pb)
             self.tagW.offer { [weak self] in
                 guard let self = self else { return }
                 let r = self.detector.detect(fr, rune: self.link.marker == "rune")
                 let w = Double(gray.width), hh = Double(gray.height)
-                self.link.send([
-                    "type": "tags", "t": fr.t, "tags": r,
-                    "k": [r4(fr.fx / w), r4(fr.fy / hh), r4(fr.cx / w), r4(fr.cy / hh)],
-                ])
+                let kk = [r4(fr.fx / w), r4(fr.fy / hh), r4(fr.cx / w), r4(fr.cy / hh)]
+                self.link.send(["type": "tags", "t": fr.t, "tags": r, "k": kk])
+                self.scan.offer(pb, tags: r, k: kk)
                 let marks: [TagMark] = r.compactMap { tag in
                     guard let id = tag["id"] as? Int, let c = tag["c"] as? [[Double]] else { return nil }
                     return TagMark(id: id, corners: c, distance: (tag["p"] as? [Double])?[2])
                 }
-                self.lock.lock(); self.lastTags = marks.map { $0.id }; self.lock.unlock()
+                self.lock.lock(); self.lastTags = marks.map { $0.id }; self.tagInfo = self.detector.info; self.lock.unlock()
                 DispatchQueue.main.async { self.marks = marks }
             }
         }
@@ -234,6 +279,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         lock.lock()
         let ar = arError ?? arText
         let tags = lastTags
+        let info = tagInfo
         lock.unlock()
         var imuLine = "IMU: \(imu.status)"
         if let l = imu.last { imuLine += String(format: "  %.0f Hz  r %.0f p %.0f y %.0f", imu.hz, l.euler[0], l.euler[1], l.euler[2]) }
@@ -243,6 +289,14 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
             ar,
             String(format: "Hz  cam %.0f  tag %.0f", convertW.hz, tagW.hz),
             "tags: " + tags.map(String.init).joined(separator: ", "),
-        ]
+            info,
+        ] + [scan.status()].compactMap { $0 }
     }
+
+    // MARK: stick scan (Scan.swift); the button and the instructions are in ContentView
+
+    func scanStart() { scan.start(); scanStep = .bg }
+    func scanNext() { scan.next(); scanStep = .stick }
+    func scanFinish() { scan.finish(); scanStep = .off; showToast("Sent: the PC builds the model") }
+    func scanCancel() { scan.cancel(); scanStep = .off }
 }

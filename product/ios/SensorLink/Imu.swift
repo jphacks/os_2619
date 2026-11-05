@@ -13,9 +13,11 @@ struct ImuSample {
 /// WitMotion WT9011DCL (BLE 5.0) over GATT. Auto-reconnects to the last device until `disconnect()`.
 /// Everything runs on the main queue (CBCentralManager's default), so no locking is needed.
 final class Imu: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
-    static let service = CBUUID(string: "FFE5")
-    static let notifyChar = CBUUID(string: "FFE4")
-    static let writeChar = CBUUID(string: "FFE9")
+    // WitMotion's UUIDs end in ...00805f9a34fb, not the Bluetooth base ...00805f9b34fb, so the short form CBUUID("FFE5")
+    // (which expands to the standard base) would never match: spell them out like Imu.kt does.
+    static let service = CBUUID(string: "0000ffe5-0000-1000-8000-00805f9a34fb")
+    static let notifyChar = CBUUID(string: "0000ffe4-0000-1000-8000-00805f9a34fb")
+    static let writeChar = CBUUID(string: "0000ffe9-0000-1000-8000-00805f9a34fb")
 
     private let onSample: (ImuSample) -> Void
     private var central: CBCentralManager!
@@ -53,7 +55,7 @@ final class Imu: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 
     private func startScanIfPossible() {
         if scanning, central.state == .poweredOn {
-            central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+            central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]) // the name can arrive in a later advertisement
         }
     }
 

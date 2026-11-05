@@ -7,6 +7,7 @@
 import { ACTIONS } from './actions.js';
 import * as W from './world.js';
 import { SOURCES } from './video.js';
+import { createStickScan, createStickView } from './stickui.js';
 
 const WINDOW = 10; // seconds shown in the IMU charts
 const now = () => Date.now() / 1000;
@@ -15,7 +16,7 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 const who = { A: '--A', B: '--B' };
 export const ACTION_JA = { Charge: '溜め', Swing: '振り', Dodge: '回避', Guard: 'ガード' };
 const HOW_JA = {
-  Charge: '棒を真上から 45° 以内に立てて先を 2 秒以内に 1 周回すか、1 秒に 5 回以上（60°/秒超）向きを変えて揺らす。続けるのは 4 回（30°/秒超）でよい',
+  Charge: '棒を真上から 45° 以内に立てて先を 2 秒以内に 1 周回すか、直近 1 秒の揺れが 120°/秒以上で 4 回以上向きを変える。続けるのは 90°/秒以上で 3 回でよい',
   Swing: '棒が 300°/秒より速く回って止まる。向きと始め・終わりの位置',
   Dodge: '胸のスマホが 1.2 m/秒より速く動く。左・右・後ろ・前',
   Guard: '棒を水平から 45° 以内で 1 秒静止（60°/秒未満）',
@@ -57,11 +58,15 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
           <table class="tags"><thead><tr><th>ID</th><th>x</th><th>y</th><th>z (m)</th><th>距離</th></tr></thead><tbody></tbody></table>
         </div>
       </div>
+      <h3>棒の 3D モデル <span class="badge off stickstate">なし</span></h3>
+      <canvas class="stick3d" style="width:100%;height:110px;display:block" aria-label="スキャンした棒の 3D モデル（左が先端）"></canvas>
+      <div class="row" style="margin-top:6px;align-items:center"><span class="kv stickinfo" style="font-size:12px;flex:1">アプリの「Scan」で作る（床の魔法陣に棒を置いて周りから撮る）。左が先端</span><button class="stickclear">モデルを消す</button></div>
     </section>`;
   for (const s of ['A', 'B']) {
     cards.insertAdjacentHTML('beforeend', tpl(s));
     const el = cards.lastElementChild, q = c => el.querySelector(c);
-    slots[s] = { el, q, imu: [], traj: [] };
+    slots[s] = { el, q, imu: [], traj: [], stick: createStickView(q('.stick3d')) };
+    q('.stickclear').onclick = () => { if (slots[s].stick.model && confirm(`スマホ ${s} の棒のモデルを消します（ゲームはいつもの棒に戻る）`)) hub.send({ type: 'setStick', slot: s, model: null }); };
     // euler[0] is WitMotion's "roll" (about sensor X), but on the mounted sensor that reads as pitch, so the labels are swapped
     for (const [k, names] of [['euler', ['ピッチ', 'ロール', 'ヨー']], ['gyro', ['x', 'y', 'z']], ['acc', ['x', 'y', 'z']]])
       q('.legend.' + k).innerHTML = names.map((n, i) => `<span><i style="background:var(--s${i + 1})"></i>${n} <b data-i="${i}">–</b></span>`).join('');
@@ -93,9 +98,16 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
       <div class="urls kv"></div><div class="qrs"></div>
       <p class="kv" style="font-size:12px;margin:10px 0 0">A・B：SensorLink アプリの LAN 欄に IP とポート 8000 を入れて接続（先につないだ方が A）。C：ブラウザで QR のページを開いて「開始」。初回は証明書のページの手順で信頼させる。</p>
     </section>
-    <section class="card"><header><h2>床のマーカー</h2><span class="sub">全体の設定（ID 0-3）</span></header>
+    <section class="card"><header><h2>床のマーカー</h2><span class="sub">全体の設定</span></header>
       <div class="seg marker"><button data-v="april">AprilTag</button><button data-v="rune">RuneTag</button></div>
-      <p class="kv" style="font-size:12px;margin:8px 0 0">紙の一辺（印刷後に測った値、world.js の PRINTED）：AprilTag ${W.PRINTED.april * 1000} mm、RuneTag ${W.PRINTED.rune * 1000} mm（product/print/runetags_A3.pdf）。どちらも 4 枚を端から端まで並べる。印刷し直したら測って PRINTED を直す。切り替えるとサーバーが保存し、スマホ A・B に送り、開いているページは読み直す。胸のタグ 8-11 は AprilTag のまま。</p>
+      <p class="kv" style="font-size:12px;margin:8px 0 0">AprilTag：ID 0〜3 の 4 枚を端から端まで並べる（紙の一辺は印刷後に測った ${W.PRINTED.april * 1000} mm、world.js の PRINTED）。RuneTag：床の魔法陣（mahoujin/magic-circle-576808920-A3.pdf、タグ T0〜T6 = ID 0〜6）。</p>
+      <label class="kv" style="font-size:12px;display:block;margin-top:6px">魔法陣の倍率（実物 / 設計）<input class="runescale" type="number" min="0.5" max="2" step="0.001" style="width:6em"></label>
+      <p class="kv" style="font-size:12px;margin:4px 0 0">PDF の 100 mm が印刷で何 mm になったか ÷ 100（いまは 97.5 mm → 0.975）。タグの大きさと配置の円（半径 490.5 mm）に同じ倍率がかかる。</p>
+      <p class="kv" style="font-size:12px;margin:4px 0 0">切り替えるとサーバーが保存し、スマホ A・B に送り、開いているページは読み直す。胸のタグ 8-11 は AprilTag のまま。</p>
+    </section>
+    <section class="card rec"><header><h2>センサーの記録</h2><span class="sub">溜めの調整用</span></header>
+      <div class="row" style="flex-wrap:wrap;gap:6px"><button data-rec="walk">回さずに歩く</button><button data-rec="walk-circle">回しながら歩く</button><button data-rec="still-circle">止まって回す</button></div>
+      <p class="kv rec-msg" style="font-size:12px;margin:8px 0 0">棒を立てた状態で行う。押して 5 秒後に音が鳴ったら開始、20 秒後の音で終了。</p>
     </section>
     <section class="card"><header><h2>動作の判定</h2><span class="sub">棒の IMU と胸のスマホから</span></header>
       <ul class="actions"></ul>
@@ -110,6 +122,24 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
     b.classList.toggle('on', b.dataset.v === W.MARKER);
     b.onclick = () => { if (b.dataset.v !== W.MARKER && confirm(`床のマーカーを ${b.textContent} に切り替えます（全体・ページは読み直し）`)) hub.send({ type: 'setMarker', marker: b.dataset.v }); };
   }
+  // sensor recording: 5 s to get in place, then 20 s between two beeps (the mover may be far from the screen); the server writes the file
+  const recMsg = sq('.rec-msg'), recBtns = [...side.querySelectorAll('[data-rec]')], REC_SEC = 20, REC_LEAD = 5;
+  let recAudio = null, recTick = null;
+  const beep = () => { try { recAudio ??= new AudioContext(); recAudio.resume(); const o = recAudio.createOscillator(), g = recAudio.createGain(); o.frequency.value = 880; g.gain.value = .3; o.connect(g).connect(recAudio.destination); o.start(); o.stop(recAudio.currentTime + .4); } catch {} };
+  const countdown = (sec, text, then) => { clearInterval(recTick); let left = sec; recMsg.textContent = `${text}：あと ${left} 秒`; recTick = setInterval(() => { if (--left > 0) recMsg.textContent = `${text}：あと ${left} 秒`; else { clearInterval(recTick); then?.(); } }, 1000); };
+  for (const b of recBtns) b.onclick = () => {
+    if (recAudio === null) { try { recAudio = new AudioContext(); } catch {} } // made in the click: browsers only let a page play sound after one
+    for (const q of recBtns) q.disabled = true;
+    countdown(REC_LEAD, `「${b.textContent}」の準備`, () => hub.send({ type: 'record', label: b.dataset.rec, sec: REC_SEC }));
+  };
+  hub.onRecording = k => {
+    beep();
+    if (k.on) return countdown(k.sec, '記録中');
+    clearInterval(recTick); for (const q of recBtns) q.disabled = false;
+    recMsg.textContent = k.n ? `保存した：dashboard/recordings/${k.file}（${k.n} パケット）` : 'スマホからパケットが届かなかった。スマホ A・B の接続を確かめる';
+  };
+  const rs = sq('.runescale'); rs.value = W.RUNE_SCALE;
+  rs.onchange = () => { const v = +rs.value; if (v > .5 && v < 2 && v !== W.RUNE_SCALE) hub.send({ type: 'setRuneScale', scale: v }); else rs.value = W.RUNE_SCALE; }; // the server saves it; app.js reloads every page
   for (const inp of side.querySelectorAll('.sticks input')) {
     inp.value = cfg.stickLen[inp.dataset.s];
     inp.oninput = () => { if (+inp.value > 0) onStick(inp.dataset.s, +inp.value); };
@@ -153,8 +183,15 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
   info(); setInterval(info, 5000);
 
   // ---- data in ----
+  const stickScan = createStickScan(hub, (slot, text) => { const s = slots[slot]; if (s) s.q('.stickinfo').textContent = text; });
   function ingest(k) {
     const s = slots[k.slot]; if (!s) return;
+    if (k.type === 'scan') stickScan.ingest(k);
+    if (k.type === 'stick') {
+      s.stick.set(k.model);
+      const b = s.q('.stickstate'); b.textContent = k.model ? `${(k.model.length * 100).toFixed(0)} cm` : 'なし'; b.className = 'badge stickstate ' + (k.model ? 'ok' : 'off');
+      if (k.model) sq(`.sticks input[data-s="${k.slot}"]`).value = k.model.length; // app.js takes the length for the game
+    }
     if (k.type === 'imu') { s.imu.push(k); while (s.imu.length && s.imu[0].t < k.t - WINDOW) s.imu.shift(); }
     if (k.type === 'ar' && k.tracking === 'TRACKING') { s.traj.push(k.p); if (s.traj.length > 600) s.traj.shift(); }
     if (k.type === 'calib') s.traj.length = 0;
@@ -276,7 +313,7 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
       const slow = now() - lastSlow > 0.1; if (slow) lastSlow = now();
       for (const s of ['A', 'B']) {
         const S = slots[s], ph = hub.phones[s];
-        videoView(S, ph); chart(S, 'euler', 180); chart(S, 'gyro'); chart(S, 'acc'); orient(S, ph.last.imu); traj(S, ph.last.ar);
+        S.stick.frame(now()); videoView(S, ph); chart(S, 'euler', 180); chart(S, 'gyro'); chart(S, 'acc'); orient(S, ph.last.imu); traj(S, ph.last.ar);
         if (slow) panels(S, ph, hub.rates(s));
       }
       if (slow) cPanel();

@@ -22,6 +22,7 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
     private var _rttMs = 0.0
     private var _marker = "april"
     private var _phase = "setup"
+    private var _stick: String?
 
     private static let queueLimit = 4 * 1024
 
@@ -34,6 +35,12 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
     var marker: String { lock.lock(); defer { lock.unlock() }; return _marker }
     /// the dashboard's game phase (setup / countdown / fight / result), sent by the server
     var phase: String { lock.lock(); defer { lock.unlock() }; return _phase }
+    /// The PC says this phone's player was hit: light the torch for this many ms. Set before connect; called on the socket's queue.
+    var onFlash: ((Int) -> Void)?
+    /// The PC's vibration word: charge, win or off (Vibe.swift). Set before connect; called on the socket's queue.
+    var onVibrate: ((String) -> Void)?
+    /// The PC's word on this slot's scanned stick (dashboard stickscan.js): "91 cm", "none", or nil before it said anything.
+    var stick: String? { lock.lock(); defer { lock.unlock() }; return _stick }
 
     init(id: String, name: String) {
         self.id = id
@@ -132,6 +139,13 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
             if let m = k["marker"] as? String { lock.lock(); _marker = m; lock.unlock() }
         case "match":
             if let p = k["phase"] as? String { lock.lock(); _phase = p; lock.unlock() }
+        case "flash":
+            if let ms = (k["ms"] as? NSNumber)?.intValue { onFlash?(ms) }
+        case "vibrate":
+            if let kind = k["kind"] as? String { onVibrate?(kind) }
+        case "stick":
+            let len = ((k["model"] as? [String: Any])?["length"] as? NSNumber)?.doubleValue
+            lock.lock(); _stick = len.map { String(format: "%.0f cm", $0 * 100) } ?? "none"; lock.unlock()
         case "full":
             lock.lock(); _status = "PC already has 2 phones"; lock.unlock()
         default:
@@ -156,9 +170,10 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
     }
 
     /// Sensor packet. Dropped instead of queued if the link is backed up: stale data is useless.
-    func send(_ json: [String: Any]) {
+    /// `big`: a packet that must arrive however late (a stick scan picture), queued up to 8 MB; sensor packets are dropped meanwhile.
+    func send(_ json: [String: Any], big: Bool = false) {
         lock.lock()
-        guard let t = task, pending < Link.queueLimit else { lock.unlock(); return }
+        guard let t = task, pending < (big ? 8_000_000 : Link.queueLimit) else { lock.unlock(); return }
         lock.unlock()
         guard JSONSerialization.isValidJSONObject(json), // NaN would otherwise raise an Objective-C exception
               let d = try? JSONSerialization.data(withJSONObject: json),

@@ -5,11 +5,25 @@
 import * as THREE from 'three';
 import * as W from './world.js';
 import { tagCanvas } from './dummycam.js';
+import { createBackdrop, SAND_GLSL } from './backdrop.js';
+import { createCourtyard, LAWN_GLSL } from './courtyard.js';
+import { makeWizard } from './wizard.js';
+import { makeWizardModel } from './wizardmodel.js';
+import { stickGeometry } from './stickmesh.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
 const m4 = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
-export const TEAM = { A: 0xff3b3b, B: 0x2fd46a };
+export const TEAM = { A: 0xff6600, B: 0x0078ff };
+const CLOTH_S = .39, CLOTH_V = .3; // the wizards' clothes: only the hue is the player's, saturation and value are the same for everyone
+/** The clothes' colour for a player's colour: its hue at CLOTH_S, CLOTH_V (HSV, as displayed). */
+export function clothColor(team) {
+  const hsl = new THREE.Color().setHex(team, THREE.LinearSRGBColorSpace).getHSL({}, THREE.LinearSRGBColorSpace), l = CLOTH_V * (1 - CLOTH_S / 2);
+  return new THREE.Color().setHSL(hsl.h, (CLOTH_V - l) / Math.min(l, 1 - l), l, THREE.SRGBColorSpace);
+}
+const GAME_FONT = `'Barlow Condensed', 'Dela Gothic One', sans-serif`; // index.html's @font-face; canvases that drew before it had loaded draw again (fontsReady)
+const fontsReady = (f, text = 'A1') => document.fonts?.load?.(`italic 800 20px ${GAME_FONT}`, text).then(f).catch(() => {});
+const INK = '#fdfdff', INK_EDGE = '#000'; // index.html's game lettering
 const css = c => '#' + c.toString(16).padStart(6, '0');
 const UP = V(0, 1, 0);
 
@@ -73,8 +87,10 @@ varying vec2 vP;
 void main() { vec4 w = modelMatrix * vec4(position, 1.); vP = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const FLOOR_FS = `
 uniform float uTime, uR; uniform vec2 uX; uniform vec2 uPoly[${MAXP}]; uniform int uN;
-uniform vec4 uP[2]; uniform vec3 uCA, uCB; uniform vec2 uSA, uSB;
+uniform vec4 uP[2]; uniform vec3 uCA, uCB, uBodySun; uniform vec2 uSA, uSB; uniform float uRock, uHpOnly;
 varying vec2 vP;
+${SAND_GLSL}
+${LAWN_GLSL}
 float aline(float d, float px) { return 1. - smoothstep(.5 * px, 1.5 * px, d); } // ~1.5 px wide line at distance d (px units)
 float gridAt(vec2 p, float s) { vec2 q = p / s, g = abs(fract(q - .5) - .5) / fwidth(q); return 1. - min(min(g.x, g.y) / 1.2, 1.); }
 float ring(vec2 p, vec2 c, float r, float w) { float d = abs(length(p - c) - r); return 1. - smoothstep(w * .5, w * .5 + fwidth(d) * 1.5, d); }
@@ -92,11 +108,48 @@ float sdPoly(vec2 p) { // signed distance to the outline, < 0 inside (any simple
 }
 void main() {
   vec2 p = vP; float r = length(p), d = sdPoly(p), inside = step(d, 0.);
+  if (uHpOnly > .5) { // the HP arcs alone, drawn again over a darkened ground (a status, not the background)
+    for (int i = 0; i < 2; i++) {
+      vec4 P = uP[i]; if (P.w <= 0.) continue;
+      vec2 q = p - P.xy;
+      float on = ring(p, P.xy, .46, uRock > .5 ? .035 : .015) * P.w * step(fract(atan(q.x, -q.y) / 6.2831853 + .5), P.z);
+      if (on > 0.) { gl_FragColor = vec4(i == 0 ? uCA : uCB, on); return; }
+    }
+    discard;
+  }
   vec3 team = p.x < 0. ? uCA : uCB;
   vec3 c = mix(vec3(.028, .034, .052), vec3(.05, .06, .09), inside);
   c += inside * vec3(.035, .04, .06) * exp(-r * r / 5.);                                           // soft centre spot
   c += mix(vec3(.04, .05, .08), vec3(.10, .12, .17), inside) * gridAt(p, .5) * (inside > .5 ? 1. : exp(-d * .8));
   c += inside * vec3(.07, .08, .11) * gridAt(p, 1.);
+  if (uRock > .5) { // the canyon or the courtyard: the same ground as outside the floor, the lines below are painted on it
+    c = uRock > 1.5 ? lawnColor(p) : sandColor(p);
+    float lines = 1. - smoothstep(.1, .15, abs(d));
+    c *= 1. - .5 * lines; // a dark edge, so a team colour reads on the orange stone
+    float wide = 1. - smoothstep(.055, .055 + fwidth(d) * 1.5, abs(d));
+    c = mix(c, team, wide);
+    float dash = step(.45, fract(p.y * 2.5 + uTime * .3));
+    c = mix(c, vec3(.97, .93, .84), inside * aline(abs(p.x) / fwidth(p.x), 1.4) * dash * .8);
+    c = mix(c, vec3(.97, .93, .84), inside * ring(p, vec2(0.), .6, .02) * .7);
+    c *= 1. - .26 * (ring(p, uSA, .32, .06) + ring(p, uSB, .32, .06)); // a dark edge: a green ring must read on the green lawn too
+    c = mix(c, uCA, ring(p, uSA, .32, .03) * .9);
+    c = mix(c, uCB, ring(p, uSB, .32, .03) * .9);
+    for (int i = 0; i < 2; i++) {
+      vec4 P = uP[i]; if (P.w <= 0.) continue;
+      vec3 tc = i == 0 ? uCA : uCB;
+      vec2 q = p - P.xy; float dq = length(q);
+      // the body's shadow along the ground, sharp as the sun makes it, on top of a soft contact shadow
+      vec2 sd = -normalize(uBodySun.xz); float L = 1.7 * length(uBodySun.xz) / uBodySun.y, t = clamp(dot(q, sd), 0., L), wd = mix(.19, .11, t / L);
+      float body = 1. - smoothstep(wd - .03, wd + .03, length(q - sd * t));
+      c *= mix(vec3(1.), vec3(.42, .45, .60), body * P.w);
+      c *= 1. - .5 * exp(-dq * dq / .03) * P.w;
+      float a = fract(atan(q.x, -q.y) / 6.2831853 + .5);
+      c *= 1. - .26 * ring(p, P.xy, .46, .065) * P.w;
+      c = mix(c, mix(c * .55, tc, step(a, P.z)), ring(p, P.xy, .46, .035) * P.w);
+    }
+    gl_FragColor = vec4(c, 1. - smoothstep(uR + 1.4, uR + 5.7, r));
+    return;
+  }
   // boundary: a line painted on the floor, 6 cm wide (no wall, no posts)
   c += team * (1. - smoothstep(.03, .03 + fwidth(d) * 1.5, abs(d)));
   // centre line (dashed, x = 0 runs across the field between the A and B halves) and circle
@@ -128,8 +181,8 @@ function makeFloor(uniforms) { // unit quad, scaled to the field on rebuild
   floor.rotation.x = -Math.PI / 2; floor.renderOrder = -1;
   return floor;
 }
-function floorText(text, color, x, z) { // big flat letter on the floor, upright seen from +z
-  const tex = canvasTex(128, 128, (g, w, h) => { g.font = '900 100px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = color; g.fillText(text, w / 2, h / 2 + 6); });
+function floorText(text, x, z) { // big flat letter on the floor, upright seen from +z
+  const tex = canvasTex(128, 128, (g, w, h) => { g.font = `italic 800 100px ${GAME_FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = INK; g.shadowColor = INK_EDGE; g.shadowOffsetX = g.shadowOffsetY = 5; g.fillText(text, w / 2, h / 2 + 6); });
   const m = new THREE.Mesh(new THREE.PlaneGeometry(.5, .5), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: .55, depthWrite: false }));
   m.rotation.x = -Math.PI / 2; m.position.set(x, .004, z);
   return m;
@@ -200,16 +253,19 @@ const TALL_MIN = .95, TALL_MAX = 1.7, CAPTURE = .4, TORSO = -HIP[1];
 export const POSE = { show: true };
 const legLen = tall => (tall + HIP[1] - .04) * .97; // hip to sole, standing: a little short, so a standing knee stays straight through the breathing bob (3 % longer bent it ~28°, which read as half-crouched)
 
-// The body that is drawn: a wireframe human (three.js's Xbot, a Mixamo rig), loaded once and cloned per avatar. Its bones aim
-// at the points the avatar code below computes (those primitive meshes stay hidden and only serve as the rig).
+// The rig of the body: a human skeleton (three.js's Xbot, a Mixamo rig), loaded once and cloned per avatar. Its bones aim at the points
+// the avatar code below computes (those primitive meshes stay hidden). What is drawn is the wizard on its points, not the model's own skin: the artist's model (wizardmodel.js), or with ?avatar=simple or if it fails to load, the one built in code (wizard.js).
 const FIG = Promise.all([import('three/addons/loaders/GLTFLoader.js'), import('three/addons/utils/SkeletonUtils.js')])
-  .then(([{ GLTFLoader }, SU]) => new GLTFLoader().loadAsync(new URL('./assets/models/Xbot.glb', import.meta.url).href)
-    .then(g => (mat, root) => makeFig(SU.clone(g.scene), mat, root)))
+  .then(([{ GLTFLoader }, SU]) => {
+    const loader = new GLTFLoader(), url = n => new URL('./assets/models/' + n, import.meta.url).href;
+    const model = /[?&]avatar=simple/.test(location.search) ? null : loader.loadAsync(url('wizard.glb')).catch(e => { console.warn('wizard model:', e); return null; });
+    return Promise.all([loader.loadAsync(url('Xbot.glb')), model]).then(([g, w]) => (mat, root, cloth) => makeFig(SU.clone(g.scene), mat, root, cloth, w && SU.clone(w.scene)));
+  })
   .catch(e => { if (typeof window.fetch === 'function' && document.body) console.warn('avatar model:', e); return null; });
 const AIM = ['RightArm', 'RightForeArm', 'LeftArm', 'LeftForeArm', 'RightUpLeg', 'RightLeg', 'RightFoot', 'LeftUpLeg', 'LeftLeg', 'LeftFoot'];
-function makeFig(obj, mat, root) {
+function makeFig(obj, mat, root, cloth, model) {
   const b = {};
-  obj.traverse(o => { if (o.isBone) b[o.name.replace(/^mixamorig:?/, '')] = o; if (o.isMesh) { o.material = mat; o.frustumCulled = false; } });
+  obj.traverse(o => { if (o.isBone) b[o.name.replace(/^mixamorig:?/, '')] = o; if (o.isMesh) { o.material = mat; o.frustumCulled = false; o.visible = false; } });
   obj.updateMatrixWorld(true);
   const wp = n => b[n].getWorldPosition(V()), hipM = wp('LeftUpLeg').add(wp('RightUpLeg')).multiplyScalar(.5);
   const leg = wp('LeftUpLeg').distanceTo(wp('LeftLeg')) + wp('LeftLeg').distanceTo(wp('LeftFoot'));
@@ -228,7 +284,7 @@ function makeFig(obj, mat, root) {
     bone.quaternion.copy(pq.invert().multiply(dq.multiply(wq)));
     bone.updateMatrixWorld(true);
   }
-  const spineBind = b.Spine.quaternion.clone(), lq = new THREE.Quaternion(), rq = new THREE.Quaternion();
+  const spineBind = b.Spine.quaternion.clone(), lq = new THREE.Quaternion(), rq = new THREE.Quaternion(), wizard = model ? makeWizardModel(root, cloth, model) : makeWizard(root, cloth);
   return function pose(r) { // r: root-frame points of the rig, headQ the head's turn in the body frame
     // size: r.leg (the standing leg, fixed per player: a crouch bends the knees instead of shrinking the body), else the rig's
     // own leg bones (the camera pose: the person's measured bones, which a crouch does not shorten either)
@@ -249,6 +305,7 @@ function makeFig(obj, mat, root) {
     }
     b.Head.parent.getWorldQuaternion(pq); root.getWorldQuaternion(wq);
     b.Head.quaternion.copy(pq.invert().multiply(wq.multiply(r.headQ).multiply(obj.quaternion).multiply(headBind)));
+    wizard({ ...r, hip, leg: r.leg ?? leg * sc });
   };
 }
 
@@ -280,13 +337,24 @@ function makeAvatar(slot) {
   // stick (world space)
   const metal = slot === 'A' ? 0xc8ccd2 : 0xd4af37; // A silver, B gold
   const stickMat = new THREE.MeshStandardMaterial({ color: metal, metalness: .85, roughness: .28, emissive: metal, emissiveIntensity: .25 });
-  const stick = mesh(new THREE.CylinderGeometry(1, 1, 1, 6), stickMat, world); stick.userData.r = .02;
+  const stick = mesh(new THREE.CylinderGeometry(1, 1, 1, 6), stickMat, world); stick.userData.r = .02; stick.userData.glow = .25;
+  const plainStick = stick.geometry;
+  /** The scanned model (stickscan.js) in place of the metal rod, or back to the rod with null. */
+  function setStick(m) {
+    if (stick.geometry !== plainStick) { stick.geometry.dispose(); stickMat.map?.dispose(); }
+    const g = m && stickGeometry(m);
+    stick.geometry = g ? g.geometry : plainStick; stickMat.map = g ? g.texture : null;
+    stickMat.color.set(g ? 0xffffff : metal); stickMat.metalness = g ? 0 : .85; stickMat.roughness = g ? .6 : .28;
+    stick.userData.r = g ? 1 : .02; stick.userData.glow = g ? .06 : .25; // its own colours, only a hint of the team's
+    stickMat.needsUpdate = true;
+  }
   const tipMat = new THREE.MeshBasicMaterial({ color: metal });
   const tip = joint(.04, tipMat, world);
   root.traverse(o => { if (o.isMesh) o.visible = false; }); // the rig: only the wireframe figure is drawn
   const wire = new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: .55, depthWrite: false });
+  const clothC = clothColor(color), cloth = new THREE.MeshStandardMaterial({ color: clothC, roughness: .85, metalness: 0, emissive: clothC, emissiveIntensity: .1, side: THREE.DoubleSide }); // all the wizard wears: one colour, the player's hue, connected or not
   let fig = null;
-  FIG.then(f => { if (f) fig = f(wire, root); });
+  FIG.then(f => { if (f) fig = f(wire, root, cloth); });
   // floating HP bar
   const hpCanvas = Object.assign(document.createElement('canvas'), { width: 320, height: 104 }), hpCtx = hpCanvas.getContext('2d');
   const hpTex = new THREE.CanvasTexture(hpCanvas); hpTex.colorSpace = THREE.SRGBColorSpace;
@@ -294,14 +362,15 @@ function makeAvatar(slot) {
   hpSprite.scale.set(1.4, 1.4 * 104 / 320, 1); hpSprite.center.set(.5, -.15); world.add(hpSprite); // anchored below: stays above the head on screen from any angle
   const facing = V(1, 0, 0); limitSprite(hpSprite, { facing, maxFrac: .18 });
   let hpKey = '';
+  fontsReady(() => { hpKey = ''; }, 'OFFLINE 100');
   function drawHp(hp, online, charge, value = hp) { // a thick bar, the slot and HP above it. hp: 0..100 (bar length), value: the HP number shown
     const key = `${Math.ceil(hp)}|${Math.ceil(value)}|${online}|${Math.round(charge * 10)}`; if (key === hpKey) return; hpKey = key;
     const g = hpCtx, w = 320, h = 104, c = online ? css(color) : '#7a7f8a', bx = 12, bw = w - 24, by = 46, bh = 34;
     g.clearRect(0, 0, w, h);
-    g.font = '700 34px system-ui, sans-serif'; g.textBaseline = 'alphabetic'; g.shadowColor = '#000'; g.shadowBlur = 6;
-    g.textAlign = 'left'; g.fillStyle = c; g.fillText(slot, bx, by - 10);
-    g.textAlign = 'right'; g.fillStyle = '#d8dbe2'; g.fillText(!online ? 'OFFLINE' : hp <= 0 ? 'KO' : String(Math.ceil(value)), bx + bw, by - 10);
-    g.shadowBlur = 0;
+    g.font = `italic 800 36px ${GAME_FONT}`; g.textBaseline = 'alphabetic'; g.shadowColor = INK_EDGE; g.shadowOffsetX = g.shadowOffsetY = 3; g.fillStyle = INK;
+    g.textAlign = 'left'; g.fillText(slot, bx, by - 10);
+    g.textAlign = 'right'; g.fillText(!online ? 'OFFLINE' : hp <= 0 ? 'KO' : String(Math.ceil(value)), bx + bw, by - 10);
+    g.shadowColor = 'transparent';
     g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(bx - 3, by - 3, bw + 6, bh + 6);
     g.fillStyle = 'rgba(255,255,255,.18)'; g.fillRect(bx, by, bw, bh);
     if (online) {
@@ -311,18 +380,25 @@ function makeAvatar(slot) {
     hpTex.needsUpdate = true;
   }
 
-  const st = { phase: 0, last: null, speed: 0, time: Math.random() * 10, ko: 0, tall: null, cap: [], calibAt: undefined };
+  const st = { phase: 0, last: null, speed: 0, time: Math.random() * 10, ko: 0, tall: null, cap: [], calibAt: undefined, grip: 0 };
   const L = a => v3(a); // body-frame point
   const offColor = new THREE.Color(0x6a6f7a), onColor = new THREE.Color(color);
   let wasOnline = null;
 
+  // the stick as the wizard holds it, in the root frame: in both hands while a charge is held
+  function stickIn(p, inv, hand, dt) {
+    st.grip = Math.max(0, Math.min(1, st.grip + (p.charging ? 8 : -8) * dt));
+    if (!p.base || !p.tip) return null;
+    const base = p.base.clone().applyMatrix4(inv), tip = p.tip.clone().applyMatrix4(inv);
+    return { base, dir: tip.sub(base).normalize(), grip: st.grip, hand };
+  }
   // the stick (world space), the team colour and the HP bar: the same for both ways of posing the body
   function finish(p, base, tipP) {
     if (base && tipP) {
-      const d = V().subVectors(tipP, base).normalize();
-      between(stick, base.clone().addScaledVector(d, -.08), tipP); stick.scale.x = stick.scale.z = stick.userData.r;
+      const d = V().subVectors(tipP, base).normalize(); // held in both hands, more of it shows below them
+      between(stick, base.clone().addScaledVector(d, -.08 - .22 * st.grip), tipP); stick.scale.x = stick.scale.z = stick.userData.r;
       tip.position.copy(tipP);
-      stickMat.emissiveIntensity = p.charging ? .5 + 1.2 * (p.charge ?? 0) * (.7 + .3 * Math.sin(st.time * 30)) : .25;
+      stickMat.emissiveIntensity = p.charging ? .5 + 1.2 * (p.charge ?? 0) * (.7 + .3 * Math.sin(st.time * 30)) : stick.userData.glow;
       tip.scale.setScalar(.04 * (1 + (p.charging ? (p.charge ?? 0) : 0)));
     }
     stick.visible = tip.visible = !!(base && tipP);
@@ -371,10 +447,11 @@ function makeAvatar(slot) {
     const sR = L(SHOULDER), sL = L([SHOULDER[0], SHOULDER[1], -SHOULDER[2]]);
     let eR = anchor(sR, 12, 14), hR = anchor(sR, 12, 16), eL = anchor(sL, 11, 13), hL = anchor(sL, 11, 15);
     // the stick hand: the camera's hand nearer the sensors' stick base reaches it (the stick is the sensors', in the world)
+    let stickHand = 'R';
     if (p.base) {
       const b = p.base.clone().applyMatrix4(bodyInv);
       if (hR.distanceTo(b) <= hL.distanceTo(b)) { hR = b; eR = elbowFor(sR, b, V(-.2, -1, .6)); }
-      else { hL = b; eL = elbowFor(sL, b, V(-.2, -1, -.6)); }
+      else { hL = b; eL = elbowFor(sL, b, V(-.2, -1, -.6)); stickHand = 'L'; }
     }
     setLimb(armU, sR, eR); setLimb(armF, eR, hR); elbow.position.copy(eR); hand.position.copy(hR);
     setLimb(offU, sL, eL); setLimb(offF, eL, hL); offE.position.copy(eL); offH.position.copy(hL);
@@ -390,7 +467,7 @@ function makeAvatar(slot) {
     // head: the nose against the ears
     const hf = loc(0).sub(loc(7).add(loc(8)).multiplyScalar(.5));
     headG.rotation.set(0, Math.max(-1.3, Math.min(1.3, Math.atan2(-hf.z, hf.x))), Math.max(-.9, Math.min(.9, Math.atan2(hf.y, Math.hypot(hf.x, hf.z)))), 'YZX');
-    fig?.({ sR, eR, hR, sL, eL, hL, legs: legs.map(l => l.p), headQ: headG.quaternion });
+    fig?.({ sR, eR, hR, sL, eL, hL, legs: legs.map(l => l.p), headQ: headG.quaternion, time: st.time, down: st.ko, stick: stickIn(p, bodyInv, stickHand, dt) });
     finish(p, p.base, p.tip);
     facing.copy(fs);
     const head = loc(0).applyMatrix4(bodyM);
@@ -400,11 +477,12 @@ function makeAvatar(slot) {
 
 
   return {
-    root, world, slot,
+    root, world, slot, setStick,
     update(dt, p) {
       const vis = !!p?.body;
       root.visible = vis && !p.hideBody; world.visible = vis; // hideBody: the real skeleton from the camera is drawn instead
       if (!vis) { smSeen = false; st.tall = null; st.cap = []; return null; } // the next one seen starts standing
+      st.ko += ((p.hp ?? 100) <= 0 || p.lost ? 1 : -1) * dt * 2; st.ko = Math.max(0, Math.min(1, st.ko)); // lost: down in the same kneel as a crouch
       if (p.skel && POSE.show) return poseUpdate(dt, p);
       smSeen = false;
       if (p.online !== false) st.time += dt; // offline: no idle breathing / sway, it stands still
@@ -429,11 +507,9 @@ function makeAvatar(slot) {
       st.last = pos;
       st.phase += dt * (2 + 6 * Math.min(st.speed, 1.5));
       const walk = Math.min(1, st.speed / .6);
-      st.ko += ((p.hp ?? 100) <= 0 ? 1 : -1) * dt * 2; st.ko = Math.max(0, Math.min(1, st.ko));
       const bob = .012 * Math.sin(st.time * 2.1) + .02 * walk * Math.abs(Math.sin(st.phase));
       hip0.y = Math.min(hip0.y, -ch + .04 - bob + legLen(tall) * .999); // legs a little short standing: the hips sit that much lower, the feet stay down
-      const koTilt = st.ko * 1.2;
-      const M = m4(bp).multiply(new THREE.Matrix4().makeTranslation(0, bob - st.ko * .35, 0)).multiply(new THREE.Matrix4().makeRotationZ(-koTilt * .4));
+      const M = m4(bp).multiply(new THREE.Matrix4().makeTranslation(0, bob, 0));
       root.matrix.copy(M); root.matrixWorldNeedsUpdate = true;
       torso.scale.y = 1 + .02 * Math.sin(st.time * 2.1 + 1);
 
@@ -458,10 +534,10 @@ function makeAvatar(slot) {
         lg.boot.position.copy(foot).add(V(.04, -.01, 0)); lg.boot.quaternion.identity();
         lg.p = { hip, knee, foot, toe: foot.clone().add(V(.16, -.03, 0)) };
       }
-      fig?.({ sR: S, eR: E, hR: Hn, sL: so, eL: Eo, hL: ho, legs: legs.map(l => l.p), headQ: headG.quaternion, leg: legLen(tall), hip: hip0, lean });
+      fig?.({ sR: S, eR: E, hR: Hn, sL: so, eL: Eo, hL: ho, legs: legs.map(l => l.p), headQ: headG.quaternion, leg: legLen(tall), hip: hip0, lean, time: st.time, down: st.ko, stick: stickIn(p, new THREE.Matrix4().copy(M).invert(), 'R', dt) });
       finish(p, p.base, p.tip);
       facing.set(f[0], 0, f[2]).normalize();
-      hpSprite.position.set(bp.t[0], ch + .5 + .02 * Math.sin(st.time * 1.7) - st.ko * .3, bp.t[2]);
+      hpSprite.position.set(bp.t[0], Math.max(ch + .5, legLen(tall) * (2.65 - .5 * Math.max(crouch, st.ko))) + .02 * Math.sin(st.time * 1.7), bp.t[2]); // kneeling, still over the hat
       return { x: bp.t[0], z: bp.t[2], hp: (p.hp ?? 100) / (p.hpMax || 100), vis: p.online !== false ? 1 : .5 };
     },
   };
@@ -478,7 +554,7 @@ function elbowFor(a, b, pole, l1 = UPPER, l2 = FORE) {
 
 /**
  * createField(scene, opts) -> { group, background, update(dt, players), setLayoutDebug(on), rebuild(), dispose() }
- * players = { A: { body, base, tip, hp, element, charging, charge, online }, B: ... }; body = world.js pose or null.
+ * players = { A: { body, base, tip, hp, element, charging, charge, online, lost }, B: ... }; body = world.js pose or null.
  * Only `group` is added to the scene; the integrator sets scene.background = background in 3D views.
  * The arena follows the field by itself: update() notices a setField / setFloorSep (fieldSig) and rebuilds the
  * outline, posts, letters and tags inside the same group (avatars, lights and the floor material are kept).
@@ -489,15 +565,29 @@ export function createField(scene, opts = {}) {
   const uniforms = {
     uTime: { value: 0 }, uR: { value: 3 }, uX: { value: new THREE.Vector2(-2, 2) },
     uPoly: { value: Array.from({ length: MAXP }, () => new THREE.Vector2()) }, uN: { value: 4 },
-    uCA: { value: new THREE.Color(TEAM.A) }, uCB: { value: new THREE.Color(TEAM.B) },
+    uCA: { value: new THREE.Color().setHex(TEAM.A, THREE.LinearSRGBColorSpace) }, uCB: { value: new THREE.Color().setHex(TEAM.B, THREE.LinearSRGBColorSpace) }, // the shader writes display colours: unconverted, or they come out darker than the HP bars
     uSA: { value: new THREE.Vector2() }, uSB: { value: new THREE.Vector2() },
     uP: { value: [new THREE.Vector4(), new THREE.Vector4()] },
+    uRock: { value: 0 }, uHpOnly: { value: 0 }, uBodySun: { value: V(0, 1, 1).normalize() },
+    tN: { value: null }, tG: { value: null }, tSh: { value: null }, uSun: { value: V(0, 1, 0) }, uExt: { value: 64 }, // the canyon's, set when it is built
+    cN: { value: null }, cSh: { value: null }, cG: { value: null }, cSun: { value: V(0, 1, 0) }, cExt: { value: 64 }, // the courtyard's
+  };
+  // The looks behind the arena. Each is built the first time it is shown (they bake textures and lights), and the floor shares its ground's uniforms.
+  const LOOKS = { rock: { make: createBackdrop, id: 1, shared: ['tN', 'tG', 'tSh', 'uSun', 'uExt'], ground: 0xb87a52 }, court: { make: createCourtyard, id: 2, shared: ['cN', 'cSh', 'cG', 'cSun', 'cExt'], ground: 0x6f9a45 } };
+  const built = {}; let activeLook = null, fieldR = 0;
+  const lookOf = name => {
+    if (!built[name]) {
+      const b = built[name] = LOOKS[name].make();
+      b.fit(fieldR); for (const k of LOOKS[name].shared) uniforms[k] = b.uniforms[k];
+      group.add(b.group);
+    }
+    return built[name];
   };
   const floor = makeFloor(uniforms);
   const debug = new THREE.Group(); debug.visible = false;
   debug.add(new THREE.AxesHelper(.6));
   group.add(floor, debug);
-  let arena = null, debugArena = null, sig = NaN;
+  let arena = null, debugArena = null, tags = null, letters = [], sig = NaN, showTags = false;
   function rebuild() {
     sig = fieldSig();
     const P = W.FIELD.poly.length > MAXP ? W.FIELD.poly.slice(0, MAXP) : W.FIELD.poly, e = fieldExtent(P);
@@ -505,17 +595,20 @@ export function createField(scene, opts = {}) {
     uniforms.uR.value = e.R; uniforms.uX.value.set(e.minX, e.maxX);
     uniforms.uSA.value.set(W.START.A.pos[0], W.START.A.pos[2]); uniforms.uSB.value.set(W.START.B.pos[0], W.START.B.pos[2]);
     floor.scale.set(2 * (e.R + 6), 2 * (e.R + 6), 1);
+    fieldR = e.R; for (const b of Object.values(built)) b.fit(e.R);
     if (arena) { group.remove(arena); disposeTree(arena); debug.remove(debugArena); disposeTree(debugArena); }
     arena = new THREE.Group(); debugArena = new THREE.Group();
-    arena.add(floorText('A', css(TEAM.A), W.START.A.pos[0], W.START.A.pos[2] + .66), floorText('B', css(TEAM.B), W.START.B.pos[0], W.START.B.pos[2] + .66));
-    arena.add(makeTags(debugArena));
+    letters = [floorText('A', W.START.A.pos[0], W.START.A.pos[2] + .66), floorText('B', W.START.B.pos[0], W.START.B.pos[2] + .66)];
+    arena.add(...letters);
+    tags = makeTags(debugArena); tags.visible = showTags; arena.add(tags);
     for (const [t, x, z, c] of [['+x', e.maxX + .35, 0, '#ff6b6b'], ['+z', 0, e.maxZ + .35, '#6b9bff']]) { const l = label(t, c, .16); l.position.set(x, .12, z); debugArena.add(l); }
     group.add(arena); debug.add(debugArena);
   }
   rebuild();
+  fontsReady(rebuild, 'AB'); // the floor's letters
 
   // lights (only lit materials here use them; they switch off with the group)
-  group.add(new THREE.HemisphereLight(0xa8c0ff, 0x1a1622, 1.6));
+  const hemi = new THREE.HemisphereLight(0xa8c0ff, 0x1a1622, 1.6); group.add(hemi);
   const key = new THREE.DirectionalLight(0xfff2e0, 2.2); key.position.set(2, 6, 4); group.add(key, key.target);
   const rim = new THREE.DirectionalLight(0x8fb8ff, 1.4); rim.position.set(-3, 3, -5); group.add(rim, rim.target);
 
@@ -534,14 +627,40 @@ export function createField(scene, opts = {}) {
     group, background, rebuild,
     update(dt, players = {}) {
       if (fieldSig() !== sig) rebuild();
-      uniforms.uTime.value += dt;
+      uniforms.uTime.value += dt; if (activeLook) built[activeLook].update(dt);
       ['A', 'B'].forEach((s, i) => {
         const r = avatars[s].update(dt, players[s]);
         uniforms.uP.value[i].set(r?.x ?? 0, r?.z ?? 0, r?.hp ?? 0, r ? r.vis : 0);
       });
     },
+    /** slot's stick drawn as the scanned model m (stickscan.js), or the plain rod with null */
+    setStick(slot, m) { avatars[slot]?.setStick(m); },
     setLayoutDebug(on) { debug.visible = on; for (const a of Object.values(avatars)) a.ax.visible = on; },
-    dispose() { scene.remove(group); disposeTree(group); background.dispose(); },
+    /** For a darkened background (effects.js), in this order: 'back' the look, floor and letters; 'front' the avatars, their HP bars and HP arcs; null all of it. */
+    setPass(pass) {
+      for (const a of Object.values(avatars)) {
+        if (pass === 'back') { a.shown = [a.root.visible, a.world.visible]; a.root.visible = a.world.visible = false; } // update() decides who is shown: only hide them for this pass
+        else if (pass === 'front') [a.root.visible, a.world.visible] = a.shown;
+      }
+      if (arena) arena.visible = pass !== 'front';
+      if (activeLook) built[activeLook].group.visible = pass !== 'front';
+      uniforms.uHpOnly.value = pass === 'front' ? 1 : 0;
+    },
+    /** name: 'court' (courtyard.js), 'rock' (backdrop.js), anything else the plain dark arena. The tag boards stand in the plain arena, elsewhere only with `debug`. */
+    setLook(name, debug = false) {
+      const look = LOOKS[name], rock = !!look, active = look ? lookOf(name) : null;
+      activeLook = look ? name : null;
+      for (const [k, b] of Object.entries(built)) b.group.visible = k === name;
+      uniforms.uRock.value = look ? look.id : 0;
+      if (active) uniforms.uBodySun.value.copy(active.sun);
+      // in the canyon the avatars stand in the same sun: from its direction, blue from above, the bright sand from below
+      hemi.color.set(rock ? 0xbcd8ff : 0xa8c0ff); hemi.groundColor.set(rock ? look.ground : 0x1a1622); hemi.intensity = rock ? 1.5 : 1.6;
+      if (rock) key.position.copy(active.sun).multiplyScalar(10); else key.position.set(2, 6, 4);
+      key.intensity = rock ? 3.2 : 2.2;
+      showTags = !rock || debug; if (tags) tags.visible = showTags;
+      for (const l of letters) l.material.opacity = rock ? .95 : .55; // the gravel is busier than the plain floor
+    },
+    dispose() { scene.remove(group); disposeTree(group); for (const b of Object.values(built)) b.dispose(); background.dispose(); },
   };
 }
 
@@ -554,6 +673,7 @@ export function createField(scene, opts = {}) {
 export function createMinimap(canvas) {
   const g = canvas.getContext('2d'), bg = document.createElement('canvas'), b = bg.getContext('2d');
   let key = '', sig = NaN, k = 1, ox = 0, oz = 0, u = 1;
+  fontsReady(() => { key = ''; }, 'ID0123AB');
   const P = (x, z) => [ox + x * k, oz + z * k];
   function drawStatic(w, h) {
     bg.width = w; bg.height = h; sig = fieldSig(); key = w + 'x' + h;
@@ -583,7 +703,7 @@ export function createMinimap(canvas) {
     for (const s of ['A', 'B']) { b.strokeStyle = css(TEAM[s]); b.globalAlpha = .55; b.lineWidth = 1 * u; b.beginPath(); b.arc(...P(W.START[s].pos[0], W.START[s].pos[2]), .32 * k, 0, 7); b.stroke(); b.globalAlpha = 1; }
     // tags: floor sheets as small turned squares with a tick on the top edge (tag +y), standing ones as a bar along
     // the tag's x axis; id outside, away from the centre
-    b.font = `700 ${11 * u}px system-ui, sans-serif`; b.textAlign = 'center'; b.textBaseline = 'middle';
+    b.font = `italic 800 ${12 * u}px ${GAME_FONT}`; b.textAlign = 'center'; b.textBaseline = 'middle';
     for (const id of ids) {
       const tp = W.worldTagPose(id), t = W.TAGS[id], ax = [tp.R[0], tp.R[6]], ay = [tp.R[1], tp.R[7]], cx = tp.t[0], cz = tp.t[2];
       if (t.floor) {
@@ -604,7 +724,7 @@ export function createMinimap(canvas) {
       const w = canvas.width, h = canvas.height;
       if (w !== bg.width || h !== bg.height || fieldSig() !== sig || !key) drawStatic(w, h);
       g.clearRect(0, 0, w, h); g.drawImage(bg, 0, 0);
-      g.font = `900 ${12 * u}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = `italic 800 ${13 * u}px ${GAME_FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
       // shots
       for (const sh of shots) {
         const [x, y] = P(sh.pos.x, sh.pos.z), c = { fire: '#ffb05a', water: '#4f95ff', wind: '#e6fbf8' }[sh.element] ?? '#bfe6ff';

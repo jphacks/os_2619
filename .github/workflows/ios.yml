@@ -1,0 +1,80 @@
+# Builds product/ios on a GitHub-hosted Mac (no Mac needed locally).
+#  - every push: compile check (no signing)
+#  - "Run workflow" with testflight=true, or a push whose last commit message contains [testflight]: archive, sign (App Store Connect API key, automatic signing) and upload a new build to TestFlight
+# Secrets for the TestFlight job: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 (base64 of AuthKey_XXXX.p8), TEAM_ID
+name: ios
+on:
+  workflow_dispatch:
+    inputs:
+      testflight:
+        description: Upload to TestFlight
+        type: boolean
+        default: false
+  push:
+
+defaults:
+  run:
+    working-directory: product/ios
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: ./scripts/fetch-opencv.sh
+      - run: xcodegen generate
+      - name: Compile (no signing)
+        run: |
+          set -o pipefail
+          xcodebuild -project SensorLink.xcodeproj -scheme SensorLink -sdk iphoneos -configuration Release \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tee build.log | grep -E "error:|warning: unre|BUILD " || true
+          grep -q "BUILD SUCCEEDED" build.log
+      - name: Full log on failure
+        if: failure()
+        run: grep -n -B2 -A6 "error:" build.log | head -200
+
+  testflight:
+    # Run workflow with testflight=true, or (works from any branch, no need for the file on main) a pushed commit whose message has the tag below
+    if: ${{ inputs.testflight || contains(github.event.head_commit.message, '[testflight]') }}
+    needs: build
+    runs-on: macos-26
+    env:
+      TEAM_ID: ${{ secrets.TEAM_ID }}
+      KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -version
+      - run: brew install xcodegen
+      - run: ./scripts/fetch-opencv.sh
+      - run: DEVELOPMENT_TEAM="$TEAM_ID" xcodegen generate
+      - name: Check secrets
+        run: |
+          missing=0
+          for v in TEAM_ID KEY_ID ISSUER_ID; do [ -n "${!v}" ] || { echo "::error::secret for $v is empty (TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID in Settings > Secrets > Actions)"; missing=1; }; done
+          [ -n "${{ secrets.ASC_KEY_P8_BASE64 }}" ] || { echo "::error::secret ASC_KEY_P8_BASE64 is empty"; missing=1; }
+          exit $missing
+      - name: API key
+        run: |
+          mkdir -p ~/private_keys
+          echo "${{ secrets.ASC_KEY_P8_BASE64 }}" | base64 --decode > ~/private_keys/AuthKey_${KEY_ID}.p8
+      - name: Build number
+        # App Store Connect wants every upload of a version to have a higher build number than the last. This repo's run_number
+        # restarts at 1 (the old fullstick_ios repo had its own), so use the UTC time: always higher than anything before.
+        run: echo "BUILD_NUMBER=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_ENV"
+      - name: Archive
+        run: |
+          set -o pipefail
+          xcodebuild archive -project SensorLink.xcodeproj -scheme SensorLink -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath build/SensorLink.xcarchive \
+            -allowProvisioningUpdates -authenticationKeyPath ~/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" 2>&1 | tee archive.log | grep -E "error:|ARCHIVE " || true
+          grep -q "ARCHIVE SUCCEEDED" archive.log
+      - name: Export and upload to TestFlight
+        run: |
+          sed -i '' "s/TEAM_ID/$TEAM_ID/" ExportOptions.plist
+          xcodebuild -exportArchive -archivePath build/SensorLink.xcarchive -exportOptionsPlist ExportOptions.plist \
+            -allowProvisioningUpdates -authenticationKeyPath ~/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID"

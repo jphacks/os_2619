@@ -14,6 +14,7 @@ import { createFireEffects } from './fire-effects.js';
 import { createThunderEffects } from './thunder-effects.js';
 import { createChargeEffects } from './charge-effects.js';
 import { createWaterWindLayer } from './fx-ww-layer.js';
+import { createHitDim } from './hit-dim.js';
 
 const TAU = Math.PI * 2;
 const K = { FLAME: 0, SMOKE: 1, SPARK: 2, GLOW: 3, EMBER: 4, DROP: 5, LEAF: 6 };            // particle kinds
@@ -957,6 +958,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
     transparent: true, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
     blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
   });
+  const hitDim = createHitDim(), dimMat = passMat('uniform float uA; void main() { gl_FragColor = vec4(0., 0., 0., uA); }', { uA: { value: 0 } }, { transparent: true });
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2)), quadScene = new THREE.Scene(), quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   quad.frustumCulled = false; quadScene.add(quad);
   const pass = (mat, target) => { quad.material = mat; renderer.setRenderTarget(target); renderer.render(quadScene, quadCam); };
@@ -1017,19 +1019,21 @@ export function createFx(renderer, scene, camera, opts = {}) {
       shots.set(id, { id, el: element, pos: pos.clone(), prev: pos.clone(), from: pos.clone(), dir: dir.clone().normalize(), power, big, tier: opt.tier ?? null, scale: opt.scale ?? 1, age: 0, travel: 0, acc: {}, regen: 0, seed: R(),
         bolts: Array.from({ length: 6 }, () => new Bolt(96)), st: style });
       style.start?.(shots.get(id));
+      if (opt.tier === 'l') hitDim.shot(id, pos);
       return id;
     },
-    moveShot(id, pos) { const s = shots.get(id); if (!s) return; s.pos.copy(pos); s.st.move?.(s, pos); },
+    moveShot(id, pos) { const s = shots.get(id); if (!s) return; s.pos.copy(pos); s.st.move?.(s, pos); hitDim.move(id, pos); },
     /** reason: 'hit' | 'floor' | 'timeout' (game.js); a style may leave something behind (a pillar of fire where it landed). */
     endShot(id, reason = 'timeout') {
       const s = shots.get(id); if (!s) return;
-      shots.delete(id);
+      shots.delete(id); hitDim.end(id);
       (s.st.end ?? classicEnd)(s, reason);
     },
     /** opt: { tier } */
     /** opt.target: the struck player's chest. Thunder lands on it in plan (x, z), keeping the hit's height, whatever the style. */
     hit(element, pos, power = .5, opt = {}) {
       if (element === 'thunder' && opt.target) pos = pos.clone().set(opt.target.x, pos.y, opt.target.z);
+      if (opt.tier === 'l') hitDim.hit();
       (style.hit ?? classicHit)(element, pos, power, opt);
     },
     /** Adds a style: make(kit) -> handlers (see above). */
@@ -1068,6 +1072,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
     controlThunderPreview(state) { thunder.previewControl(state); },
     step(dt) {
       dt = Math.min(Math.max(dt, 0), .1); time += dt;
+      hitDim.step(dt);
       nS = 0; nG = 0; ww.begin(time);
       for (const [k, a] of auras) { if (time - a.seen > .15) { auras.delete(k); continue; } (style.aura ?? classic.aura)(a, dt); }
       for (const [k, g] of guards) { if (time - g.seen > .15) { guards.delete(k); continue; } (style.guard ?? guardFx)(g, dt); }
@@ -1089,13 +1094,24 @@ export function createFx(renderer, scene, camera, opts = {}) {
       thunder.step(dt);
       charging.step(dt);
     },
-    render() {
+    /** setPass('back' | 'front' | null) (optional): shows the scene's background / what stands in front of it / all of it. Given, the 大 shot's darkening is drawn between the two. */
+    render(setPass = null) {
       renderer.getDrawingBufferSize(dbs);
       if (dbs.x !== W || dbs.y !== H) resizeTargets(dbs.x, dbs.y);
       readTimers(); adapt();
       const ac = renderer.autoClear, rt0 = renderer.getRenderTarget(), ca = renderer.getClearAlpha(); renderer.getClearColor(cc);
       renderer.setRenderTarget(null); renderer.autoClear = true;
-      timed('scene', () => renderer.render(scene, camera));
+      timed('scene', () => {
+        const dim = setPass ? hitDim.level : 0;
+        if (!dim) { renderer.render(scene, camera); return; }
+        // the depth stays through all three, so a rock still hides a player behind it
+        const sky = scene.background;
+        setPass('back'); renderer.render(scene, camera);
+        renderer.autoClear = false;
+        dimMat.uniforms.uA.value = dim; pass(dimMat, null);
+        scene.background = null; setPass('front'); renderer.render(scene, camera);
+        scene.background = sky; setPass(null);
+      });
       // nothing alive: skip the effect layer, bloom and composite (setup, between moves)
       if (!nS && !nG && time >= pAlive && !fire.active && !thunder.active && !charging.active && !ww.active) { renderer.autoClear = ac; renderer.setRenderTarget(rt0); return; }
       timed('fx', fxPasses);
@@ -1106,7 +1122,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
     /** { fxPixels, fxPixelsMin, fxBudgetMs, adaptive }: fxPixels also resets the adaptive size to it. */
     setQuality(q) { Object.assign(opts, q); if (q.fxPixels) { px = q.fxPixels; if (W) resizeTargets(W, H); } },
     stats() { return { sprites: nS, segments: nG, particleCap: CAP, shots: shots.size, live: live.length, auras: auras.size, charges: charges.size,
-      fire: fire.stats(), thunder: thunder.stats(), charging: charging.stats(), ww: ww.stats(), fxPixels: Math.round(fxRT.width * fxRT.height), gpuSceneMs: +gpu.scene.toFixed(2), gpuFxMs: +gpu.fx.toFixed(2), timer: !!tq }; },
+      backdropDim: hitDim.level, fire: fire.stats(), thunder: thunder.stats(), charging: charging.stats(), ww: ww.stats(), fxPixels: Math.round(fxRT.width * fxRT.height), gpuSceneMs: +gpu.scene.toFixed(2), gpuFxMs: +gpu.fx.toFixed(2), timer: !!tq }; },
     dispose() {
       fire.dispose();
       thunder.dispose();
@@ -1114,7 +1130,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
       ww.dispose();
       for (const t of [fxRT, ...down, ...up]) t.dispose();
       for (const m of [P, SP, SG]) { m.g.dispose(); m.mesh.material.dispose(); }
-      for (const m of [downMat, upMat, compMat]) m.dispose();
+      for (const m of [downMat, upMat, compMat, dimMat]) m.dispose();
       for (const { q } of queries.splice(0)) gl.deleteQuery(q);
       quad.geometry.dispose(); noise.dispose();
     },

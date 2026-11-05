@@ -1,5 +1,7 @@
 // Pure logic, no server: the sensing team's action detectors and phonealign.js fed by the fake world.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import { createActions, eulerRot } from './public/actions.js';
 import { createPhoneAlign } from './public/phonealign.js';
 import { createSim, due, DT } from './fake-world.mjs';
@@ -36,9 +38,76 @@ import { STICK } from './public/world.js';
   run(1, i => ({ euler: [0, -50, 0], gyro: [0, i % 16 < 8 ? 200 : -200, 0] }));
   assert.ok(ev.some(e => e.name === 'Charge'), 'a shake did not start a charge');
   ev.length = 0;
-  run(1, i => ({ euler: [0, -50, 0], gyro: [0, i % 16 < 8 ? 45 : -45, 0] }));
+  run(1, i => ({ euler: [0, -50, 0], gyro: [0, i % 16 < 8 ? 100 : -100, 0] }));
   assert.ok(ev.filter(e => e.name === 'Charge').length >= 3, 'a smaller shake did not keep the charge');
   console.log('charge ok: tremor does not start it, a shake does, a smaller shake keeps it');
+}
+
+// charge on the move: a shake on top of the body's turning still counts; footsteps alone do not start a charge
+{
+  const A = createActions(), ev = [];
+  let t = 700, x = 0;
+  const shake = (i, a) => (i % 16 < 8 ? a : -a), step = i => 45 * Math.sin(2 * Math.PI * 2 * i / 100); // 2 steps a second
+  const run = (dur, f, speed = 0) => {
+    for (let i = 0; i < dur * 100; i++, t += 0.01) {
+      x += speed * .01;
+      ev.push(...A.ingest({ type: 'imu', slot: 'A', t, ...f(i) }, [1, 0, 0]));
+      ev.push(...A.ingest({ type: 'ar', slot: 'A', t, tracking: 'TRACKING', wp: [x, 1.3, 0], wq: [0, 0, 0, 1] }));
+    }
+  };
+  const charges = () => ev.filter(e => e.name === 'Charge').length;
+  run(1, () => ({ euler: [0, -50, 0], gyro: [0, 0, 0] }));
+  run(1.5, i => ({ euler: [0, -50, 0], gyro: [0, 150 + shake(i, 200), 0] }), 1); // walking and turning at 150°/s: the raw gyro is 350 / -50
+  assert.ok(charges() > 0, 'a shake while turning did not start a charge');
+  assert.ok(ev.filter(e => e.name === 'Dodge').length === 0, 'walking at 1 m/s dodged');
+
+  run(1, i => ({ euler: [0, -50, 0], gyro: [0, 150 + shake(i, 100), 0] }), 1); // a smaller shake keeps it on the move
+  ev.length = 0; run(.6, i => ({ euler: [0, -50, 0], gyro: [0, shake(i, 100), 0] }), 1);
+  assert.ok(charges() > 0, 'a shake on the move did not keep the charge');
+
+  run(2, () => ({ euler: [0, -50, 0], gyro: [0, 0, 0] })); // stops, and the charge is over
+  run(2.5, () => ({ euler: [0, -50, 0], gyro: [0, 0, 0] }));
+  ev.length = 0; run(3, i => ({ euler: [0, -50, 0], gyro: [step(i), step(i + 12), 0] }), 1);
+  assert.equal(charges(), 0, 'footsteps started a charge');
+
+  console.log('charge on the move ok: a shake counts while turning, footsteps do not');
+
+  // walking does not raise the bar: a smaller shake keeps the charge through a step and a long walk; and a running charge survives the stick dipping to 40°
+  const C = createActions(), evC = []; let tc = 1100, xc = 0;
+  const runC = (dur, f, speed = 0) => { for (let i = 0; i < dur * 100; i++, tc += 0.01) { xc += speed * .01; evC.push(...C.ingest({ type: 'imu', slot: 'A', t: tc, ...f(i) }, [1, 0, 0])); evC.push(...C.ingest({ type: 'ar', slot: 'A', t: tc, tracking: 'TRACKING', wp: [xc, 1.3, 0], wq: [0, 0, 0, 1] })); } };
+  const small = i => ({ euler: [0, -50, 0], gyro: [0, i % 16 < 8 ? 100 : -100, 0] }), chargesC = () => evC.filter(e => e.name === 'Charge').length;
+  runC(1, i => ({ euler: [0, -40, 0], gyro: [0, i % 16 < 8 ? 200 : -200, 0] }));
+  assert.equal(chargesC(), 0, 'a shake at 40° started a charge');
+  runC(1, i => ({ euler: [0, -50, 0], gyro: [0, i % 16 < 8 ? 200 : -200, 0] }));
+  assert.ok(chargesC() > 0, 'no charge to keep');
+  evC.length = 0; runC(.2, small, 1); evC.length = 0; runC(.6, small, 1);
+  assert.ok(chargesC() >= 2, 'one step stopped the charge');
+  evC.length = 0; runC(2.5, small, 1); evC.length = 0; runC(.6, small, 1);
+  assert.ok(chargesC() >= 2, 'walking on stopped the charge');
+  evC.length = 0; runC(.8, i => ({ euler: [0, -40, 0], gyro: [0, i % 16 < 8 ? 100 : -100, 0] }));
+  assert.ok(chargesC() >= 2, 'the stick dipping to 40° stopped the charge');
+  console.log('charge through a step ok: walking does not raise the bar, a dip to 40° does not stop it');
+}
+
+// the charge on real motion: one player's recordings (test-data/, 20 s each, the connection screen's sensor recording: gyro and euler of the stick IMU)
+{
+  const load = l => gunzipSync(readFileSync(new URL(`./test-data/charge-${l}.jsonl.gz`, import.meta.url))).toString().trim().split('\n').map(x => ({ type: 'imu', slot: 'A', ...JSON.parse(x) }));
+  const play = (A, L, shift = 0) => L.flatMap(k => A.ingest({ ...k, t: k.t + shift }, [0, 1, 0])).filter(e => e.name === 'Charge').map(e => e.t);
+  const walk = load('walk'), moving = load('walk-circle'), still = load('still-circle');
+  assert.equal(play(createActions(), walk).length, 0, 'walking without circling charged');
+  for (const [name, L] of [['walking and circling', moving], ['circling on the spot', still]]) {
+    const t = play(createActions(), L);
+    assert.ok(t[0] < 2, `${name}: first Charge at ${t[0]} s`);
+    const gap = Math.max(...t.slice(1).map((v, i) => v - t[i]));
+    assert.ok(gap < 1.5, `${name}: a ${gap} s gap would drop the charge (game.js chargeHold)`);
+  }
+  for (let s = 0; s < 18; s += 2) { // circling, then walking from various moments: the Charge events end soon
+    const A = createActions(), part = walk.filter(k => k.t >= s), end = still.at(-1).t;
+    play(A, still);
+    const t = play(A, part, end + .01 - part[0].t);
+    assert.ok(!t.length || t.at(-1) - end < 1.2, `walking from ${s} s after circling: Charge ${t.at(-1) - end} s on`);
+  }
+  console.log('charge on recordings ok: walking does not charge, circling starts within 2 s and does not drop');
 }
 
 // phonealign: 20 s of the fake world (raw ARCore frames with their own yaw / origin) -> chest positions in the field world

@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import https from 'node:https';
 import WebSocket from 'ws';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 process.env.PORT = '18099';
 const { server, ready } = await import('./server.mjs');
 await ready;
@@ -40,6 +40,41 @@ assert.ok(!dash.inbox.some(k => Buffer.isBuffer(k)));
 a.ws.send(JSON.stringify({ type: 'ping', t0: 5 }));
 const pong = await wait(() => a.inbox.find(k => k.type === 'pong'));
 assert.equal(pong.t0, 5); assert.ok(Math.abs(pong.ts - Date.now() / 1000) < 1);
+
+// a hit: the dashboard's flash goes to that slot's phone only; a phone cannot flash another phone
+dash.ws.send(JSON.stringify({ type: 'flash', slot: 'B', ms: 250 }));
+assert.equal((await wait(() => b.inbox.find(k => k.type === 'flash'))).ms, 250);
+a.ws.send(JSON.stringify({ type: 'flash', slot: 'B', ms: 999 }));
+dash.ws.send(JSON.stringify({ type: 'flash', slot: 'B', ms: 99999 }));
+assert.equal((await wait(() => b.inbox.find(k => k.type === 'flash' && k.ms !== 250))).ms, 2000);
+assert.ok(!a.inbox.some(k => k.type === 'flash')); assert.ok(!dash.inbox.some(k => k.type === 'flash'));
+// the same for the vibration, and only the known kinds pass
+dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'charge' }));
+dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'nope' }));
+a.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'off' }));
+dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'win' }));
+await wait(() => b.inbox.some(k => k.type === 'vibrate' && k.kind === 'win'));
+assert.deepEqual(b.inbox.filter(k => k.type === 'vibrate').map(k => k.kind), ['charge', 'win']);
+assert.ok(!a.inbox.some(k => k.type === 'vibrate'));
+
+// the sensor recording: only a dashboard starts it, only known labels, only imu and ar go in the file
+a.ws.send(JSON.stringify({ type: 'record', label: 'walk', sec: 5 }));
+dash.ws.send(JSON.stringify({ type: 'record', label: '../../evil', sec: 5 }));
+await new Promise(r => setTimeout(r, 100));
+assert.ok(!dash.inbox.some(k => k.type === 'recording'));
+dash.ws.send(JSON.stringify({ type: 'record', label: 'walk', sec: 5 }));
+assert.equal((await wait(() => dash.inbox.find(k => k.type === 'recording' && k.on))).label, 'walk');
+b.ws.send(JSON.stringify({ type: 'imu', t: 77, euler: [1, 2, 3], gyro: [0, 0, 0] }));
+b.ws.send(JSON.stringify({ type: 'tags', t: 78, tags: [] }));
+b.ws.send(JSON.stringify({ type: 'ar', t: 79, tracking: 'TRACKING', wp: [0, 1, 0] }));
+await wait(() => dash.inbox.some(k => k.type === 'ar' && k.t === 79));
+dash.ws.send(JSON.stringify({ type: 'record' }));
+const recDone = await wait(() => dash.inbox.find(k => k.type === 'recording' && !k.on));
+assert.equal(recDone.n, 2);
+const recFile = new URL('./recordings/' + recDone.file, import.meta.url);
+const recLines = readFileSync(recFile, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+assert.deepEqual(recLines.map(l => [l.type, l.t, l.slot]), [['imu', 77, 'B'], ['ar', 79, 'B']]); assert.ok(recLines[0].rx > 0);
+rmSync(recFile);
 
 const a2 = await open({ type: 'hello', role: 'phone', id: 'p1', name: 'one' }); // same id: keeps slot A
 assert.equal((await wait(() => a2.inbox.find(k => k.type === 'welcome'))).slot, 'A');

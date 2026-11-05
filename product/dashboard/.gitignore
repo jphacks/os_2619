@@ -8,5 +8,8 @@ vendor/cdn/mp-models/
 settings.json
 # the game screen numbers saved with 3 ゲーム > パラメータを保存 (per PC)
 rules.json
+# sensor recordings made on the connection screen (server.mjs)
+recordings/
+sticks.json
 # scanned sticks (sticks.html): records and photos, per PC
 data/

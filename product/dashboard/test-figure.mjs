@@ -11,10 +11,10 @@ register('data:text/javascript,' + encodeURIComponent(`export async function res
 const ctx = new Proxy(function () {}, { get: (t, k) => k === 'canvas' ? {} : k === 'width' ? 10 : k === 'measureText' ? () => ({ width: 10 }) : ctx, apply: () => ctx, set: () => true });
 globalThis.document = { createElement: () => ({ width: 0, height: 0, getContext: () => ctx, style: {} }) };
 globalThis.window = globalThis; globalThis.location = { search: '' };
-const glb = readFileSync(new URL('./public/assets/models/Xbot.glb', import.meta.url));
-globalThis.fetch = async () => new Response(glb); // GLTFLoader reads the model through fetch
+const glb = n => readFileSync(new URL('./public/assets/models/' + n, import.meta.url));
+globalThis.fetch = async u => new Response(glb(String(u.url ?? u).split('/').pop())); // GLTFLoader reads the models through fetch
 globalThis.ProgressEvent = class extends Event { constructor(t, o) { super(t); Object.assign(this, o); } };
-const THREE = await import('three'), { createField, POSE } = await import('./public/field3d.js'), W = await import('./public/world.js');
+const THREE = await import('three'), { createField, POSE, TEAM, clothColor } = await import('./public/field3d.js'), W = await import('./public/world.js');
 POSE.show = true; // the pose code is tested even while the dashboard has it switched off
 const scene = new THREE.Scene(), field = createField(scene);
 const joints = Array.from({ length: 33 }, () => [0, 1, 0]), vis = Array(33).fill(1);
@@ -66,4 +66,72 @@ assert.ok(after.bend < 12, 'a one-frame AR jump leaves the stance alone');
 POSE.show = false; player.skel = { joints, vis };
 const off = pose(.9);
 assert.ok(off.bend < 12 && Math.abs(off.head - after.head) < .05, 'POSE.show off: always standing');
-console.log('figure ok: limbs follow the skeleton, sides right, falls back without a pose, crouches without shrinking, standing height per player, upright when switched off');
+// the wizard over the rig: holding the stick, both hands on it for a charge, one knee up when low, in the player's colour
+POSE.show = true; player.skel = null; player.body = null; field.update(.016, { A: player });
+const wiz = scene.getObjectByName('wizard').userData.pose, hands = () => wiz.hands.map(h => h.clone());
+const standWiz = pose(1.35); scene.updateMatrixWorld(true);
+const stickBase = () => scene.getObjectByName('wizard').parent.worldToLocal(player.base.clone());
+assert.ok(hands()[0].distanceTo(stickBase()) < .01, 'the right hand on the stick');
+assert.ok(hands()[1].distanceTo(stickBase()) > .3, 'the left hand free while not charging');
+player.charging = true; player.charge = .5; pose(1.35);
+assert.ok(hands()[0].distanceTo(stickBase()) < .01 && hands()[1].distanceTo(stickBase()) < .25, 'both hands on the stick while charging');
+player.charging = false; pose(1.35);
+assert.ok(hands()[1].distanceTo(stickBase()) > .3, 'and the left hand lets go after it');
+assert.ok(wiz.low < .05, 'standing: not kneeling');
+pose(.8);
+const [kneeL, kneeR] = wiz.knees, [footL, footR] = wiz.feet;
+assert.ok(wiz.low > .9, 'a low chest kneels, got ' + wiz.low);
+assert.ok(kneeL.y > kneeR.y + .03 * wiz.k, 'left knee up, right knee down, got ' + (kneeL.y - kneeR.y) / wiz.k);
+assert.ok(footL.x > footR.x + .2 * wiz.k, 'left foot in front, right behind');
+// the loser kneels in the same pose as a crouch, standing height or not, by HP or by the clock; the body stays upright
+{
+  const crouched = wiz.knees.map(k => k.clone()), wizRoot = scene.getObjectByName('wizard').parent;
+  pose(1.35); assert.ok(wiz.low < .05, 'up again');
+  const lose = () => { for (let i = 0; i < 40; i++) field.update(.016, { A: player }); };
+  player.hp = 0; lose();
+  assert.ok(wiz.low > .99, 'at 0 HP: kneeling');
+  assert.ok(Math.abs(new THREE.Vector3().setFromMatrixColumn(wizRoot.matrix, 1).y - 1) < 1e-6, 'upright, not toppled');
+  assert.ok(wiz.knees[0].y > wiz.knees[1].y + .03 * wiz.k && crouched.length === 2, 'the left knee up, as in a crouch');
+  player.hp = 100; lose(); assert.ok(wiz.low < .01, 'a new round stands up');
+  player.lost = true; lose(); assert.ok(wiz.low > .99, 'lost on time with HP left: kneeling');
+  player.lost = false; lose();
+}
+// the eyes: the same off the face on both sides, though the face is not symmetric
+const [eyeR, eyeL] = wiz.eyes; // x < 0 is the wizard's right
+assert.ok(eyeR.x < 0 && eyeL.x > 0 && eyeR.z > eyeL.z + .005, 'each eye sits on its own side of the uneven face, got ' + eyeR.z + ' ' + eyeL.z);
+// the cuffs: the colour changes on one line across each arm
+{
+  const group = scene.getObjectByName('wizard'), ms = group.children.filter(c => c.isSkinnedMesh), skel = ms[0].skeleton, joint = n => new THREE.Vector3().setFromMatrixPosition(skel.boneInverses[skel.bones.findIndex(b => b.name === n)].clone().invert());
+  for (const side of ['L', 'R']) {
+    const ha = joint(side + '_Hand'), ax = ha.clone().sub(joint(side + '_Forearm')).normalize();
+    for (const m of ms) {
+      const isSkin = m.material.color.getHex() === 0xf0bfa0, pos = m.geometry.attributes.position, idx = m.geometry.index, c = new THREE.Vector3(), v = new THREE.Vector3();
+      for (let i = 0; i < idx.count; i += 3) {
+        c.set(0, 0, 0); for (let k = 0; k < 3; k++) c.add(v.fromBufferAttribute(pos, idx.getX(i + k))); c.divideScalar(3).sub(ha);
+        const t = c.dot(ax), rad = c.clone().addScaledVector(ax, -t).length();
+        if (Math.abs(t) > .1 || rad > .12 || Math.abs(c.x + ha.x) < .2) continue;
+        assert.ok(isSkin ? t > .009 : t < .009, `${side} cuff: ${isSkin ? 'skin' : 'other'} at ${t}`);
+      }
+    }
+  }
+}
+const worn = scene.getObjectByName('wizard').children[0].material;
+assert.equal(worn.color.getHex(), clothColor(TEAM.A).getHex(), 'worn in the player\'s colour');
+for (const [team, hue] of [[TEAM.A, 24], [TEAM.B, 212]]) { // only the hue differs: HSV (hue, 39 %, 30 %) as displayed
+  const [r, g, b] = clothColor(team).convertLinearToSRGB().toArray(), max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  const h = (max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60;
+  assert.ok(Math.abs(h - hue) < 1 && Math.abs(d / max - .39) < .005 && Math.abs(max - .3) < .005, `clothes HSV ${h} ${d / max} ${max}`);
+}
+player.online = false; field.update(.016, { A: player });
+assert.equal(worn.color.getHex(), clothColor(TEAM.A).getHex(), 'and while offline too');
+player.online = true;
+// the one built in code (?avatar=simple, or if the model fails to load): three heads tall
+const { makeWizard } = await import('./public/wizard.js');
+{
+  const r0 = new THREE.Group(), up = makeWizard(r0, new THREE.MeshStandardMaterial()), w = r0.getObjectByName('wizard').userData.pose;
+  const foot = y => ({ foot: new THREE.Vector3(0, y, 0), toe: new THREE.Vector3(.16, y, 0) }), h = (x, y, z) => new THREE.Vector3(x, y, z);
+  up({ legs: [foot(-1.3), foot(-1.3)], hip: h(-.1, -.6, 0), leg: .71, sR: h(-.1, .07, .21), sL: h(-.1, .07, -.21), hR: h(.3, -.3, .2), hL: h(-.1, -.5, -.3), headQ: new THREE.Quaternion(), time: 0 });
+  const heads = (w.head.y - w.floor + .25 * w.k) / (.5 * w.k);
+  assert.ok(heads > 2.8 && heads < 3.2, 'three heads tall, got ' + heads);
+}
+console.log('figure ok: limbs follow the skeleton, sides right, falls back without a pose, crouches without shrinking, standing height per player, upright when switched off, the wizard holds the stick and kneels');

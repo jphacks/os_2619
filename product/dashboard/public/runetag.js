@@ -1,40 +1,43 @@
-// RuneTag-style markers for the four floor sheets (ids 0-3), the alternative to tag36h11 (world.js MARKER).
-// Plain JS (no deps): the page, the tag worker, node tests and print/make_runetags.mjs all use it. Vision.kt has the same detector.
+// RuneTags for the mahoujin (魔法陣): one big printed magic circle on the floor carrying 7 tags T0-T6 = ids 0-6, the alternative to
+// tag36h11 (world.js MARKER). Plain JS (no deps): the page, the tag worker and node tests use it. Rune.kt / Rune.swift have the same detector.
 //
-// A sheet is 250 mm square. Its marker is 18 sectors x 3 rings of black dots (dot radius = DOT x ring radius, so every ring looks
-// alike up to scale); each sector holds a non-empty subset of its 3 slots, read as a 54-bit word that names the id and the turn.
-// The middle is a magic circle drawn in thin strokes only (no filled shapes), which the detector's blob filter ignores.
-// This is our own code, in the spirit of RUNE-Tag (Bergamasco et al. 2011): the original library cannot read these sheets.
+// The print is ../../mahoujin/magic-circle-576808920-A3.pdf (a generator's A3 kit). Its tags are official RUNE-Tag (Bergamasco et al.
+// 2011) RUNE-43 markers, IDX 8, 10, 15, 23, 24, 26, 29: 43 sectors x 3 layers of black dots at 4/6, 5/6, 6/6 of 127.82 mm, dot radius =
+// layer radius / 17.8 (so every layer looks alike up to scale). Each sector holds a non-empty subset of its 3 slots. RUNE_CODES were read
+// off the kit's patch pages (pages 27-33); any two (id, turn) words differ in >= 45 of the 129 bits. Our own detector, not the library.
 //
-// Marker frame = world.js tag frame: x right, y up as you look at the sheet, metres, origin at the centre. Sector 0 is at the top,
-// sectors go clockwise as seen. The detector reports the corners of a virtual SQUARE (side RUNE.square) in OpenCV order, from a
-// homography fitted to every dot it read, so everything downstream treats a RuneTag like an AprilTag of that size.
-
+// Marker frame = world.js tag frame: x right, y up as you look at the poster, metres, origin at the tag centre. The patches are never
+// turned, so every tag's up is the poster's up. Sector 0 is on +x (as in RUNE-Tag), sectors go clockwise as seen. The detector reports
+// the corners of a virtual SQUARE (side RUNE.square) in OpenCV order, from a homography fitted to every dot it read, so everything
+// downstream treats a RuneTag like an AprilTag of that size. square = 0.8 x sheet (the Ø 280 mm patch disc), the AprilTag paper rule.
 export const RUNE = {
-  sheet: 0.25,                     // cut size, m
-  square: 0.2,                     // side of the virtual square whose corners are reported (world.js TAGS size)
-  sectors: 18,
-  rings: [0.108, 0.08, 0.05926],   // ring radii, outer first: x 1/1.35 each
-  dot: 0.085,                      // dot radius / ring radius
+  sheet: 0.28,                     // patch disc diameter: the drawn / rendered square around one tag, m
+  square: 0.224,                   // side of the virtual square whose corners are reported (world.js TAGS size before RUNE_SCALE)
+  sectors: 43,
+  rings: [0.12782, 0.12782 * 5 / 6, 0.12782 * 4 / 6], // layer radii, outer first
+  dot: 1 / 17.8,                   // dot radius / layer radius
+  circle: 0.4905,                  // tag centres lie on this circle round the mahoujin centre, T0 at 12 o'clock, then clockwise every 1/7 turn
 };
-export const RUNE_IDS = [0, 1, 2, 3];
-// per id, per sector: bit k = ring k has a dot. Random search: every ring has >= 8 dots, and any two (id, turn) words differ in >= 20 of 54 bits.
+export const RUNE_IDS = [0, 1, 2, 3, 4, 5, 6];
+// per id (T0-T6), per sector: bit k = layer k (0 outer) has a dot
 export const RUNE_CODES = [
-  [5, 1, 6, 7, 4, 5, 3, 1, 7, 4, 3, 1, 2, 5, 4, 4, 7, 7],
-  [1, 7, 6, 1, 3, 1, 4, 6, 5, 2, 4, 3, 1, 2, 4, 7, 2, 5],
-  [2, 6, 6, 4, 4, 4, 3, 2, 1, 4, 2, 3, 1, 4, 1, 5, 5, 3],
-  [1, 3, 4, 3, 3, 6, 7, 7, 2, 3, 6, 2, 3, 7, 5, 6, 7, 6],
+  [2, 7, 7, 2, 4, 2, 2, 7, 7, 6, 1, 2, 7, 5, 3, 3, 6, 6, 6, 2, 5, 6, 5, 5, 6, 3, 7, 3, 7, 6, 4, 2, 3, 3, 5, 1, 4, 3, 7, 4, 4, 1, 3],
+  [4, 3, 3, 6, 2, 6, 2, 4, 5, 5, 4, 1, 5, 4, 3, 3, 7, 7, 4, 4, 3, 2, 6, 3, 2, 2, 3, 5, 1, 5, 1, 4, 4, 3, 2, 1, 2, 5, 7, 2, 5, 6, 5],
+  [2, 2, 2, 7, 5, 7, 3, 7, 1, 6, 6, 5, 4, 6, 2, 4, 3, 4, 4, 5, 2, 3, 1, 2, 3, 2, 5, 2, 5, 6, 6, 5, 1, 4, 4, 7, 2, 5, 6, 1, 3, 2, 4],
+  [3, 6, 6, 3, 7, 3, 4, 7, 5, 1, 7, 3, 2, 3, 3, 1, 2, 1, 4, 7, 1, 7, 6, 1, 7, 4, 3, 1, 5, 1, 7, 7, 3, 1, 7, 2, 3, 5, 5, 4, 6, 2, 6],
+  [4, 1, 1, 1, 1, 1, 4, 7, 1, 3, 3, 5, 3, 6, 5, 4, 4, 7, 6, 6, 3, 7, 1, 3, 7, 7, 3, 1, 7, 3, 6, 6, 7, 4, 4, 5, 6, 3, 5, 3, 3, 1, 7],
+  [6, 1, 1, 1, 1, 1, 4, 2, 3, 1, 4, 3, 3, 5, 7, 7, 3, 3, 7, 6, 4, 5, 7, 4, 5, 6, 1, 2, 6, 1, 7, 6, 1, 7, 3, 1, 1, 2, 5, 1, 4, 6, 2],
+  [2, 2, 2, 7, 5, 7, 5, 2, 6, 7, 4, 5, 3, 1, 5, 3, 6, 5, 4, 6, 7, 2, 2, 7, 2, 7, 6, 1, 3, 7, 6, 6, 4, 3, 7, 2, 1, 5, 4, 2, 1, 4, 6],
 ];
 const S = RUNE.sectors, K = RUNE.rings.length, STEP = 2 * Math.PI / S;
 /** Centre of slot (ring k, sector j) in the marker frame. */
-export const slotPos = (k, j) => { const a = Math.PI / 2 - j * STEP, r = RUNE.rings[k]; return [r * Math.cos(a), r * Math.sin(a)]; };
+export const slotPos = (k, j) => { const a = -j * STEP, r = RUNE.rings[k]; return [r * Math.cos(a), r * Math.sin(a)]; };
 
 // ---- drawing: a list of primitives in the marker frame (m), shared by the PDF, the test renderer and the dummy camera ----
 //   { t: 'disc', c, r }   { t: 'circle', c, r, w }   { t: 'path', p: [[x, y], ...], w, closed }
 function rng(seed) { let s = seed >>> 0 || 1; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
 const rot = (p, a) => [p[0] * Math.cos(a) - p[1] * Math.sin(a), p[0] * Math.sin(a) + p[1] * Math.cos(a)];
 const add = (p, q) => [p[0] + q[0], p[1] + q[1]];
-const ring = (r, n, a0 = 0) => Array.from({ length: n }, (_, i) => [r * Math.cos(a0 + i * 2 * Math.PI / n), r * Math.sin(a0 + i * 2 * Math.PI / n)]);
 /** A futhark-like glyph: a stave plus 1-3 random strokes on a 3 x 4 grid, `h` tall, centred at `c`, its up turned to angle `a`. */
 function glyph(r, c, a, h, w) {
   const node = (i, j) => add(c, rot([(i - 1) * h / 3, (j - 1.5) * h / 3], a - Math.PI / 2));
@@ -45,59 +48,11 @@ function glyph(r, c, a, h, w) {
   }
   return out;
 }
-/** Star polygon {n/k} through radius R, first point at angle a0. */
-const star = (n, k, R, a0, w) => {
-  const pts = ring(R, n, a0), out = [], seen = new Set();
-  for (let s = 0; s < n; s++) { // {n/k} with gcd(n, k) > 1 is several polygons
-    if (seen.has(s)) continue;
-    const p = []; for (let i = s; !seen.has(i); i = (i + k) % n) { seen.add(i); p.push(pts[i]); }
-    out.push({ t: 'path', p, w, closed: true });
-  }
-  return out;
-};
-/** Seven-segment digit, h tall, centred at c (stroked, so the blob filter skips it). */
-function digit(d, c, h, w) {
-  const x = h / 4, y = h / 2, P = { a: [[-x, y], [x, y]], b: [[x, y], [x, 0]], c: [[x, 0], [x, -y]], d: [[-x, -y], [x, -y]], e: [[-x, 0], [-x, -y]], f: [[-x, y], [-x, 0]], g: [[-x, 0], [x, 0]] };
-  return [...['abcdef', 'bc', 'abged', 'abgcd'][d]].map(s => ({ t: 'path', p: P[s].map(p => add(c, p)), w }));
-}
-/** The magic circle in the middle (radius <= 47 mm, 7 mm clear of the inner dots) and the four corner seals. Different per id. */
-export function magicCircle(id) {
-  const r = rng(977 * (id + 1)), out = [], W = .00035, R = .047;
-  const [n, k] = [[6, 2], [7, 3], [8, 3], [5, 2]][id % 4];
-  const circle = (rad, w = W, c = [0, 0]) => out.push({ t: 'circle', c, r: rad, w });
-  circle(R, .0005); circle(R - .0016, .00025);
-  for (let i = 0; i < 72; i++) { const a = i * Math.PI / 36; out.push({ t: 'path', p: [rot([R - .0016, 0], a), rot([R - (i % 6 ? .0006 : .0016), 0], a)].map(p => [p[0], p[1]]), w: .0002 }); }
-  const Rg = R - .0072; circle(Rg, .0004);                                   // glyph band between Rg and R - 1.6 mm
-  for (let i = 0; i < 24; i++) { const a = Math.PI / 2 - i * Math.PI / 12; out.push(...glyph(r, rot([(Rg + R - .0016) / 2, 0], a), a, .0036, .0003)); }
-  out.push(...star(n, k, Rg, Math.PI / 2, .0004));
-  const rIn = Rg * Math.cos(Math.PI * k / n) / Math.cos(Math.PI * (k - 1) / n); // the star's inner vertices
-  for (let i = 0; i < n; i++) { // a small seal in each gap between the star's points
-    const a = Math.PI / 2 + (i + .5) * 2 * Math.PI / n, c = rot([(Rg + rIn) / 2 + .0015, 0], a);
-    const rs = Math.min(.0042, (Rg - rIn) / 2 - .0006);
-    circle(rs, .0003, c); out.push(...glyph(r, c, a, rs * 1.2, .00025));
-  }
-  const r2 = rIn * .92; circle(r2, .0004);
-  out.push(...(k > 2 ? star(n, k - 1, r2, Math.PI / 2 + Math.PI / n, .0003) : [{ t: 'path', p: ring(r2, n, Math.PI / 2 + Math.PI / n), w: .0003, closed: true }])); // a second, tighter star where n allows
-  const r3 = r2 * .5; circle(r3, .0003);
-  for (let i = 0; i < 2 * n; i++) { const a = Math.PI / 2 + i * Math.PI / n; out.push({ t: 'path', p: [rot([r3, 0], a), rot([r2 * Math.cos(Math.PI / n), 0], a)], w: .0002 }); }
-  for (const c of ring(r3 / 2, 6, Math.PI / 2)) circle(r3 / 2, .00025, c); // a six-petal rosette
-  circle(.0015, .0003);
-  // corner seals, 9.5 mm in from the cut and 20 mm clear of the outer dots; top-left carries the id, top-right an arrow to the top edge
-  const cs = .105, rs = .0105;
-  [[-cs, cs], [cs, cs], [cs, -cs], [-cs, -cs]].forEach((c, i) => {
-    circle(rs, .0004, c); circle(rs - .0019, .00025, c);
-    for (let g = 0; g < 8; g++) { const a = g * Math.PI / 4; out.push(...glyph(r, add(c, rot([rs - .00095, 0], a)), a, .0012, .0002)); }
-    if (i === 0) out.push(...digit(id, c, .009, .0007));
-    else if (i === 1) out.push({ t: 'path', p: [[0, .0045], [-.004, -.0005], [-.0015, -.0005], [-.0015, -.0045], [.0015, -.0045], [.0015, -.0005], [.004, -.0005]].map(p => add(c, p)), w: .0005, closed: true });
-    else out.push(...star(5, 2, rs - .0026, Math.PI / 2 + i * .3, .0003).map(s => ({ ...s, p: s.p.map(p => add(c, p)) })));
-  });
-  return out;
-}
-/** Everything printed inside the cut square of sheet `id`: the dots, then the magic circle. */
+/** Everything printed on patch `id`: the dots, then (art) a thick rune in the middle like the kit's (a stand-in shape, for the tests). */
 export function runePrims(id, { art = true } = {}) {
   const out = [], code = RUNE_CODES[id];
   for (let j = 0; j < S; j++) for (let k = 0; k < K; k++) if (code[j] >> k & 1) out.push({ t: 'disc', c: slotPos(k, j), r: RUNE.dot * RUNE.rings[k] });
-  return art ? out.concat(magicCircle(id)) : out;
+  return art ? out.concat(glyph(rng(977 * (id + 1)), [0, 0], Math.PI / 2, .1, .009)) : out;
 }
 /** Ink coverage (0 paper .. 1 black) of the sheet on an n x n grid, row 0 at the top edge (y = +sheet/2). */
 export function rasterPrims(prims, n) {
@@ -254,14 +209,21 @@ function detectPass(B, w, h, ids) {
       if (rs > .78 && rs < 1.28 && Math.hypot(p[0], p[1]) < 2 * RHO * 1.35) cand.push({ i, p });
     }
     if (cand.length < 5) continue;
-    cand.sort((a, b) => Math.hypot(...a.p) - Math.hypot(...b.p)); cand.length = Math.min(cand.length, 24);
+    cand.sort((a, b) => Math.hypot(...a.p) - Math.hypot(...b.p));
+    const near24 = cand.slice(0, 24);
     let best = null;
-    for (let a = 0; a < cand.length; a++) for (let b = a + 1; b < cand.length; b++) { // circle through the seed and two more
-      const P = cand[a].p, Q = cand[b].p, d = 2 * (P[0] * Q[1] - P[1] * Q[0]); if (Math.abs(d) < 1e-9) continue;
+    for (let a = 0; a < near24.length; a++) for (let b = a + 1; b < near24.length; b++) { // circle through the seed and two more
+      const P = near24[a].p, Q = near24[b].p, d = 2 * (P[0] * Q[1] - P[1] * Q[0]); if (Math.abs(d) < 1e-9) continue;
       const pp = P[0] * P[0] + P[1] * P[1], qq = Q[0] * Q[0] + Q[1] * Q[1], c = [(pp * Q[1] - qq * P[1]) / d, (qq * P[0] - pp * Q[0]) / d], R = Math.hypot(...c);
       if (R < .7 * RHO || R > 1.4 * RHO) continue;
-      const inl = cand.filter(o => Math.abs(Math.hypot(o.p[0] - c[0], o.p[1] - c[1]) - R) < .12 * R);
+      const inl = near24.filter(o => Math.abs(Math.hypot(o.p[0] - c[0], o.p[1] - c[1]) - R) < .12 * R);
       if (!best || inl.length > best.length) best = inl;
+    }
+    // the nearest 24 cover only an arc of a 43-sector layer: fit an ellipse through them and collect that layer's dots from every
+    // candidate (the layers are >= 1/6 apart, so 0.06 keeps the neighbours out)
+    for (let it = 0; it < 2 && best && best.length >= 4; it++) {
+      const e = fitEllipse([[0, 0], ...best.map(o => o.p)]); if (!e) break;
+      const R = sqrtSym(e.M); best = cand.filter(o => Math.abs(Math.hypot(...mul2(R, o.p[0] - e.c[0], o.p[1] - e.c[1])) - 1) < .06);
     }
     if (!best || best.length < 5) continue;
     const ringIdx = [si, ...best.map(o => o.i)], m = readMarker(B, near, ringIdx, w, h, ids);
@@ -277,24 +239,29 @@ const mulT = (M, C) => { // M C Mᵀ for symmetric 2x2 [a, b, c]
   const [a, b, c] = M, [p, q, r] = C, x = a * p + b * q, y = a * q + b * r, z = b * p + c * q, u = b * q + c * r;
   return [x * a + y * b, x * b + y * c, z * b + u * c];
 };
-/** One ring's dots found: order them round the ring, try each ring index, read all 54 slots through the homography, decode. */
+/** One ring's dots found: order them round the ring, try each ring index, read all 129 slots through the homography, decode. */
 function readMarker(B, near, ringIdx, w, h, ids) {
   const P = ringIdx.map(i => [B[i].x, B[i].y]), e = fitEllipse(P);
   if (!e) return null;
   const R = sqrtSym(e.M), ang = P.map(p => { const q = mul2(R, p[0] - e.c[0], p[1] - e.c[1]); return { r: Math.hypot(...q), a: Math.atan2(q[1], q[0]) }; });
   if (ang.some(o => Math.abs(o.r - 1) > .12)) return null;
-  const ord = ang.map((o, i) => i).sort((i, j) => ang[i].a - ang[j].a), sec = new Array(P.length);
-  let j = 0;
-  for (let t = 0; t < ord.length; t++) { // image angles grow clockwise as seen, like the sector numbers
-    sec[ord[t]] = j;
-    let gap = ang[ord[(t + 1) % ord.length]].a - ang[ord[t]].a; if (gap <= 0) gap += 2 * Math.PI;
-    const m = Math.round(gap / STEP); if (m < 1 || Math.abs(gap - m * STEP) > .4 * STEP) return null;
-    j += m;
+  // number the dots by the sector gaps between neighbours (image angles grow clockwise as seen, like the sector numbers). Perspective
+  // bends the ellipse angles too much to count all 43 sectors round the ring, so take the longest run of neighbours whose gaps read
+  // cleanly (1-5 sectors). The numbers are relative: decoding tries every turn.
+  const n = P.length, ord = ang.map((o, i) => i).sort((i, j) => ang[i].a - ang[j].a);
+  const gaps = ord.map((o, t) => { let g = ang[ord[(t + 1) % n]].a - ang[o].a; if (g <= 0) g += 2 * Math.PI; return g / STEP; });
+  const good = gaps.map(g => { const m = Math.round(g); return m >= 1 && m <= 5 && Math.abs(g - m) <= .4; });
+  let start = 0, len = n - 1; // all good: every dot, the run starting anywhere
+  if (!good.every(Boolean)) {
+    len = 0;
+    for (let t = 0; t < n; t++) if (!good[(t + n - 1) % n]) { let L = 0; while (good[(t + L) % n]) L++; if (L > len) { len = L; start = t; } }
   }
-  if (j !== S) return null;
+  if (len < 4) return null;
+  const run = [], sec = [];
+  for (let t = 0, j = 0; t <= len; t++) { const u = (start + t) % n; run.push(P[ord[u]]); sec.push(j); j += Math.round(gaps[u]); }
   let best = null;
   for (let k = 0; k < K; k++) {
-    let H = homography(sec.map(s => slotPos(k, s)), P), read = null;
+    let H = homography(sec.map(s => slotPos(k, s)), run), read = null;
     for (let it = 0; it < 3; it++) {
       read = readSlots(B, near, H, w, h);
       if (read.hits.length < 6) break;
@@ -308,21 +275,23 @@ function readMarker(B, near, ringIdx, w, h, ids) {
       else if (err < best.second) best.second = err;
     }
   }
-  if (!best || best.err > 7 || best.second < best.err + 6) return null;
+  // wrong bits allowed: 1 in 8 of those seen (>= 7); any two words differ in >= 45 of 129, so a right read also wins clearly
+  if (!best || best.err > maxErr(best.read.known) || best.second < best.err + 8) return null;
   const code = RUNE_CODES[best.id], fit = hs => homography(hs.map(o => slotPos(o.k, o.j)), hs.map(o => [B[o.i].x, B[o.i].y]));
   // the true sector numbers from here on; read again through the refitted homography, keeping only dots where the code has one
-  let hits = best.read.hits.map(o => ({ ...o, j: (o.j + best.r) % S })).filter(o => code[o.j] >> o.k & 1), err = best.err;
+  let hits = best.read.hits.map(o => ({ ...o, j: (o.j + best.r) % S })).filter(o => code[o.j] >> o.k & 1), err = best.err, known = best.read.known;
   for (let it = 0; it < 2 && hits.length >= 8; it++) {
     const rd = readSlots(B, near, fit(hits), w, h);
-    err = 0; for (let k = 0; k < K; k++) for (let j = 0; j < S; j++) { const b = rd.bits[k * S + j]; if (b >= 0 && b !== (code[j] >> k & 1)) err++; }
+    err = 0; known = rd.known; for (let k = 0; k < K; k++) for (let j = 0; j < S; j++) { const b = rd.bits[k * S + j]; if (b >= 0 && b !== (code[j] >> k & 1)) err++; }
     hits = rd.hits.filter(o => code[o.j] >> o.k & 1);
   }
-  if (hits.length < 8 || err > 7) return null;
+  if (hits.length < 8 || err > maxErr(known)) return null;
   const src = hits.map(o => slotPos(o.k, o.j)), dst = hits.map(o => [B[o.i].x, B[o.i].y]), H = fit(hits);
   const rms = Math.sqrt(src.reduce((a, p, i) => { const q = project(H, ...p); return a + (q[0] - dst[i][0]) ** 2 + (q[1] - dst[i][1]) ** 2; }, 0) / src.length);
   const hs = RUNE.square / 2, corners = [[-hs, hs], [hs, hs], [hs, -hs], [-hs, -hs]].map(p => project(H, ...p));
   return { id: best.id, corners, err, n: hits.length, rms, used: [...best.read.hits, ...hits].map(o => o.i) };
 }
+const maxErr = known => Math.max(7, known >> 3);
 /** Look for a dot at every slot through H: bits (1 dot, 0 none, -1 off the picture) and the dots it found. */
 function readSlots(B, near, H, w, h) {
   const bits = new Int8Array(S * K).fill(-1), hits = []; let known = 0;
