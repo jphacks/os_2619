@@ -341,7 +341,6 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function stepMatch(dt) {
     // a new HP setting shows at once while setting up; during a match it waits for the next one (reset)
     if (match.phase === 'setup') for (const p of Object.values(players)) { takeStick(p); if (p.hpMax !== hpOf(p)) p.hp = p.hpMax = hpOf(p); }
-    else if (match.phase === 'result') for (const p of Object.values(players)) takeStick(p); // between matches the element shows at once; HP stays as the match ended
     if (match.phase === 'countdown' && now() >= match.until) { match.phase = 'fight'; match.left = match.sec; match.fightAt = now(); }
     if (match.phase !== 'fight' || match.paused) return;
     match.left = Math.max(0, match.left - dt);
@@ -398,8 +397,15 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       else if (k.type === 'truth') p.truth = k;
       else if (k.type === 'calib') { p.imu = null; p.calibAt = performance.now(); } // the avatar re-reads its standing height too
     },
-    /** server.mjs 'sticks' { A, B } (record | null each): kept, then taken on while setting up or at the next reset */
-    setSticks(k) { for (const sl of ['A', 'B']) assigned[sl] = k?.[sl] ?? null; },
+    /** server.mjs 'sticks' { A, B } (record | null each): taken on at once in any phase. Mid-match the HP keeps its share of the max */
+    setSticks(k) {
+      for (const sl of ['A', 'B']) {
+        assigned[sl] = k?.[sl] ?? null;
+        const p = players[sl]; if (!p) continue;
+        takeStick(p); const max = hpOf(p);
+        if (p.hpMax !== max) { p.hp = match.phase === 'setup' ? max : Math.max(1, Math.round(p.hp / (p.hpMax || max) * max)); p.hpMax = max; }
+      }
+    },
     setOnline(list) { for (const p of Object.values(players)) p.online = list.some(q => q.slot === p.slot); },
     bannerText() {
       const t = now();

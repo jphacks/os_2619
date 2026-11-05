@@ -99,6 +99,7 @@ assert.equal((await json('/sticks/assign', { A: 'nope' })).status, 400);
 
 assert.equal((await (await json('/sticks')).json()).length, 2);
 r = await json('/sticks/assign', { A: rec.id, B: rec2.id }); assert.equal(r.status, 200);
+
 let k = await wait(() => inbox.find(k => k.type === 'sticks' && k.A?.id === rec.id && k.B?.id === rec2.id));
 assert.deepEqual(k.A.stats, rec.stats);
 // changing rarityMul (through /rules, keeping the other keys) recomputes the saved sticks' stats and tells the dashboards
@@ -116,6 +117,14 @@ await wait(() => inbox.find(k => k.type === 'sticks' && k.A?.id === rec.id && k.
 assert.equal((await fetch(base + rec2.image)).status, 404);
 assert.equal((await json('/sticks/assign', { B: null })).status, 200);
 assert.equal((await (await json('/sticks')).json()).length, 1);
+{ // editing by hand: element, rarity and stats stick; out-of-range stats are clamped; null goes back to the rolled ones
+  let e = await (await json('/sticks/' + rec.id, { element: 'wind', rarity: 5, stats: { hp: 1.8, power: 9, speed: .1, charge: 1 } }, 'PATCH')).json();
+  assert.equal(e.element, 'wind'); assert.equal(e.rarity, 5); assert.deepEqual(e.stats, { hp: 1.8, power: 2, speed: .5, charge: 1 });
+  const as = await (await json('/sticks/assign')).json(); assert.equal(as.A.stats.hp, 1.8); // the players' sticks carry the edit
+  assert.equal((await json('/sticks/' + rec.id, { element: 'earth' }, 'PATCH')).status, 400);
+  assert.equal((await json('/sticks/' + rec.id, { rarity: 6 }, 'PATCH')).status, 400);
+  e = await (await json('/sticks/' + rec.id, { stats: null }, 'PATCH')).json(); assert.equal(e.custom, undefined); assert.notEqual(e.stats.hp, 1.8);
+}
 console.log('sticks server ok');
 
 dash.terminate(); server.close(); rmSync(dir, { recursive: true, force: true });

@@ -47,6 +47,17 @@
 .stk .tile .del { background: transparent; border-color: transparent; color: var(--muted); padding: 3px 6px; flex: 0; }
 .stk .tile .del:hover { color: var(--bad); border-color: var(--line); }
 
+/* editing a stick by hand: a <dialog> styled as a .card; label left, control right, like the rarityMul rows */
+.stk .stkdlg { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius, 10px); padding: 14px 16px; width: min(340px, calc(100vw - 32px)); }
+.stk .stkdlg::backdrop { background: rgba(0, 0, 0, .55); }
+.stk .stkdlg h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+.stk .edit { display: grid; gap: 8px; }
+.stk .edit label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-2); font-size: 12px; }
+.stk .edit input[type=number] { width: 80px; }
+.stk .edit input[type=text], .stk .edit select { width: 62%; padding: 4px 6px; }
+.stk .edit .use { margin-top: 4px; }
+.stk select { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+
 /* rarityMul */
 .stk .mul { display: grid; gap: 4px; }
 .stk .mul label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-2); }

@@ -62,6 +62,7 @@ export function mountSticks(root) {
         <p class="msg" data-mulmsg></p>
       </section>
     </aside>
+    <dialog class="stkdlg" data-dlg aria-label="枝を編集"></dialog>
     <input type="file" accept="image/*" data-file style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true">`;
   const $ = s => root.querySelector(`[data-${s}]`);
   const err = t => { $('err').textContent = t; };
@@ -105,9 +106,29 @@ export function mountSticks(root) {
     } catch (e) { b.disabled = false; err(`保存できませんでした（${e.message}）`); }
   }
 
+  // ---- players, saved sticks; editing one by hand (PATCH /sticks/<id>) ----
+  let sticks = [];
+  const dlg = $('dlg');
+  const editor = s => `<form method="dialog" class="edit" data-form="${s.id}">
+    <h2>枝を編集</h2>
+    <label>名前<input type="text" maxlength="24" data-f="name" value="${esc(s.name)}"></label>
+    <label>属性<select data-f="element">${Object.entries(EL).map(([k, l]) => `<option value="${k}"${k === s.element ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+    <label>レア度<select data-f="rarity">${[1, 2, 3, 4, 5].map(n => `<option value="${n}"${n === s.rarity ? ' selected' : ''}>${'★'.repeat(n)}</option>`).join('')}</select></label>
+    ${Object.entries(ST).map(([k, l]) => `<label>${l}<input type="number" class="num" min="0.5" max="2" step="0.05" data-f="${k}" value="${s.stats[k].toFixed(2)}"></label>`).join('')}
+    <p class="msg" data-editmsg>${s.custom ? '手で決めた能力です' : 'スキャンで決まった能力です'}</p>
+    <div class="use"><button type="button" class="go" data-save="${s.id}">保存</button>${s.custom ? `<button type="button" data-auto="${s.id}">自動に戻す</button>` : ''}<button value="cancel">閉じる</button></div>
+  </form>`;
+  const openEditor = id => { const s = sticks.find(x => x.id === id); if (!s) return; dlg.innerHTML = editor(s); dlg.showModal(); };
+  async function saveEdit(id, auto) {
+    const f = root.querySelector(`[data-form="${id}"]`), v = n => f.querySelector(`[data-f="${n}"]`).value;
+    const body = { name: v('name'), element: v('element'), rarity: +v('rarity'), stats: auto ? null : Object.fromEntries(Object.keys(ST).map(k => [k, +v(k)])) };
+    try { await api('/sticks/' + id, { method: 'PATCH', body: JSON.stringify(body) }); dlg.close(); await refresh(); }
+    catch (e) { f.querySelector('[data-editmsg]').textContent = `保存できませんでした（${e.message}）`; }
+  }
+
   // ---- players, saved sticks ----
   async function refresh() {
-    const [list, as] = await Promise.all([api('/sticks'), api('/sticks/assign')]);
+    const [list, as] = await Promise.all([api('/sticks'), api('/sticks/assign')]); sticks = list;
     $('players').innerHTML = ['A', 'B'].map(p => `<div class="slot" style="--team:var(--${p})"><b>${p}</b>${as[p]
       ? `<span class="nm">${esc(as[p].name)}<br>${stars(as[p].rarity)} ${el(as[p].element)}</span><button data-use="${p}" data-id="">外す</button>`
       : '<span class="none">枝なし（今の属性のまま）</span><span></span>'}</div>`).join('');
@@ -120,7 +141,7 @@ export function mountSticks(root) {
           <span class="nm">${esc(s.name)}</span>
           <span>${stars(s.rarity)} ${el(s.element)}</span>
           <span class="tag">${who.length ? who.join('・') + ' が使用中' : '&nbsp;'}</span>
-          <div class="use"><button data-use="A" data-id="${s.id}">A</button><button data-use="B" data-id="${s.id}">B</button><button class="del" data-del="${s.id}" data-label="${esc(s.name)}" aria-label="${esc(s.name)}を消す">消す</button></div>
+          <div class="use"><button data-use="A" data-id="${s.id}">A</button><button data-use="B" data-id="${s.id}">B</button><button class="del" data-edit="${s.id}" aria-haspopup="dialog">編集</button><button class="del" data-del="${s.id}" data-label="${esc(s.name)}" aria-label="${esc(s.name)}を消す">消す</button></div>
         </div></div>`;
     }).join('') : '<p class="muted" style="margin:0">まだありません。撮ると、ここに並びます。</p>';
   }
@@ -130,6 +151,9 @@ export function mountSticks(root) {
     try {
       if (b.dataset.act === 'pick') $('file').click();
       else if (b.dataset.act === 'save') await save(b);
+      else if (b.dataset.edit) openEditor(b.dataset.edit);
+      else if (b.dataset.save) await saveEdit(b.dataset.save, false);
+      else if (b.dataset.auto) await saveEdit(b.dataset.auto, true);
       else if (b.dataset.use) { await api('/sticks/assign', { method: 'POST', body: JSON.stringify({ [b.dataset.use]: b.dataset.id || null }) }); await refresh(); }
       else if (b.dataset.del && confirm(`「${b.dataset.label}」を消しますか？`)) { await api('/sticks/' + b.dataset.del, { method: 'DELETE' }); await refresh(); }
     } catch (e) { err(`できませんでした（${e.message}）`); }

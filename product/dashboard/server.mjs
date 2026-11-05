@@ -316,6 +316,7 @@ async function rulesFile(req, res) {
 // ---- /sticks: branches scanned on sticks.html. The browser measures the shape (stick-analyze.js) and sends the features;
 // here they are checked, the score recomputed, and a new random seed picks the luck, element and stats (stick-stats.js).
 //  GET /sticks → records   POST /sticks {name?, features, image: jpeg data URL} → the new record   DELETE /sticks/<id>
+//  PATCH /sticks/<id> {name?, element?, rarity? 1-5, stats?: {hp, power, speed, charge} (0.5-2) | null = back to the rolled ones}
 //  GET /sticks/assign → {A, B}   POST /sticks/assign {A?: id|null, B?: id|null}   GET /sticks/img/<id>.jpg
 // Stored in DATA_DIR (data/, not in git): sticks.json {sticks, assign} and sticks/<id>.jpg. Stats are never trusted from the
 // file: they are recomputed from (seed, rarity, rules.rarityMul) on the way out, so a new rarityMul changes every stick.
@@ -325,7 +326,9 @@ try { const d = JSON.parse(readFileSync(STICKS_FILE, 'utf8')); db = { sticks: Ar
 let rarityMul = cleanRarityMul(null); try { rarityMul = cleanRarityMul(JSON.parse(readFileSync(RULES_FILE, 'utf8')).rarityMul); } catch {}
 const ID = /^[a-z0-9]{8,32}$/;
 const byId = id => db.sticks.find(s => s.id === id) ?? null;
-const withStats = s => s && { ...s, stats: stickStats(s.seed, s.rarity, rarityMul) };
+// stats: the admin's own values (PATCH, s.custom) or, without them, from (seed, rarity, rarityMul)
+const withStats = s => s && { ...s, stats: s.custom ? { ...s.custom } : stickStats(s.seed, s.rarity, rarityMul) };
+const ELEMENTS = ['fire', 'thunder', 'water', 'wind'], STAT_KEYS = ['hp', 'power', 'speed', 'charge'], STAT_RANGE = [.5, 2];
 const assigned = () => ({ A: withStats(byId(db.assign.A)), B: withStats(byId(db.assign.B)) });
 const sticksMsg = () => JSON.stringify({ type: 'sticks', ...assigned() });
 const saveDb = () => { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(STICKS_FILE, JSON.stringify(db, null, 2)); }; // sync: two saves never interleave
@@ -376,6 +379,26 @@ async function sticksRoute(req, res, path) {
     return json(200, rec);
   }
   const del = path.match(/^\/sticks\/([a-z0-9]+)$/);
+  if (del && req.method === 'PATCH') { // the admin edits a stick by hand
+    const s = ID.test(del[1]) && byId(del[1]); if (!s) return json(404, { ok: false });
+    const b = await body(req, 4096); let k; try { k = JSON.parse(b); } catch {}
+    if (!k || typeof k !== 'object') return json(400, { ok: false });
+    if ('element' in k && !ELEMENTS.includes(k.element)) return json(400, { ok: false, error: 'element' });
+    if ('rarity' in k && !(Number.isInteger(k.rarity) && k.rarity >= 1 && k.rarity <= 5)) return json(400, { ok: false, error: 'rarity' });
+    let custom;
+    if (k.stats === null) custom = null;
+    else if ('stats' in k) {
+      if (!k.stats || typeof k.stats !== 'object' || !STAT_KEYS.every(n => typeof k.stats[n] === 'number' && Number.isFinite(k.stats[n]))) return json(400, { ok: false, error: 'stats' });
+      custom = Object.fromEntries(STAT_KEYS.map(n => [n, +Math.min(STAT_RANGE[1], Math.max(STAT_RANGE[0], k.stats[n])).toFixed(2)]));
+    }
+    if ('name' in k) s.name = String(k.name ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 24) || s.name;
+    if ('element' in k) s.element = k.element;
+    if ('rarity' in k) s.rarity = k.rarity;
+    if (custom === null) delete s.custom; else if (custom) s.custom = custom;
+    saveDb(); log(`sticks: edited ${s.id}`);
+    if (['A', 'B'].some(x => db.assign[x] === s.id)) toDashboards(sticksMsg());
+    return json(200, withStats(s));
+  }
   if (del && req.method === 'DELETE') {
     if (!ID.test(del[1]) || !byId(del[1])) return json(404, { ok: false });
     db.sticks = db.sticks.filter(s => s.id !== del[1]);

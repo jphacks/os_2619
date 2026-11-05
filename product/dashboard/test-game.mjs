@@ -521,11 +521,11 @@ scenario('溜め 2倍の棒なら、3秒で大になる', () => {
   const S = setup(); S.g.setSticks({ A: stick('fire', { charge: 2 }) }); S.fight(); S.chargeShot('A', 3);
   eq(S.B.hp, 40, 'B の HP（大1発）');
 });
-scenario('試合中に棒を替えてもHPは変わらず、次のリセットで反映される', () => {
-  const S = setup(); S.fight(); S.g.setSticks({ A: stick('water', { hp: 1.5 }) }); S.run(.5);
-  eq(S.A.hpMax, 100, '試合中の A の最大HP'); eq(S.A.element, 'fire', '試合中の A の属性');
+scenario('試合中に棒を替えてもすぐ反映され、HPは残りの割合を保つ', () => {
+  const S = setup(); S.fight(); S.A.hp = 50; S.g.setSticks({ A: stick('water', { hp: 1.5 }) }); S.run(.1);
+  eq(S.A.hpMax, 150, '試合中の A の最大HP'); eq(S.A.element, 'water', '試合中の A の属性'); eq(S.A.hp, 75, '残り50%のまま');
   S.g.command({ cmd: 'reset' });
-  eq(S.A.hpMax, 150, 'リセット後の A の最大HP'); eq(S.A.element, 'water', 'リセット後の A の属性');
+  eq(S.A.hpMax, 150, 'リセット後の A の最大HP'); eq(S.A.hp, 150, 'リセット後は満タン');
 });
 scenario('水と風の棒でも撃ち合い・反射・溜めが動く', () => {
   const S = setup(); S.g.setSticks({ A: stick('water'), B: stick('wind') }); S.fight();
