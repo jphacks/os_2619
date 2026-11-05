@@ -60,7 +60,7 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
       </div>
       <h3>棒の 3D モデル <span class="badge off stickstate">なし</span></h3>
       <canvas class="stick3d" style="width:100%;height:110px;display:block" aria-label="スキャンした棒の 3D モデル（左が先端）"></canvas>
-      <div class="row" style="margin-top:6px;align-items:center"><span class="kv stickinfo" style="font-size:12px;flex:1">アプリの「Scan」で作る（床の魔法陣に棒を置いて周りから撮る）。左が先端</span><button class="stickclear">モデルを消す</button></div>
+      <div class="row" style="margin-top:6px;align-items:center"><span class="kv stickinfo" style="font-size:12px;flex:1">アプリの「Scan」で作る（魔法陣の上に棒を置き、周りを歩いて撮る）。形だけを測り、色は茶色。左が先端</span><button class="stickclear">モデルを消す</button></div>
     </section>`;
   for (const s of ['A', 'B']) {
     cards.insertAdjacentHTML('beforeend', tpl(s));

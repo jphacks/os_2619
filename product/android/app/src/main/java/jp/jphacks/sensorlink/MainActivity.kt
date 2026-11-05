@@ -326,32 +326,22 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         Toast.makeText(this, if (camPose == null) "IMU zeroed (AR not tracking yet)" else "IMU zeroed, AR origin set here", Toast.LENGTH_SHORT).show()
     }
 
-    /** Scan -> (step 1: the empty circle) -> Stick placed -> (step 2: the stick on it) -> Finish. The PC builds the model (dashboard stickscan.js). */
+    /** Scan -> (instructions) -> Start -> walk around the stick -> Finish. The PC builds the stick's shape (dashboard stickscan.js). */
     private fun scanButton(b: Button) {
-        when (scan.step) {
-            Scan.Step.OFF -> AlertDialog.Builder(this).setTitle("Scan the stick  1/2: the empty magic circle")
-                .setMessage("The PC turns photos into a 3D model of your stick. Open the PC dashboard first (connection screen).\n\n" +
-                    "1. Lay the magic circle flat, with nothing on it yet.\n" +
-                    "2. Tap Start, then walk once around the circle holding the phone 0.8-1.2 m away, pointed at its centre.\n" +
-                    "3. A photo is taken every half second while 2 or more tags show green. Keep your shadow off the circle.\n\n" +
-                    "When it says ${Scan.MAX_BG} pictures (or after one lap), tap \"Stick placed\".")
-                .setPositiveButton("Start") { _, _ -> scan.start(); b.text = "Stick placed" }
-                .setNegativeButton("Cancel", null).show()
-            Scan.Step.BG -> AlertDialog.Builder(this).setTitle("Scan the stick  2/2: the stick")
-                .setMessage("1. Lay the stick straight across the middle of the circle, its TIP toward tag T0 (the top of the poster).\n" +
-                    "2. From now on don't move the circle or the stick.\n" +
-                    "3. Tap Start and walk slowly around it twice: once high, looking down, and once low, about 30° above the floor. " +
-                    "Keep 2+ tags green; get the whole stick in the picture.\n" +
-                    "4. Tap Finish (after ~25 pictures). The model appears on the PC's connection screen and in the game.")
-                .setPositiveButton("Start") { _, _ -> scan.next(); b.text = "Finish" }
-                .setNeutralButton("Cancel scan") { _, _ -> scan.cancel(); b.text = "Scan" }
-                .setNegativeButton("Back", null).show()
-            Scan.Step.STICK -> AlertDialog.Builder(this).setTitle("Finish the scan?")
-                .setMessage("${scan.nBg} pictures of the circle, ${scan.nStick} of the stick. The PC needs 3 and 6 at least; more angles give a better model.")
-                .setPositiveButton("Send to PC") { _, _ -> scan.finish(); b.text = "Scan"; Toast.makeText(this, "Sent: the PC builds the model", Toast.LENGTH_LONG).show() }
-                .setNeutralButton("Cancel scan") { _, _ -> scan.cancel(); b.text = "Scan" }
-                .setNegativeButton("Keep scanning", null).show()
-        }
+        if (!scan.on) AlertDialog.Builder(this).setTitle("Scan the stick")
+            .setMessage("The PC turns photos into a 3D model of your stick's shape. Open the PC dashboard first (connection screen).\n\n" +
+                "1. Lay the magic circle flat and lay the stick straight across its middle, its TIP toward tag T0 (the top of the poster).\n" +
+                "2. Keep anything else that is not black or white off the circle (hands, feet, bags). Don't move the circle or the stick from now on.\n" +
+                "3. Tap Start and walk slowly around it twice, 0.8-1.2 m away: once high, looking down, and once low, about 30° above the floor. " +
+                "A photo is taken every half second while 2 or more tags show green; get the whole stick in the picture.\n" +
+                "4. Tap Finish (after about 30 pictures). The model appears on the PC's connection screen and in the game.")
+            .setPositiveButton("Start") { _, _ -> scan.start(); b.text = "Finish" }
+            .setNegativeButton("Cancel", null).show()
+        else AlertDialog.Builder(this).setTitle("Finish the scan?")
+            .setMessage("${scan.n} pictures. The PC needs 6 at least; more angles give a better shape.")
+            .setPositiveButton("Send to PC") { _, _ -> scan.finish(); b.text = "Scan"; Toast.makeText(this, "Sent: the PC builds the model", Toast.LENGTH_LONG).show() }
+            .setNeutralButton("Cancel scan") { _, _ -> scan.cancel(); b.text = "Scan" }
+            .setNegativeButton("Keep scanning", null).show()
     }
 
     private fun imuDialog() {
