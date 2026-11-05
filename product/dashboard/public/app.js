@@ -330,7 +330,8 @@ addEventListener('keydown', e => {
   else if (k === 'm') $('#bgmPreview').click(); // 試合 BGM を流す / 止める (also while the slides are open: tutorial.js lets M through); the minimap is its button only
   else if (k === 'Escape') drawer.classList.remove('open');
 });
-addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k] && screen !== 'final') holdCharge(held[k], false); });
+addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k]) holdCharge(held[k], false); }); // on any screen: a key let go on the final screen still stops its repeat
+addEventListener('blur', () => { for (const s of Object.keys(chargeHeld)) holdCharge(s, false); }); // the window lost focus: no keyup will come
 
 // ---- per-frame UI ----
 function pill(id, state) { const p = $(id); p.classList.toggle('on', state === true); p.classList.toggle('half', state === 'half'); }
