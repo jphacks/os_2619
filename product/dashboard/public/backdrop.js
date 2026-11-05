@@ -111,6 +111,9 @@ export function sunBaker(slots, n = SHADOW_N) {
     bake(dir, final) {
       const same = s => s.dir.distanceToSquared(dir) < 1e-8, s = same(hi) || final ? hi : lo;
       let ms = 0;
+      // the quick bake waits for the sun to move ~1° (the clock running by itself moves it every frame): the shadow keeps the
+      // direction it was baked for, so depth and direction always match
+      if (!final && s === lo && s.dir.angleTo(dir) < .02) { slots.depth.value = s.tD; slots.light.value = s.tSh; slots.dir.value.copy(s.dir); return 0; }
       if (!same(s)) {
         const t0 = performance.now();
         bakeSunlight(geo.pos, geo.idx, geo.ranges, geo.ext, s.n, s.depth, s.light, dir);

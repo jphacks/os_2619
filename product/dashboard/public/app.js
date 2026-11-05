@@ -25,6 +25,7 @@ import { createPlayable } from './playable.js';
 import { createTutorial } from './tutorial.js';
 import { createGauge } from './hudgauge.js';
 import { PRESETS, DEFAULT_HOUR, clock } from './sky.js';
+const TOD_SPEEDS = [['ゆっくり', 2], ['ふつう', 6], ['はやい', 24]]; // hours per minute: ふつう = a 60 s match from sunset into the night
 
 const $ = s => document.querySelector(s);
 const nowS = () => Date.now() / 1000;
@@ -179,6 +180,7 @@ gameCtrl.innerHTML = `
   <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="debug">デバッグ</button></div>
   <div class="row"><span class="muted" style="font-size:12px">背景</span><span class="seg" id="backdrops"><button data-backdrop="court">中庭</button><button data-backdrop="rock">岩場</button><button data-backdrop="plain">無地</button></span></div>
   <div class="row"><label title="中庭と岩場の空と光の時刻。動かすと影も付け直す"><span class="muted" style="font-size:12px">時刻</span> <input id="tod" type="range" min="0" max="24" step="0.25" style="width:130px;vertical-align:middle"> <span id="todOut" class="num"></span></label><span class="seg" id="todPresets">${PRESETS.map(([n, h]) => `<button data-tod="${h}">${n}</button>`).join('')}</span></div>
+  <div class="row"><button id="todAuto" title="空の時刻がひとりでに進む。プリセットを押すと、そこから進む">時刻を自動で進める</button><span class="seg" id="todSpeeds">${TOD_SPEEDS.map(([n, v]) => `<button data-todspeed="${v}" title="1分で${v}時間">${n}</button>`).join('')}</span></div>
   <div class="row"><button data-tog="mimic" title="第三者視点カメラの映像を MediaPipe で見て、アバターに同じ姿勢をとらせる（別スレッドで 1 秒に最大 15 回）">カメラの姿勢をアバターに反映</button><span class="muted" id="mimicStatus" style="font-size:12px"></span></div>
   <h3>攻撃・防御の記録</h3>
   <ul class="log" id="gameLog"></ul>`;
@@ -206,6 +208,8 @@ for (const i of ruleIns) i.onchange = () => {
 };
 for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.onclick = () => { cfg.fxStyle = b.dataset.fxstyle; save(); stage.fx.setStyle(cfg.fxStyle); };
 for (const b of gameCtrl.querySelectorAll('[data-backdrop]')) b.onclick = () => { cfg.backdrop = b.dataset.backdrop; save(); };
+$('#todAuto').onclick = () => { cfg.todAuto = !cfg.todAuto; save(); };
+for (const b of gameCtrl.querySelectorAll('[data-todspeed]')) b.onclick = () => { cfg.todSpeed = +b.dataset.todspeed; save(); };
 const todIn = $('#tod'); // the clock: stage.js hands cfg.timeOfDay to the field every frame, the field bakes the shadows again once it settles
 todIn.oninput = () => { cfg.timeOfDay = +todIn.value; save(); };
 for (const b of gameCtrl.querySelectorAll('[data-tod]')) b.onclick = () => { cfg.timeOfDay = +b.dataset.tod; save(); };
@@ -404,6 +408,8 @@ function updateSlowUi() {
   for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.classList.toggle('on', b.dataset.fxstyle === stage.fx.style);
   for (const b of gameCtrl.querySelectorAll('[data-backdrop]')) b.classList.toggle('on', b.dataset.backdrop === cfg.backdrop);
   const plain = cfg.backdrop === 'plain'; todIn.disabled = plain; // the plain arena has no sky
+  $('#todAuto').classList.toggle('on', !!cfg.todAuto); $('#todAuto').disabled = plain;
+  for (const b of gameCtrl.querySelectorAll('[data-todspeed]')) { b.disabled = plain || !cfg.todAuto; b.classList.toggle('on', +b.dataset.todspeed === (cfg.todSpeed ?? TOD_SPEEDS[1][1])); }
   if (document.activeElement !== todIn && +todIn.value !== cfg.timeOfDay) todIn.value = cfg.timeOfDay;
   setText($('#todOut'), clock(cfg.timeOfDay));
   for (const b of gameCtrl.querySelectorAll('[data-tod]')) { b.disabled = plain; b.classList.toggle('on', +b.dataset.tod === cfg.timeOfDay % 24); }
@@ -475,6 +481,10 @@ function frame(ts) {
   fps = .95 * fps + .05 / Math.max(raw, 1e-3);
   try { est = PA.estimate(nowS()); } catch (e) { console.warn('phonealign', e); }
   playable.step(dt, t);
+  if (cfg.todAuto && cfg.backdrop !== 'plain') { // the clock runs by itself: hours per minute; saved now and then, not every frame
+    cfg.timeOfDay = +(((cfg.timeOfDay ?? DEFAULT_HOUR) + dt * (cfg.todSpeed ?? TOD_SPEEDS[1][1]) / 60) % 24).toFixed(4);
+    if (t - (frame.todSaved ?? 0) > 5) { frame.todSaved = t; save(); }
+  }
   // The picture and game placement consume this exact same pose snapshot. Screen 3 does not show the picture, so it is drawn once a second there:
   // enough to keep the video stream alive, and a full 1080p room with soft shadows every frame is what made the dummy heavy on a laptop GPU.
   const dummyPicture = screen !== 'game' || !!cfg.mimic || dummyScanning || t - dummyDrawnAt >= 1;
