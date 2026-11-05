@@ -228,9 +228,17 @@ $('#rulesLoad').onclick = () => loadSavedRules(false);
 loadSavedRules(true);
 $('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg }, size: { ...RULES.size } }; save(); showRules(); };
 showRules();
+// a held 押して溜め button / Q・P key: repeat the charge every 0.2 s (under game.js CHARGE_LIVE), as a stick that keeps circling
+// would; a single 'on' only grew the charge for 0.4 s, so it stayed 小 and failed after chargeHold
+const chargeHeld = {};
+function holdCharge(slot, on) {
+  if (!on && !chargeHeld[slot]) return;
+  clearInterval(chargeHeld[slot]); chargeHeld[slot] = on ? setInterval(() => game.command({ cmd: 'charge', slot, on: true }), 200) : null;
+  game.command({ cmd: 'charge', slot, on });
+}
 for (const pc of gameCtrl.querySelectorAll('.pc')) for (const b of pc.querySelectorAll('[data-act]')) {
   const slot = pc.dataset.s, a = b.dataset.act;
-  if (a === 'charge') { b.onpointerdown = () => game.command({ cmd: 'charge', slot, on: true }); b.onpointerup = b.onpointerleave = () => game.command({ cmd: 'charge', slot, on: false }); b.title = '押している間溜める'; }
+  if (a === 'charge') { b.onpointerdown = () => holdCharge(slot, true); b.onpointerup = b.onpointerleave = () => holdCharge(slot, false); b.title = '押している間溜める'; }
   else b.onclick = () => game.command({ cmd: a, slot });
 }
 for (const b of gameCtrl.querySelectorAll('[data-drone]')) b.onclick = () => { stage.drone.setMode(b.dataset.drone); cfg.drone = b.dataset.drone; save(); };
@@ -316,13 +324,13 @@ addEventListener('keydown', e => {
   if (e.altKey) { const n = { Digit1: 'connect', Digit2: 'space', Digit3: 'game', Digit4: 'final' }[e.code]; if (n) { e.preventDefault(); show(n); } return; }
   if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (held[k] && screen !== 'final') return game.command({ cmd: 'charge', slot: held[k], on: true });
+  if (held[k] && screen !== 'final') return holdCharge(held[k], true);
   if (KEYS[k]) return game.command(KEYS[k]);
   if (k === 'k') scan();
   else if (k === 'm') $('#bgmPreview').click(); // 試合 BGM を流す / 止める (also while the slides are open: tutorial.js lets M through); the minimap is its button only
   else if (k === 'Escape') drawer.classList.remove('open');
 });
-addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k] && screen !== 'final') game.command({ cmd: 'charge', slot: held[k], on: false }); });
+addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (held[k] && screen !== 'final') holdCharge(held[k], false); });
 
 // ---- per-frame UI ----
 function pill(id, state) { const p = $(id); p.classList.toggle('on', state === true); p.classList.toggle('half', state === 'half'); }

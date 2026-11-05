@@ -1,15 +1,13 @@
 // fx-smash-charge.js: the charge in the "smash" style (contract in fx-smash.js).
-//   aura(a, dt)   the stick look (classic) plus, while charging, a Limit-Charge-like body aura (Cloud): wisps and streaks rising
-//                 from the feet up a ~0.45 m cylinder, motes drawn in and up, a pulsing ring on the floor, the body glow
-//                 flickering brighter with the tier; a flash and an expanding ring when the tier becomes 中 (small) and 大 (big)
-//   charge(c, dt) a Spark-Kirby-like electric sphere at the stick tip: a bright core, arcs crawling over the surface, short arcs
-//                 jumping outward; it grows with the level (0.07 m -> 0.3 m) and pulses at 大. Fire = orange plasma, thunder = blue-white
-//                 water: a shader sphere of water instead (flowing value ramp, fresnel rim, glint), bubbles inside, a ring of
-//                        orbiting droplets, drops drawn in; wind: a ball of compressed air (shader streak sphere, painted twirls)
-//   body extras per element: fire flame tongues and embers, thunder arcs
-//   water and wind have their own body instead of the Limit Charge look (BODY): water = ribbons of water spiralling up round
-//                 the body, a whirlpool disc on the floor, drops lifting, mist, water drawn up into the tip; wind = bands of wind
-//                 wound round the body, a dust swirl, dust and leaves pulled in, pressure rings contracting; both pulse at full charge
+//   aura(a, dt)   the stick look (classic) plus, while charging, a body of the element's own (BODY): 小 low at the feet, 中 up the
+//                 body, the last ~0.35 s before 大 everything is drawn in (anticipation), 大 reached: a ground shockwave, a short
+//                 flash and element debris, then a taller pulsing look with an aftershock ring every ~0.7 s
+//                 fire = a flame wreath climbing with the tier, embers spiralling in, hot streaks, dark smoke at 大
+//                 thunder (yellow) = arcs crawling up the body, crackle flashes, a stuttering ring and arcs over the floor, tip-to-ground bolts at 大
+//                 water = ribbons of water spiralling up, a whirlpool, ripples (and the magic circle, fx-smash-circle.js)
+//                 wind = bands of wind wound round the body, a dust swirl, leaves and air pulled in, pressure rings
+//   charge(c, dt) the stick tip: thunder = a Spark-Kirby-like electric sphere (arcs over the surface and jumping out); fire = a flame
+//                 orb (no arcs) with tongues licking up off it; water = a shader sphere of water; wind = a ball of compressed air
 export function createChargeMoves(kit) {
   const { THREE, K, S, COL, TAU, Q, R, RS, emit, spr, sprFloor, seg, Bolt, gen, drawBolt, runit, u3, take, flick, add, classic } = kit;
   const WW = kit.ww, wmesh = (el, shape, p, sc, o) => WW?.mesh(el, shape, p, sc, o), wspr = (el, tex, p, w, h, o) => WW?.[el].sprite(tex, p, w, h, o);
@@ -38,217 +36,262 @@ export function createChargeMoves(kit) {
     }
   }
 
-  // ---------------- body aura (Limit Charge) ----------------
-  const COL_TOP = 1.9, COL_R = .45;
+  // ---------------- body ----------------
+  // Every element has its own body (BODY below); what they share is the timing, so the tiers read the same way for all four:
+  //   小 a small, low effect at the feet; 中 it climbs the body; the last ~0.35 s before 大 everything is drawn in (anticipation);
+  //   大 reached: a ground shockwave, a short flash and element debris (fullBurst), then a sustained, pulsing, taller look with
+  //   an aftershock ring every ~0.7 s. The 中 step gets a small version of the burst.
+  const COL_TOP = 1.9, COL_R = .45, sc = kit.sc;
+  const FLOOR = { fire: [.55, .1, .01], thunder: [.6, .35, 0], water: [.02, .12, .6], wind: [.35, .48, .5] }; // the floor pool: low value, saturated
 
-  // tier-up burst: a flash on the body, an expanding ring on the floor, a pillar of light; thunder adds bolts up the body
+  // the tier-up burst, drawn for T s: a crisp double ring running out over the floor in the element's colour (not a white wash),
+  // a short flash at the chest, element debris; thunder adds bolts up the body and over the floor
   function tierBurst(e, dt) {
-    const a = e.age, big = e.big, F = e.feet, P = PAL[e.el], T = .75 * (.7 + .3 * big);
+    const a = e.age, big = e.big, F = e.feet, P = PAL[e.el], T = .7 * (.7 + .3 * big);
     const k = Math.min(1, a / T), ease = 1 - (1 - k) ** 3;
-    tA.set(F.x, .95, F.z);
-    if (a < .18) spr(S.GLOW, tA, .9 * big + .5, 1.3 * big + .8, 0, 0, P.flash, 2.4 * big * (1 - a / .18) ** 2, .6);
-    if (a < .22) { tB.set(F.x, 1.2, F.z); spr(S.FLARE, tB, 2.6 * big, .07 + .05 * big, 0, 0, P.flash, 2.2 * big * (1 - a / .22) ** 2); }
-    floorRing(F, .4 + 1.3 * big * ease, .04 + .03 * big, 1.1 * (1 - k) ** 1.5, P.main, .03, e.seed);
-    if (big > .7) floorRing(F, .3 + .8 * ease, .03, .8 * (1 - k) ** 2, P.hot, .05, e.seed + .3);
-    spr(S.GLOW, tA, .6 + .2 * big, 1.6, 0, 0, P.glow, 1.3 * big * (1 - k) ** 1.2, .2);
-    if (e.el === 'thunder' && a < .35) {
+    tA.set(F.x, 1, F.z);
+    if (a < .1) spr(S.GLOW, tA, .55 + .3 * big, .9 + .5 * big, 0, 0, P.flash, 1.2 * big * (1 - a / .1) ** 2, .5);
+    if (a < .16) { tB.set(F.x, 1.1, F.z); spr(S.FLARE, tB, 1.8 * big + .4, .05 + .04 * big, 0, 0, P.flash, 1.6 * big * (1 - a / .16) ** 2); }
+    floorRing(F, .4 + 1.8 * big * ease, .045 + .035 * big, 1.6 * (1 - k) ** 1.5, P.main, .03, e.seed);
+    floorRing(F, .3 + 1.2 * big * Math.min(1, ease * 1.15), .025, 1.2 * (1 - k) ** 2, P.hot, .05, e.seed + .3);
+    if (e.el === 'wind') floorRing(F, .5 + 2.6 * big * Math.min(1, a / .3), .02, 1.4 * Math.max(0, 1 - a / .3), COL.windHi, .01, e.seed + .6); // the pressure front, fast and thin
+    if (e.el === 'thunder' && a < .4) {
       if ((e.regen = (e.regen ?? 0) - dt) <= 0) {
-        e.regen = .04;
-        for (const bo of e.bolts) {
+        e.regen = .045;
+        e.bolts.forEach((bo, i) => {
           const th = R() * TAU, r = COL_R * (.8 + .4 * R());
-          tC.set(F.x + Math.cos(th) * r, .02, F.z + Math.sin(th) * r);
-          tD.set(F.x + Math.cos(th + RS(.6)) * r * .7, COL_TOP + .3 * R(), F.z + Math.sin(th + RS(.6)) * r * .7);
-          gen(bo, tC, tD, 5, .12, .3, .3);
-        }
+          if (i & 1) { tC.set(F.x + Math.cos(th) * .3, .02, F.z + Math.sin(th) * .3); tD.set(F.x + Math.cos(th) * (1 + 1.2 * big), .02, F.z + Math.sin(th) * (1 + 1.2 * big)); gen(bo, tC, tD, 4, .2, .35, .2); }
+          else { tC.set(F.x + Math.cos(th) * r, .02, F.z + Math.sin(th) * r); tD.set(F.x + Math.cos(th + RS(.6)) * r * .7, COL_TOP + .3 * R(), F.z + Math.sin(th + RS(.6)) * r * .7); gen(bo, tC, tD, 5, .12, .3, .3); }
+        });
       }
-      for (const bo of e.bolts) drawBolt(bo, .03, 1.8 * (1 - a / .35), COL.elec);
+      for (const bo of e.bolts) drawBolt(bo, .028, 1.8 * (1 - a / .4), COL.elec);
     }
     return a < T;
   }
   function startBurst(a, big) {
-    const F = a.opt.feet, P = PAL[a.el], fire = a.el === 'fire';
-    add({ update: tierBurst, el: a.el, feet: F.clone(), big, bolts: fire ? [] : Array.from({ length: big > .7 ? 5 : 2 }, () => new Bolt(96)) });
-    // a ring of streaks blown up and out from the feet
-    for (let i = 0; i < (90 + 170 * big) * Q; i++) {
-      const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.6 + .5 * R()), sp = (1.5 + 3 * R()) * (.6 + .5 * big);
-      emit(F.x + cx * r, .05 + R() * .3, F.z + cz * r, cx * sp * .8, sp * (1 + R()), cz * sp * .8, .35 + .4 * R(), .014, .006, 2.2, -1.5,
-        P.streak, K.SPARK, 2.6, .2, .06, 0);
-    }
-    for (let i = 0; i < 30 * Q * big; i++) {
-      const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th);
-      emit(F.x + cx * .3, .1, F.z + cz * .3, cx * 2.2, .4 + R(), cz * 2.2, .45 + .2 * R(), .18, .4, 3.5, 0, P.glow, K.GLOW, .7, .1, 0, 0);
-    }
-    if (a.el === 'water') for (let i = 0; i < 80 * Q * big; i++) { // a ring of water thrown up from the feet
-      const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.8 + .3 * R()), v = 2.5 + 2.5 * R();
-      emit(F.x + cx * r, .05, F.z + cz * r, cx * .9, v, cz * .9, .5 + .3 * R(), .02, .012, .5, -9, R() < .3 ? COL.waterHi : COL.water, K.DROP, 1.3, 0, .03, 0);
-    }
-    if (a.el === 'wind') for (let i = 0; i < 40 * Q * big; i++) { // dust blown out flat from the feet
-      const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), v = 2 + 2 * R();
-      emit(F.x + cx * .3, .06, F.z + cz * .3, cx * v - cz, .2 + .4 * R(), cz * v + cx, .6 + .4 * R(), .12, .5, 2.5, .2, COL.dust, K.SMOKE, .8, .3, 0, 0);
-    }
-    if (fire) for (let i = 0; i < 60 * Q * big; i++) {
-      const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.7 + .4 * R());
-      emit(F.x + cx * r, .05, F.z + cz * r, cx * .6, 2 + 2.5 * R(), cz * .6, .4 + .3 * R(), .1 + .06 * R(), .03, 1.5, 1.5, COL.one, K.FLAME, 1.1, .3, 0, 0);
+    const F = a.opt.feet, el = a.el;
+    add({ update: tierBurst, el, feet: F.clone(), big, bolts: el === 'thunder' ? Array.from({ length: big > .7 ? 6 : 2 }, () => new Bolt(96)) : [] });
+    const n = Q * big;
+    if (el === 'fire') {
+      for (let i = 0; i < 90 * n; i++) { // a ring of flame bursting up from the feet
+        const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.7 + .5 * R());
+        emit(F.x + cx * r, .05, F.z + cz * r, cx * (.6 + .8 * R()), 2.2 + 2.8 * R(), cz * (.6 + .8 * R()), .35 + .3 * R(), .1 + .07 * R(), .03, 1.6, 1.5, COL.one, K.FLAME, 1.1, .3, 0, 0);
+      }
+      for (let i = 0; i < 140 * n; i++) { // embers flung up and out
+        runit(); const v = 2 + 4 * R();
+        emit(F.x + u3[0] * .3, .4 + R() * .9, F.z + u3[2] * .3, u3[0] * v, Math.abs(u3[1]) * v + 1.5, u3[2] * v, .5 + .5 * R(), .012, .005, 1.2, -2.5, R() < .3 ? COL.hot : COL.ember, K.SPARK, 2.4, .3, .05, 0);
+      }
+      for (let i = 0; i < 14 * n; i++) { // a dark smoke ring rolling out: value contrast against the bright flame
+        const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th);
+        emit(F.x + cx * .4, .15, F.z + cz * .4, cx * 2, .5 + .5 * R(), cz * 2, .7 + .4 * R(), .16, .45, 2.5, .4, COL.smoke, K.SMOKE, .9, .25, 0, 0);
+      }
+    } else if (el === 'thunder') {
+      for (let i = 0; i < 120 * n; i++) { // sparks spraying off the body
+        runit(); const v = 2.5 + 4 * R();
+        emit(F.x + u3[0] * .25, .2 + R() * 1.5, F.z + u3[2] * .25, u3[0] * v, u3[1] * v * .6 + .5, u3[2] * v, .18 + .2 * R(), .01, .004, 2.5, -3, R() < .4 ? COL.white : COL.spark, K.SPARK, 2.6, .15, .05, 0);
+      }
+    } else if (el === 'water') {
+      for (let i = 0; i < 110 * n; i++) { // a crown of water thrown up from the feet
+        const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.8 + .3 * R()), v = 2.5 + 2.5 * R();
+        emit(F.x + cx * r, .05, F.z + cz * r, cx * 1.1, v, cz * 1.1, .5 + .3 * R(), .022, .012, .5, -9, R() < .3 ? COL.waterHi : COL.water, K.DROP, 1.4, 0, .03, 0);
+      }
+      for (let i = 0; i < 6; i++) { const th = i / 6 * TAU; wspr('water', 'spray', tA.set(F.x + Math.cos(th) * .5, .25, F.z + Math.sin(th) * .5), .5, .5, { color: [.6, .85, 1], intensity: .9, occ: .3, rot: th }); }
+    } else {
+      for (let i = 0; i < 50 * n; i++) { // dust blown out flat from the feet
+        const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), v = 2.5 + 2.5 * R();
+        emit(F.x + cx * .3, .06, F.z + cz * .3, cx * v - cz, .2 + .4 * R(), cz * v + cx, .6 + .4 * R(), .12, .5, 2.5, .2, COL.dust, K.SMOKE, .8, .3, 0, 0);
+      }
+      for (let i = 0; i < 80 * n; i++) { // flat streaks of air racing outward
+        const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), v = 5 + 4 * R();
+        emit(F.x + cx * .5, .1 + R() * 1.2, F.z + cz * .5, cx * v, RS(.3), cz * v, .22 + .12 * R(), .009, .004, 2, 0, R() < .5 ? COL.windHi : COL.wind, K.SPARK, 2, .05, .08, 0);
+      }
+      for (let i = 0; i < 24 * n; i++) { const th = R() * TAU, v = 2 + 2 * R(); emit(F.x + Math.cos(th) * .4, .1, F.z + Math.sin(th) * .4, Math.cos(th) * v, 1 + 1.5 * R(), Math.sin(th) * v, 1 + .5 * R(), .05, .04, 1, -1, COL.leaf, K.LEAF, 1, .4, RS(9), 0); }
     }
     kit.shake(.15 + .35 * big);
   }
 
   function limitCharge(a, dt) {
-    const o = a.opt, F = o.feet, P = PAL[a.el], fire = a.el === 'fire', tier = o.tier;
+    const o = a.opt, F = o.feet, tier = o.tier;
     const target = o.charging && tier ? TIER_K[tier] + .08 * (o.level ?? 0) : 0;
     a.lk = (a.lk ?? 0) + (target - (a.lk ?? 0)) * Math.min(1, dt * (target > (a.lk ?? 0) ? 6 : 4));
-    // tier changes: 中 a small pulse, 大 the big flash
     const tr = o.charging ? tier : null;
-    if (tr !== a.lcTier) { if (!o.feet) {} else if (tr === 'm') startBurst(a, .45); else if (tr === 'l') startBurst(a, 1); a.lcTier = tr; }
+    if (tr !== a.lcTier) { if (F && tr === 'm') startBurst(a, .45); else if (F && tr === 'l') { startBurst(a, 1); a.fullAt = now(); } a.lcTier = tr; }
     const k = a.lk;
     if (k < .02 || !F) return;
-    const t = now(), full = tier === 'l' && o.charging, fl = flick(a.seed, fire ? 17 : 31);
-    if (a.el === 'water' || a.el === 'wind') { BODY[a.el](a, F, k, dt, full); return; } // their own charge scenes, not the Limit Charge look
-    const spike = full && R() < .1 ? 1.5 : 1;
-
-    // floor: a soft pool of light, a ring that breathes, rings pulsing outward
-    tA.set(F.x, .02, F.z);
-    tA.y = .06; spr(S.GLOW, tA, .95 + .3 * k, .4 + .1 * k, 0, 0, P.glow, (.3 + .6 * k) * fl, .2);
-    const br = .5 + .5 * Math.sin(t * (4 + 6 * k));
-    floorRing(F, (COL_R + .15) * (1 + .05 * br), .03 + .02 * k, (.3 + .55 * k) * (.75 + .25 * br) * spike, P.main, .015 + .02 * k, a.seed);
-    const rate = .7 + 1.8 * k;
-    for (let j = 0; j < (k > .5 ? 2 : 1); j++) {
-      const ph = (t * rate + j * .5 + a.seed) % 1;
-      floorRing(F, .3 + .7 * ph, .02 + .012 * k, .6 * k * (1 - ph) ** 1.6, P.main, .02, a.seed + j);
+    const full = tier === 'l' && o.charging;
+    const pre = tier === 'm' && o.charging ? sc(o.level ?? 0, .86, 1) : 0; // anticipation: the last stretch before 大
+    if (full && now() - (a.fullAt ?? 0) > .7 && (a.shock = (a.shock ?? 0) - dt) <= 0) { a.shock = .7; add({ update: aftershock, el: a.el, feet: F.clone() }); }
+    BODY[a.el](a, F, k, dt, full, pre);
+    if (pre > 0) drawIn(a, F, pre, dt);
+  }
+  // the sustained 大: a small ring running out every ~0.7 s, so the full charge keeps threatening
+  function aftershock(e) {
+    const k = Math.min(1, e.age / .45), P = PAL[e.el];
+    floorRing(e.feet, .45 + .9 * (1 - (1 - k) ** 2), .03, 1.1 * (1 - k) ** 1.5, P.main, .04, e.seed);
+    return e.age < .45;
+  }
+  // anticipation: everything round the player is pulled in hard and a ring closes on the feet
+  function drawIn(a, F, pre, dt) {
+    const P = PAL[a.el], kind = a.el === 'fire' ? K.EMBER : a.el === 'water' ? K.DROP : K.SPARK;
+    floorRing(F, COL_R + 1.4 * (1 - pre), .03, .9 * pre, P.hot, .02, a.seed + .9);
+    for (let n = take(a, 'pre', 260 * pre * Q * dt); n > 0; n--) {
+      const th = R() * TAU, c = Math.cos(th), s = Math.sin(th), r0 = 1.3 + .6 * R(), y0 = .1 + 1.5 * R(), life = .22 + .1 * R(), y1 = .9 + .3 * R();
+      emit(F.x + c * r0, y0, F.z + s * r0, -c * (r0 - .15) / life, (y1 - y0) / life, -s * (r0 - .15) / life, life, .02, .008, 0, 0, P.mote, kind, 2, 0, .09, R() * dt);
     }
+  }
+  // drawn-in motes and an ever-present faint body glow
+  function bodyGlow(F, k, col, fl) { tA.set(F.x, .95, F.z); spr(S.GLOW, tA, .55 + .15 * k, 1.15, 0, 0, col, (.15 + .3 * k) * fl, .05); }
 
-    // the body: a tall glow and a hollow energy capsule around it, flickering brighter with the tier
-    tA.set(F.x, .95, F.z);
-    spr(S.GLOW, tA, .6 + .15 * k, 1.2, 0, 0, P.glow, (.2 + .45 * k) * fl * spike, .1);
-    spr(S.GHOST, tA, .4 + .06 * k, 1.0, 0, a.seed + Math.floor(t * 12) * .37, P.main, (.2 + .55 * k) * fl * spike);
-    if (k > .5) { tB.set(F.x, 1.25, F.z); spr(S.GLOW, tB, .35, .35, 0, 0, P.hot, .35 * (k - .5) * fl * spike, .5); }
-
-    // streaks rising up the cylinder (the Limit Charge look), slightly spiralling and drawn inward
-    for (let n = take(a, 'lcS', (40 + 340 * k * k) * Q * dt); n > 0; n--) {
-      const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.75 + .4 * R()), y = R() * .5;
-      const up = 2.2 + 2.8 * R() * (.5 + k), sw = .5 + .6 * k;
-      emit(F.x + cx * r, y, F.z + cz * r, -cx * .25 - cz * sw, up, -cz * .25 + cx * sw, .4 + .35 * R(), .016 + .008 * k, .006, .6, 1.2,
-        R() < .3 ? P.hot : P.streak, K.SPARK, (2.2 + 1.6 * k) * (P.si ?? 1), .15, .1 + .06 * k, R() * dt);
-    }
-    // light streaks shooting up the cylinder (segments: crisp lines that read at any distance)
-    const ls = a.lcLines ??= Array.from({ length: 20 }, () => ({ th: R() * TAU, y: R() * COL_TOP, sp: 2, len: .3 }));
-    const nL = Math.min(ls.length, Math.round(4 + 15 * k * k));
-    for (let i = 0; i < nL; i++) {
-      const l = ls[i];
-      l.y += l.sp * dt;
-      if (l.y - l.len > COL_TOP) { l.th = R() * TAU; l.y = R() * .3; l.sp = (2.5 + 2.5 * R()) * (.6 + .6 * k); l.len = .2 + .35 * R() * (.5 + k); l.r = COL_R * (.85 + .3 * R()); }
-      const r = l.r ?? COL_R, x = F.x + Math.cos(l.th) * r, z = F.z + Math.sin(l.th) * r, y0 = Math.max(0, l.y - l.len), y1 = Math.min(COL_TOP + .2, l.y);
-      if (y1 > y0) seg(x, y0, z, x, y1, z, .008 + .006 * k, (.35 + .9 * k) * (1 - .5 * l.y / COL_TOP) * fl * (P.si ?? 1), i & 1 ? P.main : P.streak);
-    }
-    // translucent wisps: fire = flame tongues licking up from the ring, thunder = pale glow puffs
-    if (fire) {
-      for (let n = take(a, 'lcF', (15 + 110 * k) * Q * dt); n > 0; n--) {
-        const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.85 + .3 * R()), y = R() * R() * 1.2;
-        emit(F.x + cx * r, y, F.z + cz * r, -cx * .2, .8 + 1.4 * R() * (.4 + k), -cz * .2, .45 + .35 * R(), (.07 + .07 * R()) * (.7 + .5 * k), .02, 1.4, 1.6,
-          COL.one, K.FLAME, .45 + .4 * k, .25, 0, R() * dt);
+  // the bodies, one per element. a = aura state, F = feet, k = .32 小 / .64 中 / 1 大 (eased), full = 大 held, pre = 0..1 anticipation
+  const BODY = {
+    // fire: a wreath of flame round the feet that climbs with the tier, embers spiralling in, dark smoke above at 大, a scorched pool
+    fire(a, F, k, dt, full, pre) {
+      const t = now(), fl = flick(a.seed, 17), surge = full ? .85 + .15 * Math.sin(t * 13) : 1;
+      sprFloor(S.GLOW, tA.set(F.x, .03, F.z), .8 + .5 * k, FLOOR.fire, (.6 + .7 * k) * fl, .1);
+      floorRing(F, COL_R + .12, .035 + .02 * k, (.5 + .7 * k) * fl, COL.fire, .06 + .04 * k, a.seed); // the flame edge wobbles
+      if (k > .5) floorRing(F, COL_R * .7, .02, .6 * k * fl, COL.hot, .05, a.seed + .4);
+      bodyGlow(F, k, COL.fire, fl * surge);
+      const ring = t * 1.6;
+      for (let n = take(a, 'fw', (50 + 170 * k) * Q * dt); n > 0; n--) { // the wreath: flames licking up from a turning ring, taller each tier
+        const th = ring + R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.85 + .3 * R());
+        emit(F.x + cx * r, .02, F.z + cz * r, -cx * .25 - cz * .3, (.8 + 2.2 * k) * (.7 + .6 * R()) * surge, -cz * .25 + cx * .3, .3 + .4 * k * R(), (.16 + .17 * k) * (.7 + .5 * R()), .05, 1.4, 1.6,
+          COL.one, K.FLAME, 1 + .5 * k, .25, 0, R() * dt);
       }
-    }
-    for (let n = take(a, 'lcW', (8 + 40 * k) * Q * dt); n > 0; n--) {
-      const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.6 + .4 * R());
-      emit(F.x + cx * r, R() * .8, F.z + cz * r, -cx * .1, .7 + .9 * R(), -cz * .1, .8 + .5 * R(), .14, .26, .5, .4, P.glow, K.GLOW, .22 + .3 * k, .3, 0, R() * dt);
-    }
-    // motes drawn in from around the player towards the body and up
-    for (let n = take(a, 'lcM', (15 + 110 * k) * Q * dt); n > 0; n--) {
-      const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r0 = .85 + .5 * R(), y0 = .1 + R() * 1.6, life = .45 + .3 * R();
-      const r1 = COL_R * .5, y1 = Math.min(COL_TOP, y0 + .3 + .4 * R());
-      emit(F.x + cx * r0, y0, F.z + cz * r0, cx * (r1 - r0) / life - cz * .4, (y1 - y0) / life, cz * (r1 - r0) / life + cx * .4, life, .014, .006, 0, 0,
-        P.mote, fire ? K.EMBER : K.SPARK, 1.6 + 1.2 * k, 0, .05, R() * dt);
-    }
-    // thunder: small arcs crackling over the body (bolts 4..9; 0..3 belong to the classic stick)
-    if (a.el === 'thunder') {
-      const nb = Math.min(6, Math.round(1 + 5 * k * k) + (full ? 1 : 0));
+      if (k > .5) for (let n = take(a, 'ft', (k - .4) * 150 * Q * dt); n > 0; n--) { // 中 / 大: tongues licking up the body
+        const th = R() * TAU, r = .12 + .2 * R();
+        emit(F.x + Math.cos(th) * r, .2 + R() * (.4 + .8 * k), F.z + Math.sin(th) * r, RS(.2), 1 + 1.6 * R() * k, RS(.2), .35 + .3 * R(), .2 + .12 * R(), .05, 1.4, 1.8, COL.one, K.FLAME, .9 + .4 * k, .3, 0, R() * dt);
+      }
+      for (let n = take(a, 'fe', (20 + 120 * k) * Q * dt); n > 0; n--) { // embers spiralling in from round the player and up
+        const th = R() * TAU, c = Math.cos(th), s = Math.sin(th), r0 = .9 + .6 * R(), y0 = .05 + R() * .8, life = .6 + .4 * R(), r1 = COL_R * .5;
+        emit(F.x + c * r0, y0, F.z + s * r0, c * (r1 - r0) / life - s * 1.2, (.6 + 1.2 * k) / life, s * (r1 - r0) / life + c * 1.2, life, .02, .008, 0, 0, R() < .3 ? COL.hot : COL.ember, K.EMBER, 2.4 + 1.2 * k, .15, 0, R() * dt);
+      }
+      for (let n = take(a, 'fr', (20 + 200 * k * k) * Q * dt); n > 0; n--) { // hot streaks shooting up the wreath: the bright read at a distance
+        const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r = COL_R * (.75 + .35 * R());
+        emit(F.x + cx * r, R() * .4, F.z + cz * r, -cx * .2, (2.2 + 2.6 * R()) * (.5 + k), -cz * .2, .35 + .3 * R(), .014 + .006 * k, .005, .6, 1.2,
+          R() < .3 ? COL.hot : COL.ember, K.SPARK, 2.2 + 1.4 * k, .15, .1 + .05 * k, R() * dt);
+      }
+      if (k > .55) for (let n = take(a, 'fs', 90 * (k - .3) * Q * dt); n > 0; n--) { // sparks flying up off the body
+        const th = R() * TAU, r = COL_R * R();
+        emit(F.x + Math.cos(th) * r, .2 + R() * 1.4, F.z + Math.sin(th) * r, RS(.5), 1.2 + 1.8 * R(), RS(.5), .6 + .5 * R(), .012, .006, 1.2, .4, COL.ember, K.SPARK, 2.2, .7, .05, R() * dt);
+      }
+      if (full) for (let n = take(a, 'fk', 14 * Q * dt); n > 0; n--) { // dark smoke rolling off the top: the bright flame needs a dark next to it
+        const th = R() * TAU;
+        emit(F.x + Math.cos(th) * .2, 1.4 + .4 * R(), F.z + Math.sin(th) * .2, RS(.2), .5 + .4 * R(), RS(.2), 1.1 + .5 * R(), .14, .4, 1, .3, COL.smoke, K.SMOKE, .7, .2, 0, R() * dt);
+      }
+    },
+    // thunder: arcs crawling up the body (each climbs as it regenerates), crackle flashes, a jagged flickering ring and arcs over
+    // the floor, a few fast light lines; at 大 a bolt from the stick tip to the ground now and then
+    thunder(a, F, k, dt, full) {
+      const t = now(), fl = flick(a.seed, 31), P = PAL.thunder, T = a.tip;
+      sprFloor(S.GLOW, tA.set(F.x, .03, F.z), .75 + .4 * k, FLOOR.thunder, (.5 + .6 * k) * fl, .1);
+      const on = R() < .8 ? 1 : .3; // the ring stutters like a bad contact
+      floorRing(F, COL_R + .15, .03 + .02 * k, (.55 + .8 * k) * on, P.main, .08, a.seed + Math.floor(t * 20));
+      bodyGlow(F, k, COL.elecGlow, fl);
+      // body arcs (bolts 4..9; 0..3 belong to the classic stick glow)
+      const nb = Math.min(6, Math.round(2 + 4 * k) + (full ? 1 : 0));
       if ((a.lcRegen = (a.lcRegen ?? 0) - dt) <= 0) {
-        a.lcRegen = .05 + .04 * R();
+        a.lcRegen = .045 + .03 * R();
         for (let i = 0; i < 6; i++) {
           const bo = a.bolts[4 + i];
           if (i >= nb) { bo.n = 0; continue; }
-          const th = R() * TAU, r = COL_R * (.8 + .3 * R()), y = .05 + R() * 1.75, L = (.18 + .3 * R()) * (.6 + .6 * k);
+          const th = i * 1.1 + t * 1.3 + RS(.4), r = COL_R * (.75 + .3 * R()), y = ((t * (1.2 + 1.6 * k) + i / 6) % 1) * COL_TOP, L = (.25 + .3 * R()) * (.6 + .6 * k);
           tA.set(F.x + Math.cos(th) * r, y, F.z + Math.sin(th) * r);
-          const th2 = th + RS(.7);
-          tB.set(F.x + Math.cos(th2) * r * 1.05, Math.min(COL_TOP + .1, y + L), F.z + Math.sin(th2) * r * 1.05);
-          gen(bo, tA, tB, 3, .35, .3, .3);
+          const th2 = th + RS(.9);
+          tB.set(F.x + Math.cos(th2) * r, Math.min(COL_TOP + .1, y + L), F.z + Math.sin(th2) * r);
+          gen(bo, tA, tB, 3, .35, .35, .3);
+          if (R() < .5) add({ update: crackle, p: tB.clone(), s: .12 + .12 * k });
         }
       }
-      for (let i = 0; i < 6; i++) drawBolt(a.bolts[4 + i], .016, 1.5 * Math.min(1, k * 1.4), COL.elec);
-    } else if (fire && k > .55) { // fire at 中/大: embers flying up off the body
-      for (let n = take(a, 'lcE', 70 * (k - .3) * Q * dt); n > 0; n--) {
-        const th = R() * TAU, r = COL_R * R();
-        emit(F.x + Math.cos(th) * r, .2 + R() * 1.4, F.z + Math.sin(th) * r, RS(.5), 1 + 1.5 * R(), RS(.5), .6 + .5 * R(), .012, .006, 1.2, .4,
-          COL.ember, K.SPARK, 2.2, .7, .05, R() * dt);
+      for (let i = 0; i < 6; i++) drawBolt(a.bolts[4 + i], .022 + .01 * k, 2 * Math.min(1, .5 + k), i & 1 ? COL.elec : COL.spark);
+      // arcs over the floor (中 and up) and, at 大, a bolt from the tip to the ground
+      const fb = a.floorBolts ??= Array.from({ length: 4 }, () => new Bolt(64));
+      const nf = k > .5 ? (full ? 4 : 2) : 1;
+      if ((a.fbRegen = (a.fbRegen ?? 0) - dt) <= 0) {
+        a.fbRegen = .06 + .05 * R();
+        fb.forEach((bo, i) => {
+          if (i >= nf) { bo.n = 0; return; }
+          const th = R() * TAU, r1 = COL_R + .5 + .6 * R() * k;
+          tA.set(F.x + Math.cos(th) * COL_R, .02, F.z + Math.sin(th) * COL_R); tB.set(F.x + Math.cos(th + RS(.4)) * r1, .02, F.z + Math.sin(th + RS(.4)) * r1);
+          gen(bo, tA, tB, 3, .3, .3, .2);
+        });
+        if (full && T && R() < .25) { const bo = fb[3], th = R() * TAU; gen(bo, T, tB.set(F.x + Math.cos(th) * .6, .02, F.z + Math.sin(th) * .6), 5, .16, .3, .5); add({ update: crackle, p: tB.clone(), s: .4 }); }
       }
-    }
-  }
-
-  // the bodies of water and wind: their own charge scenes (not the Limit Charge light pillar in another colour)
-  //   water: ribbons of water spiralling up round the body (shader helices), a whirlpool on the floor, drops and bubbles lifting
-  //          off it, mist at the feet; water drawn up from the floor into the stick tip; at full charge the ribbons swell in a
-  //          pulse and ring waves run out over the floor
-  //   wind:  bands of wind wound round the body, a dust swirl on the floor, painted dust and leaves pulled in along the floor,
-  //          pressure rings contracting on the caster, air streaming in; at full charge the bands spin up in a pulse
-  const BODY = {
+      for (const bo of fb) drawBolt(bo, .024, 2, COL.elec);
+      // fast light lines up the body (fewer than before: the arcs carry it now)
+      const ls = a.lcLines ??= Array.from({ length: 12 }, () => ({ th: R() * TAU, y: R() * COL_TOP, sp: 2, len: .3, r: COL_R }));
+      const nL = Math.min(ls.length, Math.round(3 + 9 * k * k));
+      for (let i = 0; i < nL; i++) {
+        const l = ls[i];
+        l.y += l.sp * dt;
+        if (l.y - l.len > COL_TOP) { l.th = R() * TAU; l.y = R() * .3; l.sp = (3 + 3 * R()) * (.6 + .6 * k); l.len = .2 + .3 * R(); l.r = COL_R * (.85 + .3 * R()); }
+        const x = F.x + Math.cos(l.th) * l.r, z = F.z + Math.sin(l.th) * l.r, y0 = Math.max(0, l.y - l.len), y1 = Math.min(COL_TOP + .2, l.y);
+        if (y1 > y0) seg(x, y0, z, x, y1, z, .007 + .004 * k, (.4 + .7 * k) * (1 - .5 * l.y / COL_TOP) * fl, i & 1 ? P.main : P.streak);
+      }
+      for (let n = take(a, 'tm', (15 + 90 * k) * Q * dt); n > 0; n--) { // static motes drawn in
+        const th = R() * TAU, cx = Math.cos(th), cz = Math.sin(th), r0 = .85 + .5 * R(), y0 = .1 + R() * 1.6, life = .3 + .2 * R();
+        emit(F.x + cx * r0, y0, F.z + cz * r0, -cx * (r0 - .2) / life, .3, -cz * (r0 - .2) / life, life, .01, .005, 0, 0, P.mote, K.SPARK, 1.8 + k, 0, .05, R() * dt);
+      }
+    },
     water(a, F, k, dt, full) {
-      const t = now(), T = a.tip, on = Math.min(1, k * 2.2), pulse = full ? .5 + .5 * Math.sin(t * 9) : 0;
-      sprFloor(S.GLOW, tA.set(F.x, .03, F.z), 1.1 + .4 * k, COL.waterGlow, .5 + .5 * k, .1);
-      wmesh('water', 'disc', tA.set(F.x, .025, F.z), .55 + .55 * k, { opacity: .5 + .5 * on, twist: 1.6, spin: .5 + 1.2 * k, flow: -.5, foam: .5 + .3 * k, tile: [5, 2], seed: a.seed, occ: .5, colA: WB.a, colB: WB.b });
-      const nr = k > .55 ? 3 : 2;
-      for (let i = 0; i < nr; i++) // ribbons of water spiralling up round the body
-        wmesh('water', 'helix', tA.set(F.x, .03, F.z), 1, { r0: .62 + .1 * pulse, r1: .3 + .08 * pulse, h: (.9 + .9 * k) * (.95 + .05 * Math.sin(t * 3 + i)), turns: 1.25, width: .08 + .1 * k + .05 * pulse,
-          phase: t * (2.2 + 3 * k) + i * TAU / nr, flow: 2 + 2.5 * k, foam: .3 + .2 * pulse, tile: [3, 1], seed: a.seed + i, occ: .3, opacity: on, intensity: 1.5 + .5 * pulse, erode: .35 * (1 - k), colA: WB.a, colB: WB.b });
-      for (let n = take(a, 'lcB', (12 + 60 * k) * Q * dt); n > 0; n--) { // drops lifting off the floor, slowly, as if the water defied gravity
+      const t = now(), T = a.tip, on = Math.min(1, .55 + k), pulse = full ? .5 + .5 * Math.sin(t * 9) : 0;
+      sprFloor(S.GLOW, tA.set(F.x, .03, F.z), 1.1 + .4 * k, FLOOR.water, .7 + .5 * k, .1);
+      wmesh('water', 'disc', tA.set(F.x, .025, F.z), .6 + .5 * k, { opacity: .6 + .4 * on, twist: 1.6, spin: .5 + 1.2 * k, flow: -.5, foam: .55 + .3 * k, tile: [5, 2], seed: a.seed, occ: .5, colA: WB.a, colB: WB.b, intensity: 1.3 });
+      const nr = k > .8 ? 3 : 2;
+      for (let i = 0; i < nr; i++) // ribbons of water spiralling up round the body: knee high at 小, over the head at 大
+        wmesh('water', 'helix', tA.set(F.x, .03, F.z), 1, { r0: .62 + .1 * pulse, r1: .3 + .08 * pulse, h: (.6 + 1.2 * k) * (.95 + .05 * Math.sin(t * 3 + i)), turns: 1.25, width: .1 + .1 * k + .05 * pulse,
+          phase: t * (2.2 + 3 * k) + i * TAU / nr, flow: 2 + 2.5 * k, foam: .35 + .2 * pulse, tile: [3, 1], seed: a.seed + i, occ: .3, opacity: on, intensity: 1.9 + .5 * pulse, erode: .25 * (1 - k), colA: WB.a, colB: WB.b });
+      for (let n = take(a, 'lcB', (16 + 60 * k) * Q * dt); n > 0; n--) { // drops lifting off the floor, slowly, as if the water defied gravity
         const th = R() * TAU, r = .35 + .4 * R();
         emit(F.x + Math.cos(th) * r, .05, F.z + Math.sin(th) * r, -Math.sin(th) * .6, .5 + 1.1 * R() * (.5 + k), Math.cos(th) * .6, .9 + .6 * R(), .022 + .016 * R(), .012, .8, .4,
-          R() < .3 ? COL.waterHi : COL.water, K.DROP, 1.2 + .3 * k, .25, .02, R() * dt);
+          R() < .3 ? COL.waterHi : COL.water, K.DROP, 1.3 + .3 * k, .25, .02, R() * dt);
       }
       for (let i = 0; i < 4; i++) { // mist breathing at the feet
         const ph = (t * .5 + i / 4) % 1, th = i * 1.7 + a.seed * 9;
         wspr('water', 'mist', tA.set(F.x + Math.cos(th) * .45, .12 + .15 * ph, F.z + Math.sin(th) * .45), .5 + .4 * ph, .35 + .3 * ph,
           { color: [.6, .8, .95], intensity: .4 + .3 * k, opacity: Math.sin(Math.PI * ph) * (.3 + .5 * k), occ: .25, rot: th + t * .2 });
       }
-      if (full) for (let j = 0; j < 2; j++) { // ring waves running out at full charge
-        const ph = (t * 1.4 + j * .5) % 1;
-        sprFloor(S.RING, tA.set(F.x, .03, F.z), .5 + 1.4 * ph, j ? COL.waterHi : COL.foam, 1.3 * (1 - ph) ** 1.5, .05, a.seed + j);
+      const nw = full ? 3 : k > .5 ? 2 : 1; // ripples on the circle: one at 小, two at 中, three and faster at 大
+      for (let j = 0; j < nw; j++) {
+        const ph = (t * (.7 + .7 * k) + j / nw) % 1;
+        sprFloor(S.RING, tA.set(F.x, .03, F.z), .45 + (1 + .6 * k) * ph, j & 1 ? COL.waterHi : COL.foam, (.5 + .8 * k) * (1 - ph) ** 1.5, .05, a.seed + j);
       }
       if (!T) return;
-      for (let n = take(a, 'lcU', (8 + 50 * k) * Q * dt); n > 0; n--) { // water drawn up from the floor into the tip
+      for (let n = take(a, 'lcU', (10 + 50 * k) * Q * dt); n > 0; n--) { // water drawn up from the floor into the tip
         const th = R() * TAU, r = .45 + .35 * R(), x = F.x + Math.cos(th) * r, z = F.z + Math.sin(th) * r, life = .4 + .25 * R();
-        emit(x, .05, z, (T.x - x) / life, (T.y - .05) / life, (T.z - z) / life, life, .026, .012, 0, 0, R() < .4 ? COL.waterHi : COL.water, K.DROP, 1.2, .25, .03, R() * dt);
+        emit(x, .05, z, (T.x - x) / life, (T.y - .05) / life, (T.z - z) / life, life, .026, .012, 0, 0, R() < .4 ? COL.waterHi : COL.water, K.DROP, 1.3, .25, .03, R() * dt);
       }
     },
     wind(a, F, k, dt, full) {
-      const t = now(), on = Math.min(1, k * 2.2), pulse = full ? .5 + .5 * Math.sin(t * 11) : 0;
-      wmesh('wind', 'disc', tA.set(F.x, .02, F.z), .7 + .6 * k, { opacity: .55 + .45 * on, twist: 2, spin: -(1 + 1.5 * k), flow: -.6, tile: [5, 2], seed: a.seed, occ: .15, colA: AD.a, colB: AD.b, intensity: 1.1 });
-      const nb = k > .55 ? 4 : 3;
-      for (let i = 0; i < nb; i++) // bands of wind wound round the body, rising
-        wmesh('wind', 'helix', tA.set(F.x, .05, F.z), 1, { r0: .6 + .1 * pulse, r1: .4, h: 1.3 + .7 * k, turns: 1.1, width: .26 + .16 * k + .08 * pulse,
-          phase: t * (4 + 6 * k + 3 * pulse) + i * TAU / nb, flow: 3 + 3 * k, tile: [1.5, .6], seed: a.seed + i, occ: .04, opacity: on, intensity: 3.2 + .8 * k + .8 * pulse, colA: AW.a, colB: AW.b });
-      wmesh('wind', 'tube', tA.set(F.x, 0, F.z), 1, { r0: .5, r1: .38, h: 1.6 + .4 * k, curve: 1, spin: 2 + 2 * k, twist: 1.5, tile: [3, 1.2], seed: a.seed + .7, occ: .03, opacity: .6 * on, intensity: 1.8, colA: AW.a, colB: AW.b });
-      // painted dust clumps and leaves pulled in along the floor
-      for (let i = 0; i < 7; i++) {
+      const t = now(), on = Math.min(1, .55 + k), pulse = full ? .5 + .5 * Math.sin(t * 11) : 0;
+      sprFloor(S.GLOW, tA.set(F.x, .03, F.z), 1 + .4 * k, FLOOR.wind, .35 + .3 * k, .05);
+      wmesh('wind', 'disc', tA.set(F.x, .02, F.z), .8 + .6 * k, { opacity: .7 + .3 * on, twist: 2, spin: -(1 + 1.5 * k), flow: -.6, tile: [5, 2], seed: a.seed, occ: .2, colA: AD.a, colB: AD.b, intensity: 1.4 });
+      const nb = full ? 4 : k > .5 ? 3 : 2;
+      for (let i = 0; i < nb; i++) // bands of wind wound round the body, rising: waist high at 小, over the head at 大
+        wmesh('wind', 'helix', tA.set(F.x, .05, F.z), 1, { r0: .6 + .1 * pulse, r1: .4, h: .8 + 1.2 * k, turns: 1.1, width: .26 + .16 * k + .08 * pulse,
+          phase: t * (4 + 6 * k + 3 * pulse) + i * TAU / nb, flow: 3 + 3 * k, tile: [1.5, .6], seed: a.seed + i, occ: .06, opacity: on, intensity: 4.6 + 1.2 * k + .8 * pulse, colA: AW.a, colB: AW.b });
+      wmesh('wind', 'tube', tA.set(F.x, 0, F.z), 1, { r0: .5, r1: .38, h: 1.1 + .9 * k, curve: 1, spin: 2 + 2 * k, twist: 1.5, tile: [3, 1.2], seed: a.seed + .7, occ: .03, opacity: .7 * on, intensity: 2, colA: AW.a, colB: AW.b });
+      for (let i = 0; i < 7; i++) { // painted dust clumps pulled in along the floor
         const ph = (t * (.5 + .4 * k) + i / 7) % 1, th = i * 2.4 + a.seed * 7 + ph * 2.5, r = 1.7 * (1 - ph) + .45;
         wspr('wind', 'dust', tA.set(F.x + Math.cos(th) * r, .1 + .1 * ph, F.z + Math.sin(th) * r), .45 + .2 * hash(i), .35 + .2 * hash(i + 3),
-          { color: [.62, .58, .5], intensity: .8, opacity: Math.sin(Math.PI * ph) * (.3 + .6 * k), occ: .5, rot: th * 2 });
+          { color: [.7, .65, .56], intensity: 1.1, opacity: Math.sin(Math.PI * ph) * (.55 + .45 * k), occ: .5, rot: th * 2 });
       }
-      for (let n = take(a, 'lcL', (3 + 10 * k) * Q * dt); n > 0; n--) {
-        const th = R() * TAU, c = Math.cos(th), sn = Math.sin(th), r = 1.8;
-        emit(F.x + c * r, .05 + R() * .5, F.z + sn * r, -c * 1.8 - sn * 2, .5, -sn * 1.8 + c * 2, .8, .055, .04, .3, -.3, COL.leaf ?? COL.dust, K.LEAF, 1, .3, RS(9), R() * dt);
+      for (let n = take(a, 'lcL', (4 + 16 * k) * Q * dt); n > 0; n--) { // leaves circling in and up
+        const th = R() * TAU, c = Math.cos(th), sn = Math.sin(th), r = 1.6;
+        emit(F.x + c * r, .05 + R() * .5, F.z + sn * r, -c * 1.6 - sn * 2.2, .6 + 1.2 * k, -sn * 1.6 + c * 2.2, .9, .055, .04, .3, -.3, COL.leaf, K.LEAF, 1, .3, RS(9), R() * dt);
       }
-      // pressure rings contracting on the caster, air streaming in from all round
-      for (let j = 0; j < 2; j++) {
-        const ph = (t * (.7 + .8 * k) + j * .5 + a.seed) % 1, f = Math.sin(Math.PI * ph) * k;
+      for (let j = 0; j < 2; j++) { // pressure rings contracting on the caster
+        const ph = (t * (.7 + .8 * k) + j * .5 + a.seed) % 1, f = Math.sin(Math.PI * ph) * (.4 + .6 * k);
         floorRing(F, 2.1 * (1 - ph) + COL_R + .1, .02 + .015 * k, .9 * f, j ? COL.wind : COL.windHi, .02, a.seed + j);
       }
-      for (let n = take(a, 'lcI', (15 + 90 * k) * Q * dt); n > 0; n--) {
+      for (let n = take(a, 'lcI', (20 + 90 * k) * Q * dt); n > 0; n--) { // streaks of air drawn in from all round, curling
         const th = R() * TAU, c = Math.cos(th), sn = Math.sin(th), r = 1.5 + .8 * R(), v = 3 + 3 * R(), life = (r - COL_R) / v;
-        emit(F.x + c * r, .1 + R() * 1.8, F.z + sn * r, -c * v - sn * v * .6, .2, -sn * v + c * v * .6, life, .008, .004, 0, 0, R() < .4 ? COL.windHi : COL.wind, K.SPARK, 1.7, .05, .07, R() * dt);
+        emit(F.x + c * r, .1 + R() * 1.8, F.z + sn * r, -c * v - sn * v * .6, .2, -sn * v + c * v * .6, life, .008, .004, 0, 0, R() < .4 ? COL.windHi : COL.wind, K.SPARK, 1.9, .05, .07, R() * dt);
       }
       if (full && (a.gp = (a.gp ?? 0) - dt) <= 0) { a.gp = .45; for (let i = 0; i < 2; i++) wspr('wind', 'twirl', tA.set(F.x, 1, F.z), 2, 2, { rot: t * 3 + i * Math.PI, color: [.9, 1, 1], intensity: .8, occ: 0 }); }
     },
   };
+  // a crackle flash where an arc ends: a hard white pop for two or three frames
+  function crackle(e) { if (e.age < .06) { spr(S.GLOW, e.p, e.s, e.s, 0, 0, COL.white, 1.6 * (1 - e.age / .06), .8); return true; } return false; }
 
   // ---------------- stick-tip sphere (Spark Kirby) ----------------
   // an arc crawling over the sphere: a jittered polyline along the great circle from u to v, written straight into a Bolt
@@ -293,7 +336,7 @@ export function createChargeMoves(kit) {
 
     // core and body
     spr(S.GLOW, p, r * 2.5, r * 2.5, 0, 0, P.glow, (.35 + .4 * L) * fl, .1);
-    if (fire) spr(S.FIREBALL, p, r * .9, r * .9, t * .8, c.seed, COL.one, .7 + .3 * L, .85);
+    if (fire) spr(S.FIREBALL, p, r * 1.15, r * 1.15, t * .8, c.seed, COL.one, .8 + .3 * L, .9);
     spr(S.PLASMA, p, r * 1.25, r * 1.25, t * .6, c.seed, P.main, (fire ? .9 : 1.05) + .25 * L);
     spr(S.PLASMA, p, r * 1.1, r * 1.1, -t * 1.1, c.seed + .5, fire ? COL.ember : COL.spark, .5 + .15 * L);
     spr(S.GLOW, p, r * .6, r * .6, 0, 0, P.hot, (.7 + .2 * L) * fl, .6);
@@ -304,7 +347,8 @@ export function createChargeMoves(kit) {
     }
 
     // arcs crawling over the surface: each one drifts round the sphere a little every regen and now and then jumps elsewhere
-    const nS = Math.min(12, Math.round(3 + 7 * L) + (full ? 2 : 0)), w = .009 + .012 * L;
+    // fire has no electric arcs (that is thunder's mark): its sphere is a flame orb with tongues licking off it (below)
+    const nS = fire ? 0 : Math.min(12, Math.round(3 + 7 * L) + (full ? 2 : 0)), w = .009 + .012 * L;
     for (let i = 0; i < 12; i++) {
       const s = sp.surf[i];
       if (i >= nS) { s.b.n = 0; continue; }
@@ -319,7 +363,7 @@ export function createChargeMoves(kit) {
       drawBolt(s.b, w, 1.5 + .5 * L, i & 1 ? P.arc2 : P.arc);
     }
     // short arcs jumping outward from the surface
-    const nO = Math.min(8, Math.round(1 + 4 * L) + (full ? 3 : 0));
+    const nO = fire ? 0 : Math.min(8, Math.round(1 + 4 * L) + (full ? 3 : 0));
     for (let i = 0; i < 8; i++) {
       const s = sp.out[i];
       if (i >= nO) { s.b.n = 0; continue; }
@@ -349,6 +393,11 @@ export function createChargeMoves(kit) {
       tB.crossVectors(tA, UP);
       emit(p.x + tA.x * r0, p.y + tA.y * r0, p.z + tA.z * r0, -tA.x * v + tB.x * v * .4, -tA.y * v, -tA.z * v + tB.z * v * .4, life, .025 + .03 * L, .04 + .05 * L, 0, 0,
         COL.one, K.FLAME, .8, .04, 0, R() * dt);
+    }
+    if (fire) for (let n = take(c, 'tg', (15 + 90 * L) * Q * dt); n > 0; n--) { // tongues of flame licking up off the orb, taller at 大
+      runit(); tA.set(u3[0], Math.abs(u3[1]) * .6 + .4, u3[2]).normalize();
+      emit(p.x + tA.x * r * .8, p.y + tA.y * r * .8, p.z + tA.z * r * .8, tA.x * .4, (.6 + 1.2 * L) * (.7 + .6 * R()), tA.z * .4, .22 + .2 * L, (.03 + .05 * L) * (.7 + .6 * R()), .01, 1.5, 1.5,
+        COL.one, K.FLAME, .7 + .3 * L, .3, 0, R() * dt);
     }
     if (full) for (let n = take(c, 'bz', 50 * Q * dt); n > 0; n--) {
       randUnit(tA); const v = 1 + 1.5 * R();

@@ -104,7 +104,7 @@ export function createThunderEffects(scene, { onShake = () => {} } = {}) {
     // the explosion around the target: layered hit stars, a magenta flash, a big star flare
     const k = easeOut(t, 11), boom = fade(t, .85, .35), sz = 2.1 * k * (1 + .06 * Math.sin(t * 50)) * (1 - .25 * rise(t, .5, .85));
     glow(p, 2.8, boom * .28, [1, .72, .02], 1.1);
-    if (t < .4) glow(p, 2.2, fade(t, .4, .25) * .35, [.75, .2, 1], 1.6);
+    if (t < .4) glow(p, 2.2, fade(t, .4, .25) * .35, [1, .55, .05], 1.6);
     hitStar(p, sz, boom, t, seed, { outline: .7, hz: 15 });
     kit.sprite('burst', p, sz * 1.2, sz * 1.2, { opacity: boom * .7, intensity: 1.2, color: YELLOW, occ: .1, rot: f * .9 + seed });
     if (t < .16) { kit.sprite('star', p, 3, 3, { opacity: fade(t, .16, .1), intensity: 1.6, color: WHITE, occ: 0, rot: .3 }); glow(p, 1.2, fade(t, .16, .1) * .8, WHITE, 1.8); }

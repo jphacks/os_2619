@@ -6,7 +6,7 @@
 //                    pops open (0.12 s, overshooting), front hexagon with a soft halo, a counter-turning inner hexagon, faint
 //                    spokes, a light running round the rim, sparks off the corners, a flickering fill
 //   block(el, pos)   a shot met the barrier: the barrier flares, a hexagon ripple spreads out in its plane, a flash and sparks
-// Fire tints it amber, thunder cyan, water deep blue with a pale rim, wind white-silver.
+// Fire tints it amber, thunder gold, water deep blue with a pale rim, wind white-silver.
 export function createGuardMoves(kit) {
   const { THREE, K, S, COL, TAU, Q, R, RS, emit, spr, seg, take, flick, add, shake } = kit;
   const V = () => new THREE.Vector3();
@@ -14,7 +14,7 @@ export function createGuardMoves(kit) {
   const RAD = .62, DEPTH = .14; // m: centre to corner, front to back
   const PAL = {
     fire: { edge: [1, .62, .16], core: [1, .9, .6], fill: [1, .42, .08], spark: COL.ember },
-    thunder: { edge: [.3, .78, 1], core: [.82, .97, 1], fill: COL.elecGlow, spark: COL.spark },
+    thunder: { edge: [1, .84, .22], core: [1, .98, .85], fill: COL.elecGlow, spark: COL.spark },
     water: { edge: [.12, .45, 1], core: [.7, .92, 1], fill: COL.waterGlow, spark: COL.waterHi },
     wind: { edge: [.85, .97, .97], core: [1, 1, 1], fill: [.3, .48, .5], spark: COL.wind },
   };

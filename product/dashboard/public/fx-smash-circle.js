@@ -10,7 +10,7 @@ export function createMagicCircle(kit) {
   const Y = .02; // just above the floor
   const PAL = {
     fire: { main: [1, .45, .1], hot: [1, .8, .45], dim: [1, .3, .05] },
-    thunder: { main: [.3, .7, 1], hot: [.8, .95, 1], dim: [.16, .38, 1] },
+    thunder: { main: [1, .84, .2], hot: [1, .97, .75], dim: [1, .6, 0] },
     water: { main: [.08, .36, 1], hot: [.55, .88, 1], dim: [.03, .16, .75] },
     wind: { main: [.8, .95, .95], hot: [1, 1, 1], dim: [.4, .6, .62] },
   };
