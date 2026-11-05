@@ -117,7 +117,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     const pv = p.preview ? Math.max(0, now() - p.preview) : null;
     const charging = p.charging || pv !== null, chargeT = pv ?? p.chargeT, level = pv !== null ? Math.min(1, pv / t2Of(p)) : p.charge;
     const tier = charging ? (pv !== null ? tierOf(pv, p) : p.tier) : null;
-    if ((match.phase !== 'setup' && (p.online || p.imu)) || pv !== null) { // no effects while setting up (except the try-out)
+    if ((match.phase !== 'setup' && (p.online || p.imu || p.charging)) || pv !== null) { // no effects while setting up (except the try-out); a button / keyboard charge (no phone) shows too
       fx.aura(p.element, p.base, p.tip, charging ? .6 + .4 * level : .5, p.element,
         { charging, level, tier, chest: p.chest, feet: V(p.chest.x, 0, p.chest.z) });
       if (charging) fx.charge(p.element, p.tip, level, p.element, { tier, chargeT });

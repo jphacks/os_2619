@@ -18,11 +18,20 @@ const api = async (path, opt) => {
   return r.json();
 };
 const canvasOf = (bmp, long) => {
-  const k = Math.min(1, long / Math.max(bmp.width, bmp.height)), c = document.createElement('canvas');
-  c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  const w = bmp.naturalWidth || bmp.width, h = bmp.naturalHeight || bmp.height, k = Math.min(1, long / Math.max(w, h)), c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
   c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
   return c;
 };
+
+// any photo: createImageBitmap first; where it can't decode the file (HEIC in Chrome), the browser's own <img> decoder
+async function decode(f) {
+  try { return await createImageBitmap(f, { imageOrientation: 'from-image' }); } catch {}
+  const url = URL.createObjectURL(f), img = new Image();
+  try { img.src = url; await img.decode(); return img; }
+  catch { throw new Error('この写真の形式は読めません。JPEG か PNG で撮り直してください'); }
+  finally { URL.revokeObjectURL(url); }
+}
 
 export function mountSticks(root) {
   root.classList.add('stk');
@@ -63,9 +72,11 @@ export function mountSticks(root) {
   $('file').onchange = async e => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return;
     try {
-      const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' });
+      const bmp = await decode(f);
       const small = canvasOf(bmp, 256), { features } = analyzeStick(small.getContext('2d').getImageData(0, 0, small.width, small.height));
-      const image = canvasOf(bmp, 800).toDataURL('image/jpeg', .82); // ~100–200 KB, the server takes up to 1 MB
+      const big = canvasOf(bmp, 800);
+      let image = big.toDataURL('image/jpeg', .82); // ~100–200 KB; the server takes up to 1 MB, so a noisy photo is squeezed until it fits
+      for (const q of [.7, .55, .4]) if (image.length > 1.2e6) image = big.toDataURL('image/jpeg', q);
       scan = { features, image };
       $('photo').innerHTML = `<img src="${image}" alt="撮った枝">`;
       const odd = features.coverage < .005 || features.coverage > .6;

@@ -86,6 +86,12 @@ const rec2 = await (await json('/sticks', { features: res.straight.features, ima
 assert.notEqual(rec2.seed, rec.seed); assert.ok(rec2.name.length > 0);
 // trust boundary
 assert.equal((await json('/sticks', { features: { ...res.Y.features, branches: -1 }, image: jpeg })).status, 400);
+{ // a busy or empty photo is clamped, not refused (it was a 400 on a real photo)
+  const r = await json('/sticks', { features: { ...res.Y.features, branches: 80, ends: 140, tortuosity: 0 }, image: jpeg });
+  assert.equal(r.status, 200); const k = await r.json();
+  assert.equal(k.features.branches, 50); assert.equal(k.features.tortuosity, 1);
+  await fetch(base + '/sticks/' + k.id, { method: 'DELETE' });
+}
 assert.equal((await json('/sticks', { features: res.Y.features, image: 'data:image/png;base64,AAAA' })).status, 400);
 assert.equal((await json('/sticks', { features: res.Y.features, image: 'data:image/jpeg;base64,' + 'A'.repeat(1.6e6) })).status, 413);
 assert.equal((await json('/sticks/img/..%2Fx.jpg')).status, 404);

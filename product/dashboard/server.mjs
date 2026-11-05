@@ -334,7 +334,9 @@ const FEATURES = { branches: [0, 50, 1], ends: [0, 100, 1], tortuosity: [1, 50],
 function cleanFeatures(f) {
   if (!f || typeof f !== 'object') return null;
   const out = {};
-  for (const [k, [lo, hi, int]] of Object.entries(FEATURES)) { const v = f[k]; if (typeof v !== 'number' || !(v >= lo && v <= hi) || (int && !Number.isInteger(v))) return null; out[k] = v; }
+  // a busy photo gives real but large counts (many branches / ends), an empty one tortuosity 0: clamp those into range.
+  // Only what the analyzer never makes (negative, not a finite number, a fraction for a count) is refused.
+  for (const [k, [lo, hi, int]] of Object.entries(FEATURES)) { const v = f[k]; if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || (int && !Number.isInteger(v))) return null; out[k] = Math.min(hi, Math.max(lo, v)); }
   return out;
 }
 // null when over max; the rest is still read (up to 8 × max) so the client gets the 413 instead of a reset
@@ -365,7 +367,7 @@ async function sticksRoute(req, res, path) {
     const features = cleanFeatures(k?.features);
     const m = typeof k?.image === 'string' && k.image.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/);
     const jpg = m && Buffer.from(m[1], 'base64');
-    if (!features || !jpg || jpg.length > 1048576 || jpg[0] !== 0xff || jpg[1] !== 0xd8) return json(400, { ok: false, error: 'features or image' });
+    if (!features || !jpg || jpg.length > 1048576 || jpg[0] !== 0xff || jpg[1] !== 0xd8) { log(`sticks: refused (${!features ? 'features ' + JSON.stringify(k?.features) : 'image'})`); return json(400, { ok: false, error: 'features or image' }); }
     const id = Date.now().toString(36) + randomBytes(3).toString('hex'), seed = randomBytes(4).readUInt32LE(), rarity = stickRarity(seed, shapeScore(features));
     const name = String(k.name ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 24) || `枝 ${db.sticks.length + 1}`;
     const rec = { id, createdAt: new Date().toISOString(), name, seed, rarity, element: stickElement(seed), stats: stickStats(seed, rarity, rarityMul), features, image: `/sticks/img/${id}.jpg` };
