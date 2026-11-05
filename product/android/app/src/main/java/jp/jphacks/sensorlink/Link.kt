@@ -34,6 +34,8 @@ class Link(private val id: String, private val name: String) {
     @Volatile var rttMs = 0.0; private set
     /** The floor sheets' marker the PC chose: "april" or "rune" (Rune.kt reads the mahoujin tags, ids 0-6, then). Older servers say nothing: april. */
     @Volatile var marker = "april"; private set
+    /** The PC's word on this slot's scanned stick (dashboard stickscan.js): "91 cm", "none", or null before it said anything. */
+    @Volatile var stick: String? = null; private set
 
     /** Phone wall time converted to the PC clock, seconds. */
     fun pcTime(wallMs: Long = System.currentTimeMillis()) = wallMs / 1000.0 + offset
@@ -84,6 +86,7 @@ class Link(private val id: String, private val name: String) {
                 }
                 "welcome" -> { slot = k.optString("slot", "-"); marker = k.optString("marker", "april"); status = "connected" }
                 "marker" -> marker = k.optString("marker", marker)
+                "stick" -> stick = k.optJSONObject("model")?.let { "%.0f cm".format(it.optDouble("length") * 100) } ?: "none"
                 "full" -> status = "PC already has 2 phones"
             }
         }
@@ -108,6 +111,12 @@ class Link(private val id: String, private val name: String) {
     fun send(json: JSONObject) {
         val ws = data ?: return
         if (ws.queueSize() < QUEUE) ws.send(json.toString())
+    }
+
+    /** A packet that must arrive however late (a stick scan picture): queued up to 8 MB. The sensor packets above are dropped meanwhile. */
+    fun sendBig(json: JSONObject): Boolean {
+        val ws = data ?: return false
+        return ws.queueSize() < 8_000_000 && ws.send(json.toString())
     }
 
     private companion object {
