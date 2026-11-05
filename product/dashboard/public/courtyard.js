@@ -3,10 +3,11 @@
 // It lives in the field's group (field3d.js), as the canyon does (backdrop.js), and has the same shape: { group, uniforms, sun, fit(R), update(dt), dispose() }.
 // World frame: world.js (metres, y up). Phone C and the guide camera look from +z towards -z, so the tower stands on -z, far enough to show the sky above the roofline.
 import * as THREE from 'three';
-import { noiseTexture, bakeSunlight } from './backdrop.js';
+import { noiseTexture, sunBaker } from './backdrop.js';
+import { TOD_GLSL, todUniforms, applyTod, timeOfDay, DEFAULT_HOUR } from './sky.js';
 
 const TAU = Math.PI * 2;
-const SUN = new THREE.Vector3(-.36, .52, .78).normalize(); // from behind the camera on the left: the range facing the camera is lit, the others throw their shadows on the lawn
+const SUN = new THREE.Vector3(-.36, .52, .78).normalize(); // at DEFAULT_HOUR (sky.js), from behind the camera on the left: the range facing the camera is lit, the others throw their shadows on the lawn
 const WALL_X = 28, WALL_BACK = -64, WALL_FRONT = 64; // m, the fronts of the ranges around the court: the field's centre is the court's centre
 const LAWN = { x: 25, z0: -59, z1: 59, tile: 8, mean: [0.384, 0.471, 0.098] }; // m, the lawn; m one copy of the grass image covers (the size of the field), its mean colour
 const EXT = 80, SHADOW_N = 1024; // m half the baked sunlight's side, its texels per side
@@ -202,12 +203,13 @@ vec3 lawnColor(vec2 p) {
   vec3 c = mix(pave, g, onLawn);
   c *= 1. - .35 * (1. - smoothstep(0., .1, abs(out_))); // the lawn's cut edge
   vec4 sh = texture2D(cSh, p / (2. * cExt) + .5);
-  return c * mix(vec3(.27, .33, .47), vec3(1.05, 1.03, .97), sh.r) * mix(.76, 1., smoothstep(.1, .95, sh.g));
+  return c * (vec3(.27, .33, .47) * uTodAmb + vec3(.78, .70, .50) * uTodSun * sh.r) * mix(.76, 1., smoothstep(.1, .95, sh.g)); // the sky's light, the sun's on top
 }`;
 const SKY_VS = `varying vec3 vD; void main() { vD = position; vec4 p = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.); gl_Position = p.xyww; }`;
 const SKY_FS = `
 uniform sampler2D cN; uniform float uTime; uniform vec3 cSun; varying vec3 vD;
-void main() { // deep blue, a few small white clouds
+${TOD_GLSL}
+void main() { // deep blue, a few small white clouds; the clock (sky.js) turns it into dawn, dusk or night
   vec3 d = normalize(vD); float y = max(d.y, 0.);
   vec3 c = mix(vec3(.66, .81, .96), vec3(.20, .47, .87), smoothstep(0., .2, y));
   c = mix(c, vec3(.03, .20, .58), smoothstep(.12, .75, y));
@@ -216,20 +218,22 @@ void main() { // deep blue, a few small white clouds
   float a = texture2D(cN, q * .055 + uTime * vec2(.0011, .0002)).r, b = texture2D(cN, q * .19 - uTime * .0005).g, m = texture2D(cN, q * .017 + .4).g;
   float n = a * .68 + b * .34, cloud = smoothstep(.58, .68, n) * smoothstep(.42, .6, m) * smoothstep(.015, .11, y);
   c = mix(c, mix(vec3(.80, .84, .90), vec3(1.), smoothstep(.6, .78, n)), cloud);
-  gl_FragColor = vec4(c, 1.);
+  gl_FragColor = vec4(todSky(d, c, cloud, uTime), 1.);
 }`;
 const GROUND_VS = `varying vec3 vW; void main() { vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const GROUND_FS = `
+${TOD_GLSL}
 ${LAWN_GLSL}
 varying vec3 vW;
 void main() { gl_FragColor = vec4(lawnColor(vW.xz), 1.); }`;
 const STONE_VS = `attribute float aK; varying vec3 vW; varying float vK; void main() { vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; vK = aK; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const STONE_FS = `
-uniform sampler2D cN; uniform highp sampler2D cD; uniform vec3 cSun; uniform float cExt, uKeep; varying vec3 vW; varying float vK;
-float sunlit(vec3 p) { // the baked depth, four taps: is anything higher up this point's sun ray?
-  vec2 g = (p.xz - cSun.xz / cSun.y * p.y) / (2. * cExt) + .5;
+uniform sampler2D cN; uniform highp sampler2D cD; uniform vec3 cSun, cSunB; uniform float cExt, uKeep; varying vec3 vW; varying float vK;
+${TOD_GLSL}
+float sunlit(vec3 p) { // the baked depth, four taps: is anything higher up this point's sun ray? (cSunB: the sun it was baked for)
+  vec2 g = (p.xz - cSunB.xz / cSunB.y * p.y) / (2. * cExt) + .5;
   if (g.x < 0. || g.y < 0. || g.x > 1. || g.y > 1.) return 1.;
-  float t = max(p.y, 0.) / cSun.y + .24, o = .75 / ${SHADOW_N}.;
+  float t = max(p.y, 0.) / cSunB.y + .24, o = .75 / ${SHADOW_N}.;
   return (step(texture2D(cD, g + vec2(-o, -o)).r, t) + step(texture2D(cD, g + vec2(o, -o)).r, t) + step(texture2D(cD, g + vec2(-o, o)).r, t) + step(texture2D(cD, g + vec2(o, o)).r, t)) / 4.;
 }
 float hash(vec2 v) { return fract(sin(dot(v, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -265,35 +269,35 @@ void main() {
   } else if (k < 2.5) { // leaded glass: it mirrors the sky darkly, lit by nothing
     vec2 lat = abs(fract(vec2(along2, vW.y) / .24) - .5) * 2.; float fade = 1. - smoothstep(.1, .4, fwidth(along2 / .24));
     vec3 g = mix(vec3(.09, .13, .19), vec3(.27, .38, .52), smoothstep(.3, .78, n2 + (n3 - .5) * .35));
+    float lamp = step(.38, hash(vec2(floor(along2 / 1.9), floor(vW.y / 2.6)))) * uTodLamp; // after dark most windows are lit from inside
+    g = mix(g * uTodAmb, vec3(1., .70, .34) * (.85 + .3 * n2), lamp);
     gl_FragColor = vec4(g * (1. - max(smoothstep(.8, .95, lat.x), smoothstep(.8, .95, lat.y)) * .45 * fade), 1.);
     return;
   } else if (k < 3.5) { // the dark inside of the cloister
-    gl_FragColor = vec4(vec3(.05, .05, .055) + vec3(.05, .045, .035) * smoothstep(1.8, .6, vW.y), 1.);
+    gl_FragColor = vec4((vec3(.05, .05, .055) + vec3(.05, .045, .035) * smoothstep(1.8, .6, vW.y)) * uTodAmb + vec3(.30, .17, .06) * uTodLamp * smoothstep(3.2, .4, vW.y), 1.); // lanterns in the cloister at night
     return;
   } else if (k < 4.5) { alb = vec3(.25, .28, .33) * (.8 + n2 * .35); // slates
   } else if (k < 5.5) { alb = vec3(.56, .63, .68) * (.88 + n1 * .24); // the dome's lead
   } else { alb = vec3(.95, .74, .28); } // gold
   float ndl = max(dot(N, cSun), 0.), s = ndl > 0. ? sunlit(vW) : 0.;
-  vec3 light = vec3(1.34, 1.2, 1.0) * ndl * s + vec3(.38, .46, .62) * (.62 + .38 * N.y) + vec3(.26, .34, .15) * max(-N.y * .6 + .4, 0.); // the sun, the blue sky, the lawn's green from below
+  vec3 light = vec3(1.34, 1.2, 1.0) * uTodSun * ndl * s + (vec3(.38, .46, .62) * (.62 + .38 * N.y) + vec3(.26, .34, .15) * max(-N.y * .6 + .4, 0.)) * uTodAmb; // the sun, the blue sky, the lawn's green from below
   vec3 c = alb * light;
-  gl_FragColor = vec4(mix(c, vec3(.70, .80, .92), smoothstep(40., 120., distance(vW, cameraPosition)) * .22), 1.);
+  gl_FragColor = vec4(mix(c, todHaze(vec3(.70, .80, .92)), smoothstep(40., 120., distance(vW, cameraPosition)) * .22), 1.);
 }`;
 
-/** createCourtyard() -> { group, uniforms (the floor shares c*), sun, fit(R), update(dt), dispose() } */
-export function createCourtyard() {
+/** createCourtyard(tod) -> { group, uniforms (the floor shares c* and tod), sun (the light now), fit(R), setTime(h, final), update(dt), dispose() }. tod: sky.js todUniforms(), shared with the floor. */
+export function createCourtyard(tod = todUniforms()) {
   const group = new THREE.Group(); group.name = 'courtyard';
   const { geometry, pos, idx } = buildCourt();
-  const depth = new Float32Array(SHADOW_N * SHADOW_N), light = new Uint8Array(SHADOW_N * SHADOW_N * 4);
-  bakeSunlight(pos, idx, [[0, idx.length]], EXT, SHADOW_N, depth, light, SUN);
-  const cD = new THREE.DataTexture(depth, SHADOW_N, SHADOW_N, THREE.RedFormat, THREE.FloatType); cD.needsUpdate = true;
-  const cSh = new THREE.DataTexture(light, SHADOW_N, SHADOW_N, THREE.RGBAFormat);
-  cSh.minFilter = THREE.LinearMipmapLinearFilter; cSh.magFilter = THREE.LinearFilter; cSh.generateMipmaps = true; cSh.needsUpdate = true;
   const uniforms = {
-    cN: { value: noiseTexture() }, cSh: { value: cSh }, cD: { value: cD }, cSun: { value: SUN.clone() }, cExt: { value: EXT },
-    cG: { value: null }, uTime: { value: 0 }, uKeep: { value: 6 },
+    cN: { value: noiseTexture() }, cSh: { value: null }, cD: { value: null }, cSun: { value: SUN.clone() }, cSunB: { value: SUN.clone() }, cExt: { value: EXT },
+    cG: { value: null }, uTime: { value: 0 }, uKeep: { value: 6 }, ...tod,
   };
+  const baker = sunBaker({ depth: uniforms.cD, light: uniforms.cSh, dir: uniforms.cSunB }, SHADOW_N);
+  baker.setGeometry(pos, idx, [[0, idx.length]], EXT);
+  baker.bake(SUN, true);
   loadGrass(uniforms.cG);
-  const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({ vertexShader: SKY_VS, fragmentShader: SKY_FS, uniforms, side: THREE.BackSide, depthTest: false, depthWrite: false }));
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({ vertexShader: SKY_VS, fragmentShader: SKY_FS, uniforms, side: THREE.BackSide, depthTest: false, depthWrite: false, extensions: { derivatives: true } }));
   sky.frustumCulled = false; sky.renderOrder = -10;
   const ground = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.ShaderMaterial({ vertexShader: GROUND_VS, fragmentShader: GROUND_FS, uniforms, extensions: { derivatives: true } }));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -.02;
@@ -302,13 +306,19 @@ export function createCourtyard() {
   group.add(sky, ground, stone);
   let holeR = 0;
   return {
-    group, uniforms, sun: SUN,
+    group, uniforms, sun: uniforms.cSun.value, hour: DEFAULT_HOUR, final: true, t: timeOfDay(DEFAULT_HOUR, SUN),
+    /** The clock (hours). final: bake the shadows at full size (~0.2 s), else a quick small bake while the clock is being turned. Returns the bake's ms. */
+    setTime(h, final) {
+      this.hour = h; this.final = final; this.t = timeOfDay(h, SUN);
+      applyTod(tod, this.t); uniforms.cSun.value.fromArray(this.t.lightDir);
+      return baker.bake(uniforms.cSun.value, final);
+    },
     fit(R) { // the court keeps its size: it is far larger than any field a scan gives
       uniforms.uKeep.value = R + .5;
       if (R !== holeR) { ground.geometry.dispose(); ground.geometry = new THREE.RingGeometry(R + 1, 95, 64, 1); holeR = R; } // the floor's quad is opaque out to R + 1.4
     },
     update(dt) { uniforms.uTime.value += dt; },
-    dispose() { uniforms.cN.value.dispose(); uniforms.cG.value.dispose(); cD.dispose(); cSh.dispose(); for (const m of [sky, ground, stone]) { m.geometry.dispose(); m.material.dispose(); } },
+    dispose() { uniforms.cN.value.dispose(); uniforms.cG.value.dispose(); baker.dispose(); for (const m of [sky, ground, stone]) { m.geometry.dispose(); m.material.dispose(); } },
   };
 }
 export const courtForTests = { buildCourt, LAWN, WALL_X, WALL_BACK, WALL_FRONT, SUN, EXT };
