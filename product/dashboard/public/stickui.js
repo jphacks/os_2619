@@ -4,7 +4,7 @@
 // createStickView(canvas): the model turning slowly, for the connection screen.
 import * as THREE from 'three';
 import { buildStick, viewCamera } from './stickscan.js';
-import { stickGeometry } from './stickmesh.js';
+import { stickGeometry, STICK_COLOR } from './stickmesh.js';
 
 async function decode(jpg) {
   const blob = await (await fetch('data:image/jpeg;base64,' + jpg)).blob(), bmp = await createImageBitmap(blob);
@@ -14,32 +14,33 @@ async function decode(jpg) {
 }
 
 export function createStickScan(hub, onText) {
-  const scans = {}; // slot -> { bg: [], stick: [], jobs: [], noPose: 0 }
-  const fresh = () => ({ bg: [], stick: [], jobs: [], noPose: 0 });
-  const say = (slot, s) => onText(slot, `床 ${s.bg.length} 枚 · 棒 ${s.stick.length} 枚${s.noPose ? ` · タグ不足で捨てた ${s.noPose} 枚` : ''}`);
+  const scans = {}; // slot -> { views: [], jobs: [], noPose: 0 }
+  const fresh = () => ({ views: [], jobs: [], noPose: 0 });
+  const say = (slot, s) => onText(slot, `写真 ${s.views.length} 枚${s.noPose ? ` · タグ不足で捨てた ${s.noPose} 枚` : ''}`);
   return {
     async ingest(k) {
       const slot = k.slot;
       if (k.step === 'start' || !scans[slot]) scans[slot] = fresh();
       const s = scans[slot];
       if (k.step === 'cancel') { delete scans[slot]; return onText(slot, 'スキャンを中止しました'); }
-      if ((k.step === 'bg' || k.step === 'stick') && k.jpg) {
+      if (k.step === 'stick' && k.jpg) {
         const job = decode(k.jpg).then(img => {
           const cam = viewCamera(k.tags, k.k, img.width, img.height);
-          if (cam) s[k.step].push({ img, cam }); else s.noPose++;
+          if (cam) s.views.push({ img, cam }); else s.noPose++;
           say(slot, s);
         }).catch(e => console.warn('stick scan picture', e));
         s.jobs.push(job);
       }
       if (k.step === 'done') {
         await Promise.all(s.jobs);
-        onText(slot, `モデルを作成中…（床 ${s.bg.length} 枚 · 棒 ${s.stick.length} 枚）`);
+        onText(slot, `モデルを作成中…（写真 ${s.views.length} 枚）`);
         await new Promise(r => setTimeout(r, 30)); // let the text show: the build holds this thread for ~1 s
         try {
           // shortcut: runs on the page's thread (~1 s per scan); move to a worker if it stutters a match
-          const model = buildStick(s.bg, s.stick);
+          const model = buildStick(s.views);
           hub.send({ type: 'setStick', slot, model });
-          onText(slot, `作成しました：長さ ${(model.length * 100).toFixed(0)} cm、太さ ${(2000 * model.r[model.rings >> 1]).toFixed(0)} mm（${model.views.stick} 方向から）`);
+          const thick = (r, a = model.around) => (2000 * Math.max(...model.r.slice(r * a, (r + 1) * a))).toFixed(0); // the widest diameter of a ring, mm
+          onText(slot, `作成しました：長さ ${(model.length * 100).toFixed(0)} cm、太さ 根元 ${thick(2)} mm・中ほど ${thick(model.rings >> 1)} mm・先 ${thick(model.rings - 3)} mm（${model.views} 方向から）`);
         } catch (e) { onText(slot, '作成できませんでした：' + e.message); console.warn(e); }
         delete scans[slot];
       }
@@ -52,15 +53,14 @@ export function createStickView(canvas) {
   const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(30, 2, .01, 10);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x404050, 2.2));
   const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(1, 2, 3); scene.add(sun);
-  const mat = new THREE.MeshStandardMaterial({ roughness: .6 }), mesh = new THREE.Mesh(new THREE.BufferGeometry(), mat);
+  const mat = new THREE.MeshStandardMaterial({ color: STICK_COLOR, roughness: .8 }), mesh = new THREE.Mesh(new THREE.BufferGeometry(), mat);
   const holder = new THREE.Group(); holder.rotation.z = Math.PI / 2; holder.add(mesh); scene.add(holder); // lying across the view, tip to the left
   let model = null;
   return {
     set(m) {
-      model = m; mesh.geometry.dispose(); mat.map?.dispose();
-      if (!m) { mesh.geometry = new THREE.BufferGeometry(); mat.map = null; return; }
-      const { geometry, texture } = stickGeometry(m);
-      mesh.geometry = geometry; mat.map = texture; mat.needsUpdate = true; mesh.scale.set(1, m.length, 1);
+      model = m; mesh.geometry.dispose();
+      mesh.geometry = m ? stickGeometry(m) : new THREE.BufferGeometry(); if (!m) return;
+      mesh.scale.set(1, m.length, 1);
       cam.position.set(0, 0, m.length * .62 / Math.tan(15 * Math.PI / 180) / Math.max(1, cam.aspect)); cam.lookAt(0, 0, 0); // the length fills the width
     },
     get model() { return model; },

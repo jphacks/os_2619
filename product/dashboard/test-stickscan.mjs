@@ -1,6 +1,8 @@
-// Stick scan (public/stickscan.js) on synthetic pictures: a printed floor pattern, a 0.9 m stick (r 12 mm, brown with a red band
-// near the tip) lying on it tip toward -z, with its shadow, from many angles; noise and exposure differ per picture.
-// Checks the cameras from the mahoujin's tag corners, and the model's length, radius, colours and which end is the tip.   node test-stickscan.mjs
+// Stick scan (public/stickscan.js) on synthetic pictures: a black and white printed floor and a natural 0.9 m stick (brown bark with grey
+// patches, dark streaks, a pale knot) lying on it with its shadow, tip toward
+// -z: tapered (r 15 mm at the grip to 8 mm at the tip), a knot (+6 mm) at 30 %, bowed 25 mm sideways. Many angles, noise, a warm white
+// balance that differs per picture. Checks the cameras from the mahoujin's tag corners, then the model's length, radius, knot, taper, bow
+// and which end is the tip.   node test-stickscan.mjs
 process.env.MARKER = 'rune';
 const W = await import('./public/world.js'), { buildStick, viewCamera } = await import('./public/stickscan.js');
 let fails = 0;
@@ -10,51 +12,71 @@ let seed = 3; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648
 const IW = 360, IH = 480, F = 400; // portrait, ~62° vertical like a phone
 const norm = v => { const n = Math.hypot(...v); return v.map(x => x / n); };
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 function camAt(az, el, dist, target = [0, 0, 0]) {
   const O = [target[0] + dist * Math.cos(el) * Math.sin(az), dist * Math.sin(el), target[2] + dist * Math.cos(el) * Math.cos(az)];
   const z = norm(target.map((v, i) => v - O[i])), x = norm(cross(z, [0, 1, 0])), y = cross(z, x);
   return { pose: W.pose(W.fromCols(x, y, z), O), f: F, w: IW, h: IH };
 }
-// the floor: white paper with black rings and spokes (like the mahoujin's lines) on a grey floor
+// the floor: white paper with black rings and spokes (like the mahoujin's lines), a grey floor round it
 function floorRGB(x, z) {
   const r = Math.hypot(x, z), a = Math.atan2(z, x);
-  if (r > .62) return [110, 105, 100];
+  if (r > .62) return [110, 110, 110];
   const line = [.15, .3, .45, .58].some(R => Math.abs(r - R) < .004) || (r > .15 && Math.abs(((a / (2 * Math.PI) * 12) % 1 + 1) % 1 - .5) * r * 2 * Math.PI / 12 < .0025);
-  return line ? [30, 30, 35] : [235, 232, 225];
+  return line ? [30, 30, 30] : [235, 235, 235];
 }
-const STICK = { a: [.05, .45], b: [-.05, -.45], r: .012 }; // grip end a (+z), tip b (-z)
-const SL = Math.hypot(STICK.b[0] - STICK.a[0], STICK.b[1] - STICK.a[1]);
-const SD = [(STICK.b[0] - STICK.a[0]) / SL, 0, (STICK.b[1] - STICK.a[1]) / SL];
+// the stick: a chain of capsules along a bowed centre line, resting on the floor (centre height = radius)
+const A0 = [.05, .45], A1 = [-.05, -.45], SL = Math.hypot(A1[0] - A0[0], A1[1] - A0[1]);
+const AX = [(A1[0] - A0[0]) / SL, (A1[1] - A0[1]) / SL], SIDE = [-AX[1], AX[0]];
+const rTrue = t => .015 - .007 * t + .006 * Math.exp(-(((t - .3) / .03) ** 2));
+const bow = t => .025 * Math.sin(Math.PI * t);
+const SEG = 80, pts = Array.from({ length: SEG + 1 }, (_, i) => { const t = i / SEG, r = rTrue(t); return [A0[0] + AX[0] * t * SL + SIDE[0] * bow(t), r, A0[1] + AX[1] * t * SL + SIDE[1] * bow(t)]; });
+const caps = pts.slice(1).map((b, i) => ({ a: pts[i], b, r: (rTrue(i / SEG) + rTrue((i + 1) / SEG)) / 2 }));
+function capsule(ro, rd, { a, b, r }) { // ray / capsule (iq): distance or -1
+  const ba = b.map((v, i) => v - a[i]), oa = ro.map((v, i) => v - a[i]);
+  const baba = dot(ba, ba), bard = dot(ba, rd), baoa = dot(ba, oa), rdoa = dot(rd, oa), oaoa = dot(oa, oa);
+  const A = baba - bard * bard, B = baba * rdoa - baoa * bard, C = baba * oaoa - baoa * baoa - r * r * baba;
+  let h = B * B - A * C; if (h < 0) return -1;
+  const t = (-B - Math.sqrt(h)) / A, y = baoa + t * bard;
+  if (y > 0 && y < baba) return t;
+  const oc = y <= 0 ? oa : ro.map((v, i) => v - b[i]), b2 = dot(rd, oc), c2 = dot(oc, oc) - r * r;
+  h = b2 * b2 - c2; return h > 0 ? -b2 - Math.sqrt(h) : -1;
+}
 const LIGHT = norm([.4, 1, .3]);
-function stickColour(u) { return u > .7 && u < .8 ? [200, 40, 40] : [150, 100, 60]; }
-/** Ray O + s d against the stick (an infinite cylinder clipped to its length; ends ignored): { s, n, u } or null. */
-function hitStick(O, d) {
-  const C = [STICK.a[0], STICK.r, STICK.a[1]], w = O.map((v, i) => v - C[i]);
-  const dd = d[0] * SD[0] + d[2] * SD[2], wd = w[0] * SD[0] + w[1] * SD[1] + w[2] * SD[2];
-  const dp = d.map((v, i) => v - dd * SD[i]), wp = w.map((v, i) => v - wd * SD[i]);
-  const A = dp[0] ** 2 + dp[1] ** 2 + dp[2] ** 2, B = 2 * (dp[0] * wp[0] + dp[1] * wp[1] + dp[2] * wp[2]), Cc = wp[0] ** 2 + wp[1] ** 2 + wp[2] ** 2 - STICK.r ** 2;
-  const disc = B * B - 4 * A * Cc; if (disc < 0 || A < 1e-12) return null;
-  const s = (-B - Math.sqrt(disc)) / (2 * A); if (s <= 0) return null;
-  const P = O.map((v, i) => v + s * d[i]), t = (P[0] - C[0]) * SD[0] + (P[2] - C[2]) * SD[2];
-  if (t < 0 || t > SL) return null;
-  const n = norm([P[0] - C[0] - t * SD[0], P[1] - C[1], P[2] - C[2] - t * SD[2]]);
-  return { s, n, u: t / SL };
+// a natural stick: brown bark with grey patches, dark streaks, and a pale knot
+function bark([x, y, z]) {
+  const u = ((x - A0[0]) * AX[0] + (z - A0[1]) * AX[1]) / SL, w = Math.sin(x * 140 + y * 300) * Math.cos(z * 90 - y * 200);
+  if (Math.abs(u - .3) < .02) return [200, 182, 150];
+  if (w > .45) return [118, 115, 108];
+  if (w < -.6) return [70, 48, 30];
+  return [140, 92, 52];
 }
-function render(cam, withStick) {
-  const data = new Uint8ClampedArray(IW * IH * 4), R = cam.pose.R, O = cam.pose.t, gain = .85 + .3 * rnd();
+const BOUND = { a: [A0[0], .012, A0[1]], b: [A1[0], .012, A1[1]], r: .06 }; // around the whole stick: most rays miss it
+function hitStick(O, d) {
+  const bb = BOUND.b.map((v, i) => v - BOUND.a[i]), ub = Math.max(0, Math.min(1, dot(O.map((v, i) => v - BOUND.a[i]), bb) / dot(bb, bb)));
+  if (Math.hypot(...O.map((v, i) => v - BOUND.a[i] - ub * bb[i])) > BOUND.r && capsule(O, d, BOUND) < 0) return null; // starts outside, misses
+  let best = Infinity, cap = null;
+  for (const c of caps) { const t = capsule(O, d, c); if (t > 0 && t < best) { best = t; cap = c; } }
+  if (!cap) return null;
+  const P = O.map((v, i) => v + best * d[i]), ba = cap.b.map((v, i) => v - cap.a[i]);
+  const u = Math.max(0, Math.min(1, dot(P.map((v, i) => v - cap.a[i]), ba) / dot(ba, ba)));
+  return { n: norm(P.map((v, i) => v - cap.a[i] - u * ba[i])), P };
+}
+function render(cam) {
+  const data = new Uint8ClampedArray(IW * IH * 4), R = cam.pose.R, O = cam.pose.t, gain = .85 + .3 * rnd(), warmth = 1 + .08 * rnd(); // a warm white balance
   for (let y = 0; y < IH; y++) for (let x = 0; x < IW; x++) {
     const a = (x + .5 - IW / 2) / F, b = (y + .5 - IH / 2) / F;
     const d = norm([R[0] * a + R[1] * b + R[2], R[3] * a + R[4] * b + R[5], R[6] * a + R[7] * b + R[8]]);
     let c = [60, 60, 60];
-    const h = withStick && hitStick(O, d);
-    if (h) { const sh = .45 + .55 * Math.max(0, h.n[0] * LIGHT[0] + h.n[1] * LIGHT[1] + h.n[2] * LIGHT[2]); c = stickColour(h.u).map(v => v * sh); }
+    const h = hitStick(O, d);
+    if (h) { const sh = .35 + .65 * Math.max(0, dot(h.n, LIGHT)); c = bark(h.P).map(v => v * sh); }
     else if (d[1] < 0) {
       const s = -O[1] / d[1], P = [O[0] + s * d[0], 0, O[2] + s * d[2]];
       c = floorRGB(P[0], P[2]);
-      if (withStick && hitStick(P, LIGHT)) c = c.map(v => v * .6); // its shadow
+      if (hitStick(P, LIGHT)) c = c.map(v => v * .55); // its shadow on the paper
     }
     const p = 4 * (y * IW + x);
-    for (let k = 0; k < 3; k++) data[p + k] = c[k] * gain + (rnd() - .5) * 8;
+    data[p] = c[0] * gain * warmth + (rnd() - .5) * 8; data[p + 1] = c[1] * gain + (rnd() - .5) * 8; data[p + 2] = c[2] * gain / warmth + (rnd() - .5) * 8;
     data[p + 3] = 255;
   }
   return { data, width: IW, height: IH };
@@ -71,33 +93,36 @@ function tagsSeen(cam) {
 }
 const K = [F / IW, F / IH, .5, .5];
 
-// cameras from the tags
 let worst = 0, n = 0;
-const mkView = (az, el, dist, withStick) => {
-  const truth = camAt(az, el, dist), tags = tagsSeen(truth), cam = viewCamera(tags, K, IW, IH);
-  if (cam) { worst = Math.max(worst, Math.hypot(...cam.pose.t.map((v, i) => v - truth.pose.t[i]))); n++; }
-  return { img: render(truth, withStick), cam };
-};
-const t0 = Date.now();
-const bg = [0, 1.3, 2.6, 3.9, 5.2].map((az, i) => mkView(az, .9 + .1 * (i % 2), 1.1, false));
-const st = [];
-for (let i = 0; i < 16; i++) st.push(mkView(i * 2 * Math.PI / 16 + .1, [.55, .85, 1.2][i % 3], 1.0 + .15 * (i % 2), true));
-check(n >= 18, `cameras from the tags in ${n} / 21 views`);
+const t0 = Date.now(), views = [];
+for (let i = 0; i < 24; i++) {
+  const truth = camAt(i * 2 * Math.PI / 24 + .1, [.5, .8, 1.15][i % 3], 1.0 + .15 * (i % 2)), cam = viewCamera(tagsSeen(truth), K, IW, IH);
+  if (cam) { worst = Math.max(worst, Math.hypot(...cam.pose.t.map((v, k) => v - truth.pose.t[k]))); n++; }
+  views.push({ img: render(truth), cam });
+}
+check(n >= 20, `cameras from the tags in ${n} / 24 views`);
 check(worst < .02, `camera position error from the tags ${(worst * 1000).toFixed(1)} mm (< 20)`);
 console.log(`rendered in ${Date.now() - t0} ms`);
 
-const t1 = Date.now(), m = buildStick(bg, st);
-console.log(`built in ${Date.now() - t1} ms: length ${m.length} m, ${m.voxels} voxels, radius ${m.r.map(v => (v * 1000).toFixed(0)).join(' ')} mm`);
-check(Math.abs(m.length - SL) < .03, `length ${m.length.toFixed(3)} m (true ${SL.toFixed(3)})`);
-const rMid = m.r.slice(5, 35).sort((a, b) => a - b)[15];
-check(rMid > .009 && rMid < .017, `radius ${(rMid * 1000).toFixed(1)} mm (true 12)`);
-const ring = r => { let c = [0, 0, 0]; for (let a = 0; a < m.around; a++) for (let k = 0; k < 3; k++) c[k] += m.rgb[3 * (r * m.around + a) + k] / m.around; return c.map(Math.round); };
-const band = ring(Math.floor(.75 * m.rings)), body = ring(Math.floor(.3 * m.rings));
-check(band[0] > band[1] + 80, `band ring (75%) is red: ${band}`);
-check(body[0] > body[2] + 40 && body[1] < body[0], `grip side (30%) is brown: ${body}`);
-const g25 = ring(Math.floor(.25 * m.rings)); check(g25[0] - g25[1] < 60, `ring 25% is not red (${g25}): the band is on the tip side, ring 0 is the grip`);
-check(m.rgb.length === m.rings * m.around * 3 && m.rgb.every(v => v >= 0 && v <= 255), 'rgb fully filled, 0-255');
-let threw = false; try { buildStick(bg.slice(0, 2), st); } catch { threw = true; }
-check(threw, 'too few background pictures: an error, not a model');
+const t1 = Date.now(), m = buildStick(views);
+const ringR = r => m.r.slice(r * m.around, (r + 1) * m.around), upR = r => { const a = ringR(r); return (a[0] + a[m.around / 4] + a[3 * m.around / 4]) / 3; }; // top and both sides: what the views see
+const tOf = r => (r + .5) / m.rings;
+console.log(`built in ${Date.now() - t1} ms: length ${m.length} m, ${m.voxels} voxels`);
+console.log('radius mm  ' + Array.from({ length: m.rings }, (_, r) => (upR(r) * 1000).toFixed(0)).join(' '));
+console.log('true   mm  ' + Array.from({ length: m.rings }, (_, r) => (rTrue(tOf(r)) * 1000).toFixed(0)).join(' '));
+const LEN = SL + rTrue(0) + rTrue(1); // the capsules' round ends stick out by their radius
+check(Math.abs(m.length - LEN) < .01, `length ${m.length.toFixed(3)} m (true ${LEN.toFixed(3)}, end to end)`);
+const inner = Array.from({ length: m.rings }, (_, r) => r).filter(r => r >= 2 && r < m.rings - 2);
+const err = inner.reduce((s, r) => s + Math.abs(upR(r) - rTrue(tOf(r))), 0) / inner.length;
+const bias = inner.reduce((s, r) => s + upR(r) - rTrue(tOf(r)), 0) / inner.length;
+check(err < .0015, `mean radius error ${(err * 1000).toFixed(2)} mm (< 1.5), bias ${(bias * 1000).toFixed(2)} mm`);
+const at = t => Math.min(m.rings - 1, Math.floor(t * m.rings));
+check(upR(at(.3)) > upR(at(.2)) + .003, `knot at 30 %: ${(upR(at(.3)) * 1000).toFixed(1)} mm vs ${(upR(at(.2)) * 1000).toFixed(1)} at 20 %`);
+check(upR(at(.1)) > upR(at(.9)) + .004, `taper: grip ${(upR(at(.1)) * 1000).toFixed(1)} mm, tip ${(upR(at(.9)) * 1000).toFixed(1)} mm (ring 0 is the grip)`);
+const lat = r => m.c[2 * r], sag = Math.abs(lat(at(.5)) - (lat(at(.05)) + lat(at(.95))) / 2), trueSag = bow(.5) - (bow(.05) + bow(.95)) / 2;
+check(Math.abs(sag - trueSag) < .006, `bow ${(sag * 1000).toFixed(1)} mm (true ${(trueSag * 1000).toFixed(1)})`);
+check(m.r.length === m.rings * m.around && m.c.length === 2 * m.rings && m.r.every(v => v > 0 && v < .1), 'model arrays complete');
+let threw = false; try { buildStick(views.slice(0, 3)); } catch { threw = true; }
+check(threw, 'too few pictures: an error, not a model');
 console.log(fails ? `${fails} FAILED` : 'all ok');
 process.exit(fails ? 1 : 0);

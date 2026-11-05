@@ -29,7 +29,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     /// A hit: the whole screen red (ContentView), as long as the torch, then fading out
     @Published var hitRed = 0.0
     private var hitGen = 0
-    @Published var scanStep = Scan.Step.off
+    @Published var scanning = false
 
     let link: Link
     let scan: Scan
@@ -295,8 +295,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
 
     // MARK: stick scan (Scan.swift); the button and the instructions are in ContentView
 
-    func scanStart() { scan.start(); scanStep = .bg }
-    func scanNext() { scan.next(); scanStep = .stick }
-    func scanFinish() { scan.finish(); scanStep = .off; showToast("Sent: the PC builds the model") }
-    func scanCancel() { scan.cancel(); scanStep = .off }
+    func scanStart() { scan.start(); scanning = true }
+    func scanFinish() { scan.finish(); scanning = false; showToast("Sent: the PC builds the model") }
+    func scanCancel() { scan.cancel(); scanning = false }
 }
