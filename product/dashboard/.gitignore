@@ -8,3 +8,4 @@ vendor/cdn/mp-models/
 settings.json
 # the game screen numbers saved with 3 ゲーム > パラメータを保存 (per PC)
 rules.json
+sticks.json

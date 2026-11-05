@@ -7,6 +7,7 @@
 import { ACTIONS } from './actions.js';
 import * as W from './world.js';
 import { SOURCES } from './video.js';
+import { createStickScan, createStickView } from './stickui.js';
 
 const WINDOW = 10; // seconds shown in the IMU charts
 const now = () => Date.now() / 1000;
@@ -57,11 +58,15 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
           <table class="tags"><thead><tr><th>ID</th><th>x</th><th>y</th><th>z (m)</th><th>距離</th></tr></thead><tbody></tbody></table>
         </div>
       </div>
+      <h3>棒の 3D モデル <span class="badge off stickstate">なし</span></h3>
+      <canvas class="stick3d" style="width:100%;height:110px;display:block" aria-label="スキャンした棒の 3D モデル（左が先端）"></canvas>
+      <div class="row" style="margin-top:6px;align-items:center"><span class="kv stickinfo" style="font-size:12px;flex:1">アプリの「Scan」で作る（床の魔法陣に棒を置いて周りから撮る）。左が先端</span><button class="stickclear">モデルを消す</button></div>
     </section>`;
   for (const s of ['A', 'B']) {
     cards.insertAdjacentHTML('beforeend', tpl(s));
     const el = cards.lastElementChild, q = c => el.querySelector(c);
-    slots[s] = { el, q, imu: [], traj: [] };
+    slots[s] = { el, q, imu: [], traj: [], stick: createStickView(q('.stick3d')) };
+    q('.stickclear').onclick = () => { if (slots[s].stick.model && confirm(`スマホ ${s} の棒のモデルを消します（ゲームはいつもの棒に戻る）`)) hub.send({ type: 'setStick', slot: s, model: null }); };
     // euler[0] is WitMotion's "roll" (about sensor X), but on the mounted sensor that reads as pitch, so the labels are swapped
     for (const [k, names] of [['euler', ['ピッチ', 'ロール', 'ヨー']], ['gyro', ['x', 'y', 'z']], ['acc', ['x', 'y', 'z']]])
       q('.legend.' + k).innerHTML = names.map((n, i) => `<span><i style="background:var(--s${i + 1})"></i>${n} <b data-i="${i}">–</b></span>`).join('');
@@ -158,8 +163,15 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
   info(); setInterval(info, 5000);
 
   // ---- data in ----
+  const stickScan = createStickScan(hub, (slot, text) => { const s = slots[slot]; if (s) s.q('.stickinfo').textContent = text; });
   function ingest(k) {
     const s = slots[k.slot]; if (!s) return;
+    if (k.type === 'scan') stickScan.ingest(k);
+    if (k.type === 'stick') {
+      s.stick.set(k.model);
+      const b = s.q('.stickstate'); b.textContent = k.model ? `${(k.model.length * 100).toFixed(0)} cm` : 'なし'; b.className = 'badge stickstate ' + (k.model ? 'ok' : 'off');
+      if (k.model) sq(`.sticks input[data-s="${k.slot}"]`).value = k.model.length; // app.js takes the length for the game
+    }
     if (k.type === 'imu') { s.imu.push(k); while (s.imu.length && s.imu[0].t < k.t - WINDOW) s.imu.shift(); }
     if (k.type === 'ar' && k.tracking === 'TRACKING') { s.traj.push(k.p); if (s.traj.length > 600) s.traj.shift(); }
     if (k.type === 'calib') s.traj.length = 0;
@@ -281,7 +293,7 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
       const slow = now() - lastSlow > 0.1; if (slow) lastSlow = now();
       for (const s of ['A', 'B']) {
         const S = slots[s], ph = hub.phones[s];
-        videoView(S, ph); chart(S, 'euler', 180); chart(S, 'gyro'); chart(S, 'acc'); orient(S, ph.last.imu); traj(S, ph.last.ar);
+        S.stick.frame(now()); videoView(S, ph); chart(S, 'euler', 180); chart(S, 'gyro'); chart(S, 'acc'); orient(S, ph.last.imu); traj(S, ph.last.ar);
         if (slow) panels(S, ph, hub.rates(s));
       }
       if (slow) cPanel();

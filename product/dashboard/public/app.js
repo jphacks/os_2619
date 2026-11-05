@@ -83,6 +83,10 @@ hub.on(k => {
   if (k.type === 'marker') { if (k.marker !== W.MARKER || (k.runeScale ?? W.RUNE_SCALE) !== W.RUNE_SCALE) location.reload(); return; } // world.js fixed its tag table at load: start over with the new one
   PA.ingest(k); smap.ingest(k);
   if (k.type === 'phones') { phones = k.list; game.setOnline(playable.withSelf(k.list)); return; }
+  if (k.type === 'stick') { // a scanned stick (stickui.js, server.mjs): its look in the game, and its measured length for the tip
+    stage.field.setStick(k.slot, k.model);
+    if (k.model) { cfg.stickLen[k.slot] = k.model.length; save(); }
+  }
   connect.ingest(k); game.ingest(k);
   if (k.type === 'truth' && !playable.owns(k.slot)) vsrc.dummy?.setTruth(k.slot, k); // fake-world.mjs: the dummy room shows the simulated players
   if (k.type === 'imu' || k.type === 'ar' || k.type === 'calib')
