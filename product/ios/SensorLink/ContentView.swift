@@ -35,7 +35,7 @@ struct ContentView: View {
                     Button("IMU") { showImu = true }
                     Button("Calibrate") { model.calibrate() }
                     Button("LAN") { showLan = true }
-                    Button(model.scanStep == .off ? "Scan" : model.scanStep == .bg ? "Stick placed" : "Finish") { showScan = true }
+                    Button(model.scanning ? "Finish" : "Scan") { showScan = true }
                     Button("枝") { showStick = true }
                         .disabled(model.inMatch) // no stick changes during a match
                 }
@@ -50,50 +50,27 @@ struct ContentView: View {
         .sheet(isPresented: $showImu) { ImuSheet().environmentObject(model) }
         .sheet(isPresented: $showLan) { LanSheet().environmentObject(model) }
         .sheet(isPresented: $showStick) { StickSheet(url: URL(string: "http://\(model.host):\(model.port)/sticks.html")!).environmentObject(model) }
-        .alert(scanTitle, isPresented: $showScan) {
-            switch model.scanStep {
-            case .off:
-                Button("Start") { model.scanStart() }
-                Button("Cancel", role: .cancel) {}
-            case .bg:
-                Button("Start") { model.scanNext() }
-                Button("Cancel scan", role: .destructive) { model.scanCancel() }
-                Button("Back", role: .cancel) {}
-            case .stick:
+        .alert(model.scanning ? "Finish the scan?" : "Scan the stick", isPresented: $showScan) {
+            if model.scanning {
                 Button("Send to PC") { model.scanFinish() }
                 Button("Cancel scan", role: .destructive) { model.scanCancel() }
                 Button("Keep scanning", role: .cancel) {}
+            } else {
+                Button("Start") { model.scanStart() }
+                Button("Cancel", role: .cancel) {}
             }
         } message: { Text(scanMessage) }
     }
 
-    // The stick scan, step by step (Scan.swift; the same words as the Android app)
-    private var scanTitle: String {
-        switch model.scanStep {
-        case .off: return "Scan the stick  1/2: the empty magic circle"
-        case .bg: return "Scan the stick  2/2: the stick"
-        case .stick: return "Finish the scan?"
-        }
-    }
-
+    // The stick scan (Scan.swift; the same words as the Android app)
     private var scanMessage: String {
-        switch model.scanStep {
-        case .off:
-            return "The PC turns photos into a 3D model of your stick. Open the PC dashboard first (connection screen).\n\n" +
-                "1. Lay the magic circle flat, with nothing on it yet.\n" +
-                "2. Tap Start, then walk once around the circle holding the phone 0.8-1.2 m away, pointed at its centre.\n" +
-                "3. A photo is taken every half second while 2 or more tags show green. Keep your shadow off the circle.\n\n" +
-                "When it says \(Scan.maxBg) pictures (or after one lap), tap \"Stick placed\"."
-        case .bg:
-            return "1. Lay the stick straight across the middle of the circle, its TIP toward tag T0 (the top of the poster).\n" +
-                "2. From now on don't move the circle or the stick.\n" +
-                "3. Tap Start and walk slowly around it twice: once high, looking down, and once low, about 30° above the floor. " +
-                "Keep 2+ tags green; get the whole stick in the picture.\n" +
-                "4. Tap Finish (after ~25 pictures). The model appears on the PC's connection screen and in the game."
-        case .stick:
-            let c = model.scan.counts
-            return "\(c.bg) pictures of the circle, \(c.stick) of the stick. The PC needs 3 and 6 at least; more angles give a better model."
-        }
+        if model.scanning { return "\(model.scan.count) pictures. The PC needs 6 at least; more angles give a better shape." }
+        return "The PC turns photos into a 3D model of your stick's shape. Open the PC dashboard first (connection screen).\n\n" +
+            "1. Lay the magic circle flat and lay the stick straight across its middle, its TIP toward tag T0 (the top of the poster).\n" +
+            "2. Keep anything else that is not black or white off the circle (hands, feet, bags). Don't move the circle or the stick from now on.\n" +
+            "3. Tap Start and walk slowly around it twice, 0.8-1.2 m away: once high, looking down, and once low, about 30° above the floor. " +
+            "A photo is taken every half second while 2 or more tags show green; get the whole stick in the picture.\n" +
+            "4. Tap Finish (after about 30 pictures). The model appears on the PC's connection screen and in the game."
     }
 }
 

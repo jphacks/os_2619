@@ -9,7 +9,7 @@ import { createBackdrop, SAND_GLSL } from './backdrop.js';
 import { createCourtyard, LAWN_GLSL } from './courtyard.js';
 import { makeWizard } from './wizard.js';
 import { makeWizardModel } from './wizardmodel.js';
-import { stickGeometry } from './stickmesh.js';
+import { stickGeometry, STICK_COLOR } from './stickmesh.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
@@ -341,11 +341,11 @@ function makeAvatar(slot) {
   const plainStick = stick.geometry;
   /** The scanned model (stickscan.js) in place of the metal rod, or back to the rod with null. */
   function setStick(m) {
-    if (stick.geometry !== plainStick) { stick.geometry.dispose(); stickMat.map?.dispose(); }
+    if (stick.geometry !== plainStick) stick.geometry.dispose();
     const g = m && stickGeometry(m);
-    stick.geometry = g ? g.geometry : plainStick; stickMat.map = g ? g.texture : null;
-    stickMat.color.set(g ? 0xffffff : metal); stickMat.metalness = g ? 0 : .85; stickMat.roughness = g ? .6 : .28;
-    stick.userData.r = g ? 1 : .02; stick.userData.glow = g ? .06 : .25; // its own colours, only a hint of the team's
+    stick.geometry = g || plainStick;
+    stickMat.color.set(g ? STICK_COLOR : metal); stickMat.metalness = g ? 0 : .85; stickMat.roughness = g ? .8 : .28; // the scanned one: solid brown wood
+    stick.userData.r = g ? 1 : .02; stick.userData.glow = g ? 0 : .25; // solid brown; it still glows while charging
     stickMat.needsUpdate = true;
   }
   const tipMat = new THREE.MeshBasicMaterial({ color: metal });

@@ -127,10 +127,12 @@ function setRuneScale(v) {
 // this file (not in git). A dashboard sends { type: 'setStick', slot, model | null }; every dashboard (now and on hello) and the slot's
 // phone get { type: 'stick', slot, model }.
 const sticksFile = join(root, 'sticks.json');
-let sticks = {}; try { sticks = JSON.parse(readFileSync(sticksFile, 'utf8')) ?? {}; } catch {}
-const okStick = m => m && typeof m === 'object' && m.length > .1 && m.length < 2 && Number.isInteger(m.rings) && Number.isInteger(m.around)
-  && Array.isArray(m.r) && m.r.length === m.rings && m.r.every(v => v > 0 && v < .2)
-  && Array.isArray(m.rgb) && m.rgb.length === m.rings * m.around * 3 && m.rgb.every(v => Number.isInteger(v) && v >= 0 && v < 256);
+// v 2 only (shape: ring centres c, radii r per angle); a v 1 model (colours) saved by an older build is dropped on load
+const okStick = m => m && typeof m === 'object' && m.v === 2 && m.length > .1 && m.length < 2 && Number.isInteger(m.rings) && Number.isInteger(m.around)
+  && m.rings > 1 && m.rings <= 256 && m.around > 2 && m.around <= 64
+  && Array.isArray(m.r) && m.r.length === m.rings * m.around && m.r.every(v => v > 0 && v < .2)
+  && Array.isArray(m.c) && m.c.length === 2 * m.rings && m.c.every(v => Math.abs(v) < .3);
+let sticks = {}; try { sticks = Object.fromEntries(Object.entries(JSON.parse(readFileSync(sticksFile, 'utf8')) ?? {}).filter(([, m]) => okStick(m))); } catch {}
 function setStick(slot, model) {
   if (!SLOTS.includes(slot) || (model !== null && !okStick(model))) return;
   if (model) sticks[slot] = model; else delete sticks[slot];
