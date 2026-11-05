@@ -361,7 +361,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         startCharge(p); p.autoRelease = t2Of(p) + .3; return;
       case 'guard': if (p) p.guardKey = c.on; return; // true / false: a keyboard player's guard (playable.js); null: back to the stick held still
       case 'charge': if (!p) return;
-        if (c.on) startCharge(p); else release(p);
+        if (c.on) { startCharge(p); if (p.charging) p.chargeSeen = now(); } else release(p); // a held button / key repeats on: it stands for a stick that keeps circling
         return;
       // ---- effect try-out (any phase, no damage, no rules): fxShot fires one tier straight at the other player,
       // fxCharge on / off shows the charge as it grows (and fires the tier it reached when turned off with fire: true)

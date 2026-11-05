@@ -21,7 +21,9 @@ const K = { FLAME: 0, SMOKE: 1, SPARK: 2, GLOW: 3, EMBER: 4, DROP: 5, LEAF: 6 };
 const S = { GLOW: 0, FIREBALL: 1, PLASMA: 2, RING: 3, SWIRL: 4, FLARE: 5, GHOST: 6, WATER: 7, CRESCENT: 8, VORTEX: 9, COLUMN: 10 }; // sprite kinds
 const COL = {
   fire: [1, .38, .08], ember: [1, .5, .14], smoke: [.09, .06, .05], hot: [1, .78, .45], one: [1, 1, 1],
-  elec: [.28, .66, 1], spark: [.62, .86, 1], elecGlow: [.16, .38, 1], white: [.85, .94, 1],
+  // thunder: yellow like the classic game lightning (11/5): white-hot core, lemon-gold bolts (#ffdb3d), amber glow (#ffb000), pale yellow
+  // sparks; kept off fire, which is orange-red (fire [1, .38, .08], hot [1, .78, .45]): thunder has more green and a whiter core
+  elec: [1, .86, .24], spark: [1, .95, .6], elecGlow: [1, .62, 0], white: [1, .98, .91],
   // water: a deep blue body with cyan light in it, white foam. wind: near-white air with a cool pale-cyan cast and silver dust
   // (no saturated green, and kept off thunder's electric blue: water is deeper, wind is whiter)
   water: [.03, .24, .95], waterHi: [.3, .82, 1], waterGlow: [.02, .1, .6], foam: [.78, .93, 1],

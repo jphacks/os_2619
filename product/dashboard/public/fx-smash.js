@@ -76,7 +76,7 @@ export function createSmashStyle(kit0) {
     // no tier: not a projectile (a charge that fizzled): the small classic burst
     hit(el, pos, power, opt = {}) { const m = by[el] ?? {}; if (m.hit && opt.tier) m.hit(pos, opt.tier, power); else C.hit(el, pos, opt.tier ? tierPower[opt.tier] : power); },
     charge(c, dt) { if (ch.charge) ch.charge(c, dt); else C.charge(c, dt); },
-    aura(a, dt) { if (ch.aura) ch.aura(a, dt); else C.aura(a, dt); mc.draw?.(a, dt); }, // + the magic circle under a charging player (fx-smash-circle.js)
+    aura(a, dt) { if (ch.aura) ch.aura(a, dt); else C.aura(a, dt); if (a.el === 'water') mc.draw?.(a, dt); }, // + the magic circle under a charging water player (fx-smash-circle.js); the others have their own floor
     guard(g, dt) { (gd.guard ?? C.guard)(g, dt); },
     block(el, pos) { (gd.block ?? C.block)(el, pos); },
   };

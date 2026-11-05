@@ -7,7 +7,7 @@ export function createThunderMoves(kit) {
   const { K, S, COL, TAU, Q, R, RS, V, emit, spr, sprFloor, segV, Bolt, gen, drawBolt, runit, u3, take, sc, shake, sparkBurst, add } = kit;
   const now = () => kit.time;
   const UP = V().set(0, 1, 0), tA = V(), tB = V(), tC = V(), pX = V(), pY = V();
-  const YEL = [1, .9, .5], CLOUD = [.04, .045, .075], DEEP = [.12, .26, 1];
+  const YEL = [1, .9, .5], CLOUD = [.04, .045, .075], DEEP = [.75, .38, 0];
   const H = 1.9; // cloud height above the projectile (m)
   const bolts = (n, cap) => Array.from({ length: n }, () => new Bolt(cap));
   function basis(d) { pX.crossVectors(d, UP); if (pX.lengthSq() < 1e-4) pX.set(1, 0, 0); pX.normalize(); pY.crossVectors(pX, d).normalize(); }
