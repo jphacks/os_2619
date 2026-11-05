@@ -11,17 +11,21 @@
 // Autoplay: Chrome keeps the context suspended until a user gesture ON THIS PAGE. BroadcastChannel messages from
 // admin.html are not gestures. unlock() is idempotent; the first pointerdown / keydown / touchend on the page calls it.
 
-const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3', 'water1', 'water2', 'water3', 'wind1', 'wind2', 'wind3', 'guard'];
+const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3', 'water1', 'water2', 'water3', 'wind1', 'wind2', 'wind3', 'guard',
+  'charge_fire', 'charge_thunder', 'charge_water', 'charge_wind', 'full_fire', 'full_thunder', 'full_water', 'full_wind'];
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
 const LUFS = { bgm: -4.0, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2,
-  water1: -18.0, water2: -17.8, water3: -20.4, wind1: -12.7, wind2: -13.6, wind3: -13.0, guard: -18.0 }; // water / wind: audio/README.md // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
+  water1: -13.5, water2: -13.2, water3: -14.9, wind1: -13.5, wind2: -17.2, wind3: -13.7, guard: -18.0,
+  charge_fire: -15.2, charge_thunder: -15.3, charge_water: -15.5, charge_wind: -15.1, full_fire: -14.2, full_thunder: -13.3, full_water: -13.4, full_wind: -14.5 }; // water / wind / charge_* / full_*: audio/README.md // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
 // fire3 is also the 大 hit: its 0-6 s faded from 3 s measures differently from the 3 s bed, so that use is corrected by this
-const BIG_LUFS = { fire3: -11.8, lightning3: -7.2, water3: -19.6, wind3: -12.8 };
+const BIG_LUFS = { fire3: -11.8, lightning3: -7.2, water3: -14.0, wind3: -13.6 };
 const REF_LUFS = -16;
 // what plays what (10/18): every launch (小・中・大) = 1; the hit by tier: 小 = 1, 中 = 2, 大 = 3. fire3 is also fire's aura bed.
-export const EL = { fire: { 1: 'fire1', 2: 'fire2', 3: 'fire3', bed: 'fire3' }, thunder: { 1: 'lightning1', 2: 'lightning2', 3: 'lightning3' },
-  water: { 1: 'water1', 2: 'water2', 3: 'water3' }, wind: { 1: 'wind1', 2: 'wind2', 3: 'wind3' } };
+// charge: the element's charge loop; full: the sting when the charge reaches 大
+export const EL = { fire: { 1: 'fire1', 2: 'fire2', 3: 'fire3', bed: 'fire3', charge: 'charge_fire', full: 'full_fire' },
+  thunder: { 1: 'lightning1', 2: 'lightning2', 3: 'lightning3', charge: 'charge_thunder', full: 'full_thunder' },
+  water: { 1: 'water1', 2: 'water2', 3: 'water3', charge: 'charge_water', full: 'full_water' }, wind: { 1: 'wind1', 2: 'wind2', 3: 'wind3', charge: 'charge_wind', full: 'full_wind' } };
 const HIT_FILE = { s: 1, m: 2, l: 3 };
 // fire's 大 is the exception: fire3 0-0.7 s is the launch, and the hit starts at 0.7 s of fire3. lufs: those parts, measured
 // with their fades (the 0.7 s launch is fire3's soft swell, so it is brought up to the other launches' level)
@@ -29,13 +33,13 @@ const FIRE_BIG = { launchTo: .7, launchLufs: -18.2, hitFrom: .7, hitLufs: -11.6 
 // the 大 hit (3): full until fadeAt, linearly down to silence at end (s), counted from where the hit starts
 const BIG_HIT = { fadeAt: 3, end: 6 };
 // loop regions [start, end, crossfade] s: the beds ramp in for ~1 s and decay for 10+ s, so only the steady middle loops
-const LOOPS = { charge: [.2, 4.4, .35] };
+const LOOPS = { charge: [.2, 4.4, .35], charge_fire: [.25, 4.75, .4], charge_thunder: [.25, 4.75, .4], charge_water: [.25, 4.75, .4], charge_wind: [.25, 4.75, .4] };
 // the bed (fire3) plays once from the top: full until fadeAt, down to silence at end (s), no loop (10/18)
 const BED = { fadeAt: 2, end: 3 };
 const BGM_LOOP = [.03, 311.33]; // 情動カタルシス: the whole track, 5 min 11 s; both ends are below -45 dBFS
 // mix in dB relative to REF (hit at full power = 0 dB anchor)
 const CHARGE_PITCH = { s: .85, m: 1.1, l: 1.45 }; // playback rate (pitch) per charge tier
-const MIX = { shot: -5, shotSpan: 4, hit: 0, hitSpan: 6, special: 3, charge: -10, chargeSpan: 5, bed: -17, bgm: -8 };
+const MIX = { shot: -5, shotSpan: 4, hit: 0, hitSpan: 6, special: 3, charge: -10, chargeSpan: 5, full: -4, bed: -17, bgm: -8 };
 const DUCK = { hit: [-3, .12, .35], special: [-10, 1.0, .5] }; // [dB, hold s, release s]; attack is DUCK_ATK
 const DUCK_ATK = .04;
 const LIMIT = { shot: 3, hit: 3, special: 1, play: 4 }; // simultaneous voices per key (key = kind:element)
@@ -186,15 +190,18 @@ export function createAudio({ base = 'audio/' } = {}) {
     else { release(music, .6); music = null; } // ~2 s to silence
   }
   const chg = { A: null, B: null };
-  function charge(slot, on, level = 0, pan = 0, tier = 's') {
+  function charge(slot, on, level = 0, pan = 0, tier = 's', element = '') {
     let v = chg[slot];
-    if (!on) { if (v) { release(v, .05); chg[slot] = null; } return; }
-    if (!buf.charge || ctx.state !== 'running' || muted) return;
-    if (!v) { v = chg[slot] = loopVoice('charge', bus.sfx); v.lvl = -1; v.pan = 9; v.tier = null; v.src.playbackRate.value = CHARGE_PITCH[tier] ?? CHARGE_PITCH.s; } // start at the tier's pitch: no glide down from 1.0
+    const name = buf[EL[element]?.charge] ? EL[element].charge : 'charge'; // the element's own loop; the shared one until it has loaded
+    if (v && (!on || v.name !== name)) { release(v, .05); v = chg[slot] = null; }
+    if (!on) return;
+    if (!buf[name] || ctx.state !== 'running' || muted) return;
+    if (!v) { v = chg[slot] = loopVoice(name, bus.sfx); v.lvl = -1; v.pan = 9; v.tier = null; v.src.playbackRate.value = CHARGE_PITCH[tier] ?? CHARGE_PITCH.s; } // start at the tier's pitch: no glide down from 1.0
     const t = ctx.currentTime, l = clamp(level, 0, 1);
     if (Math.abs(l - v.lvl) < .01 && Math.abs(pan - v.pan) < .02 && tier === v.tier) return; // per-frame calls: skip unchanged
+    if (tier === 'l' && v.tier !== 'l' && EL[element]?.full) voice(key('full', element), EL[element].full, { pan, gain: db(MIX.full) }); // 大 reached
     v.lvl = l; v.pan = pan; v.tier = tier;
-    v.g.gain.setTargetAtTime(db(MIX.charge + MIX.chargeSpan * l) * norm.charge, t, .03);
+    v.g.gain.setTargetAtTime(db(MIX.charge + MIX.chargeSpan * l) * norm[name], t, .03);
     v.src.playbackRate.setTargetAtTime(CHARGE_PITCH[tier] ?? CHARGE_PITCH.s, t, .03); // a riser in steps: each tier is higher, the same tier keeps one pitch
     v.p.pan.setTargetAtTime(clamp(pan, -1, 1) * PAN_MAX, t, .05);
   }

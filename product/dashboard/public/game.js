@@ -382,7 +382,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     stepCharge(dt); stepGuard(); stepShots(dt); stepBuzz();
     const s = sfx();
     if (s) {
-      for (const p of Object.values(players)) s.charge(p.slot, p.charging && canAct(), p.charge, panOf(p.tip), p.tier ?? 's');
+      for (const p of Object.values(players)) s.charge(p.slot, p.charging && canAct(), p.charge, panOf(p.tip), p.tier ?? 's', p.element);
       s.bgm(['countdown', 'fight'].includes(match.phase) && !match.paused);
     }
   }

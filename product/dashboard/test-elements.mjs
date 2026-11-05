@@ -9,11 +9,12 @@ import { createSmashStyle } from './public/fx-smash.js';
 const ELEMENTS = ['fire', 'thunder', 'water', 'wind'];
 const NEW = ['water', 'wind'];
 
-// sounds: launch (1), 中 hit (2), 大 hit (3), and the file is there
-for (const el of ELEMENTS) for (const k of [1, 2, 3]) {
+// sounds: launch (1), 中 hit (2), 大 hit (3), the element's own charge loop and 大-reached sting, and the file is there
+for (const el of ELEMENTS) for (const k of [1, 2, 3, 'charge', 'full']) {
   assert.ok(EL[el]?.[k], `audio EL.${el}.${k}`);
   assert.ok(existsSync(new URL(`./public/audio/${EL[el][k]}.mp3`, import.meta.url)), `audio file ${EL[el][k]}.mp3`);
 }
+assert.equal(new Set(ELEMENTS.map(el => EL[el].charge)).size, ELEMENTS.length, 'each element charges with its own loop');
 // palette tables in the effect modules and the dashboard (read as text: they live inside closures)
 const src = f => readFileSync(new URL('./public/' + f, import.meta.url), 'utf8');
 for (const [file, table] of [['fx-smash-charge.js', 'const PAL = {'], ['fx-smash-guard.js', 'const PAL = {'], ['fx-smash-circle.js', 'const PAL = {'],
