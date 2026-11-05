@@ -42,7 +42,7 @@ export function createHub() {
           s.online = !!p; s.name = p?.name ?? ''; s.addr = p?.addr ?? '';
           if (!p) s.last = {};
         }
-      } else {
+      } else if (k.slot != null) { // a phone's packet; server notices without a slot (e.g. 'sticks') go straight to the listeners
         const s = st[k.slot]; if (!s) return;
         count(s, k.type, k.t);
         k.rx = nowS();
