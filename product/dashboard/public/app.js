@@ -66,7 +66,7 @@ let sfx = null; // sound: loaded lazily so a failing module never stops the pict
 import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const v = JSON.parse(localStorage.getItem('pd-vol')); if (v) for (const [k, x] of Object.entries(v)) sfx.setVolume(k, x); } catch {} }).catch(e => console.warn('audio', e));
 
 // recognition on the final screen (vision.js) and its layers under the effects (visionfx.js); nothing runs unless it is switched on (cfg.visOn) and a layer is on
-const VIS_KEYS = ['visDraw', 'visGhost', 'visSpot', 'visTrail'], EL_COLOR = { fire: '#ff7a1a', thunder: '#6cc8ff', water: '#2f7dff', wind: '#d8f4f2' };
+const VIS_KEYS = ['visDraw', 'visGhost', 'visSpot', 'visTrail'], EL_COLOR = { fire: '#ff7a1a', thunder: '#ffd23d', water: '#2f7dff', wind: '#d8f4f2' };
 const vision = createVision({ getSource: () => video.__dummy?.canvas ?? video, stickLen: () => (cfg.stickLen.A + cfg.stickLen.B) / 2, getFps: () => fps }); // fps (below): the recognition backs off while the page itself is slow
 const vfx = createVisionFx();
 const overlay = { compose: (src, w, h, dt) => vfx.compose(src, w, h, dt, vision, cfg.visOn ? { draw: cfg.visDraw, ghost: cfg.visGhost, spot: cfg.visSpot, trail: cfg.visTrail } : {}, { A: EL_COLOR[game.players.A.element] ?? EL_COLOR.thunder, B: EL_COLOR[game.players.B.element] ?? EL_COLOR.thunder }) };

@@ -6,7 +6,7 @@ import { cleanRarityMul } from './stick-stats.js';
 
 const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const EL = { fire: '炎', thunder: '雷', water: '水', wind: '風' };
-const EL_COLOR = { fire: '#ff7a1a', thunder: '#6cc8ff', water: '#2f7dff', wind: '#d8f4f2' }; // the effects' colours (app.js)
+const EL_COLOR = { fire: '#ff7a1a', thunder: '#ffd23d', water: '#2f7dff', wind: '#d8f4f2' }; // the effects' colours (app.js)
 const ST = { hp: '体力', power: '威力', speed: '速さ', charge: '溜め' };
 const stars = n => `<span class="stars" aria-label="★${n}">${'★'.repeat(n)}<i>${'★'.repeat(5 - n)}</i></span>`;
 const el = e => `<span class="el" style="--el:${EL_COLOR[e]}">${EL[e]}</span>`;
