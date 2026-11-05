@@ -1032,7 +1032,8 @@ export function createFx(renderer, scene, camera, opts = {}) {
     /** opt: { tier } */
     /** opt.target: the struck player's chest. Thunder lands on it in plan (x, z), keeping the hit's height, whatever the style. */
     hit(element, pos, power = .5, opt = {}) {
-      if (element === 'thunder' && opt.target) pos = pos.clone().set(opt.target.x, pos.y, opt.target.z);
+      // thunder falls on the target, and the water 大 waterfall pours onto it: centre them on the target, not on the hit point (its near side)
+      if ((element === 'thunder' || (element === 'water' && opt.tier === 'l')) && opt.target) pos = pos.clone().set(opt.target.x, pos.y, opt.target.z);
       if (opt.tier === 'l') hitDim.hit();
       (style.hit ?? classicHit)(element, pos, power, opt);
     },
