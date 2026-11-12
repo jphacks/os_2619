@@ -5,7 +5,7 @@
 // sized by that peak against the 中 and 大 lines. It re-arms once the stick slows below half the 小 line.
 // Pure logic, no DOM: app.js and test-swing.mjs both use it.
 
-export const SWING_DEFAULT = { on: true, s: 250, m: 550, l: 900, gap: .18 }; // °/s: the lines of 小 / 中 / 大; gap: s at least between two swings
+export const SWING_DEFAULT = { on: false, s: 250, m: 550, l: 900, gap: .18 }; // °/s: the lines of 小 / 中 / 大; gap: s at least between two swings; on: off by default (11/13), the game screen's 刀の振り音を鳴らす turns it on
 export const SWING_GAIN = { s: .35, m: .65, l: 1 };                       // how loud each size plays on the phone (the same file)
 export const ATTACK_SPEED = 300;                                           // °/s: actions.js's Swing starts above this (a shot also needs 60° and a dead stop)
 
