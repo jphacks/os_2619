@@ -319,7 +319,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       p.chargeSeen = now(); startCharge(p);
     }
     else if (ev.name === 'Swing') { p.swingAt = now(); if (inFront(p)) attack(p); else log(p.slot, 'shot', '背中側で止めたので撃たない'); }
-    else if (ev.name === 'Dodge' && (ev.side === 1 || ev.side === -1)) { p.dodge = { t0: now(), side: ev.side }; showAct(p, '回避'); log(p.slot, 'dodge', `${ev.side > 0 ? '右' : '左'}へ回避`); }
+    else if (ev.name === 'Dodge' && (ev.side === 1 || ev.side === -1)) { p.dodge = { t0: now(), side: ev.side }; sfx()?.dodge?.(panOf(p.chest)); showAct(p, '回避'); log(p.slot, 'dodge', `${ev.side > 0 ? '右' : '左'}へ回避`); }
   }
   /** A swing only fires when the stick stops in front of the body: tip ahead of the chest along the body's facing
    *  (horizontal). A stick that comes to rest behind the back (wind-up, putting it down) is not a shot. */

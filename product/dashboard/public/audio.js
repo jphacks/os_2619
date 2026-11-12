@@ -308,6 +308,16 @@ export function createAudio({ base = 'audio/' } = {}) {
     voice(key('guard', kind), name, { pan, gain: db(kind === 'up' ? MIX.shot - 4 : MIX.hit - 2) });
   }
   function play(name, { gain = 1, pan = 0, rate = 1 } = {}) { return !!voice(key('play', name), name, { gain, pan, rate, vary: false }); }
+  // a dodge (game.js), synthesised (there is no file): a fast whoosh, noise swept up then down through a band-pass, panned to the player
+  function dodge(pan = 0) {
+    if (ctx.state !== 'running') return;
+    const t = ctx.currentTime, n = ctx.createBufferSource(), b = ctx.createBuffer(1, ctx.sampleRate * .5, ctx.sampleRate), d = b.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const bp = ctx.createBiquadFilter(), g = node(0), p = ctx.createStereoPanner(); n.buffer = b; bp.type = 'bandpass'; bp.Q.value = 1.6; p.pan.value = clamp(pan, -PAN_MAX, PAN_MAX);
+    bp.frequency.setValueAtTime(400, t); bp.frequency.exponentialRampToValueAtTime(3200, t + .12); bp.frequency.exponentialRampToValueAtTime(700, t + .4);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(db(MIX.shot), t + .05); g.gain.exponentialRampToValueAtTime(.0005, t + .42);
+    n.connect(bp).connect(g).connect(p).connect(bus.sfx); n.start(t); n.stop(t + .5);
+  }
   // the start's countdown (ko-show.js), synthesised (there is no file): 'tick' for 3, 2, 1 a short bright beep; 'go' for FullStick!
   // a chord that sweeps up an octave and rings out
   function countdown(kind) {
@@ -362,7 +372,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     load, unlock,
     get unlocked() { return ctx.state === 'running'; }, get loaded() { return loaded; },
     setVolume, get volumes() { return { ...vol }; }, setMuted, get muted() { return muted; },
-    bgm, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, chargeFail, describe, aura, guard, play, countdown, stopAll, dispose,
+    bgm, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, chargeFail, describe, aura, guard, play, countdown, dodge, stopAll, dispose,
     peak, // output peak (linear) over the last ~43 ms, for meters / tests
     ctx,
   };
