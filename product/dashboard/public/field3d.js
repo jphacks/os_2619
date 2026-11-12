@@ -240,6 +240,8 @@ const between = (m, a, b) => { // unit-height y-axis mesh from a to b
   m.quaternion.setFromUnitVectors(UP, d.multiplyScalar(1 / L));
 };
 const CYL = new THREE.CylinderGeometry(1, 1, 1, 6); // scaled per limb
+const STICK_EASE = .025; // s, each of the drawn stick's two easing stages (about 50 ms behind the newest value in all)
+const _sd = new THREE.Vector3();
 const STICK_IN = .025; // m the stick's end reaches behind the fist's centre: inside the fist, not out past the little finger
 const JOINT = new THREE.IcosahedronGeometry(1, 0);
 const UPPER = .3, FORE = .3, SHOULDER = [-.1, .07, .21], HIP = [-.1, -.5, .1];
@@ -415,7 +417,10 @@ function makeAvatar(slot) {
     st.grip = Math.max(0, Math.min(1, st.grip + (p.charging ? 8 : -8) * dt));
     if (!p.base || !p.tip) return null;
     const base = p.base.clone().applyMatrix4(inv), tip = p.tip.clone().applyMatrix4(inv), dir = tip.clone().sub(base).normalize();
-    return { base, dir, grip: st.grip, hand }; // the figures reach the fist with their own arms (armik.js)
+    // the thumb's side (world.js armAt): the stick hand's turn round the stick comes from it, a smooth field, not from the arm's own line (which
+    // lies along the stick when it points down, and wobbles round it)
+    const th = p.body && W.armAt(p.body, p.tip.clone().sub(p.base).normalize().toArray(), W.ARM_OF[chara] ?? W.ARM_OF.person).thumb;
+    return { base, dir, grip: st.grip, hand, thumb: th ? v3(th).transformDirection(inv) : null }; // the figures reach the fist with their own arms (armik.js)
   }
   // the stick (world space), the team colour and the HP bar: the same for both ways of posing the body
   /** The stick as drawn: from the figure's own fist (its arm bones turned to world.js armAt's angles), the game's direction and length.
@@ -518,6 +523,17 @@ function makeAvatar(slot) {
     root, world, holder, hud, slot, setStick, setChara, get chara() { return chara; }, broken: false, // broken: blown to pieces at a KO (ko-shatter.js), hidden until the next match
     /** p.base / p.tip come in at the character's size (game.js shrink); the figure is posed at a person's size and the holder shrinks the drawing. */
     update(dt, p) {
+      // the stick as drawn: eased in time. The phone's stick arrives unevenly (measured live: a third of the frames bring nothing new, then a
+      // jump of 1-3 frames' worth), and the arm drawn from each newest value moves in steps. Only the looks: the game keeps the newest value
+      if (p?.base && p?.tip) {
+        const len = p.tip.distanceTo(p.base), a = 1 - Math.exp(-Math.max(0, dt) / STICK_EASE), first = !st.sBase || !(dt > 0) || st.sBase.distanceTo(p.base) > .6;
+        _sd.subVectors(p.tip, p.base).normalize();
+        if (first) { st.sBase = p.base.clone(); st.sDir = _sd.clone(); st.sBase2 = p.base.clone(); st.sDir2 = _sd.clone(); }
+        else { // two stages: the second smooths the first's corners, so a step in the input comes out as an S, not a kink
+          st.sBase.lerp(p.base, a); st.sDir.lerp(_sd, a).normalize(); st.sBase2.lerp(st.sBase, a); st.sDir2.lerp(st.sDir, a).normalize();
+        }
+        p = { ...p, base: st.sBase2.clone(), tip: st.sBase2.clone().addScaledVector(st.sDir2, len) };
+      }
       const k = p?.body ? p.scale ?? 1 : 1;
       st.thick = k === 1 ? 1 : W.STICK_SCALE / k;
       if (k !== 1) {

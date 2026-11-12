@@ -21,7 +21,7 @@ export const ARM_IK = {
 const _off = V(), _n = V(), _up = V(), _out = V(), _e = V(), _ax = V(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _ref = V();
 
 /**
- * solveArm({ root, shoulder, fwd, up, out, upper, fore, target, state, dt }) -> { shoulder, elbow, clavicle, stretch }
+ * solveArm({ root, shoulder, fwd, up, out, upper, fore, target, state, dt }) -> { shoulder, elbow, clavicle, stretch, side }
  * root: the clavicle's root; shoulder: the upper arm's start at rest; fwd / up / out: the body's unit axes (out for this side); upper / fore: the bones'
  * lengths (fore: elbow to the fist's centre); target: the fist's centre; state: {} kept per arm (the eased elbow angle).
  * Returns new vectors: the shoulder (the clavicle turned, maybe pulled toward the fist), the elbow, the clavicle's turn (a quaternion, applied about
@@ -67,9 +67,18 @@ export function solveArm({ root, shoulder: rest, fwd, up, out, upper, fore, targ
     _ref.addScaledVector(_n, -_ref.dot(_n));
     if (_ref.lengthSq() > 1e-6) _e.lerp(_ref.normalize(), w).normalize();
   }
+  // the elbow's side eased as a direction, not only as an angle: the frame it is measured in turns over when the arm's line passes near
+  // upright, and a sensor's jitter there must not flip the elbow from frame to frame. Kept square to the line.
+  if (!state.e || !(dt > 0)) state.e = _e.clone();
+  else {
+    state.e.addScaledVector(_n, -state.e.dot(_n)); if (state.e.lengthSq() < 1e-6) state.e.copy(_e); state.e.normalize();
+    state.e.lerp(_e, 1 - Math.exp(-dt / P.smooth)); state.e.addScaledVector(_n, -state.e.dot(_n));
+    if (state.e.lengthSq() < 1e-6) state.e.copy(_e); state.e.normalize();
+  }
+  _e.copy(state.e);
   // two bones (law of cosines): the elbow on its circle about the line, on that side
   const dd = clamp(d, Math.abs(upper - fore) + 1e-4, len);
   const along = (dd * dd + upper * upper - fore * fore) / (2 * dd), h = Math.sqrt(Math.max(0, upper * upper - along * along));
   const elbow = V().copy(shoulder).addScaledVector(_n, along).addScaledVector(_e, h);
-  return { shoulder, elbow, clavicle, stretch };
+  return { shoulder, elbow, clavicle, stretch, side: _e.clone() }; // side: where the elbow sticks out (square to the line), defined even when the arm is straight
 }

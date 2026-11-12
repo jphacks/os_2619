@@ -17,13 +17,17 @@ const clamp01 = v => Math.max(0, Math.min(1, v));
 const smooth = v => { const t = clamp01(v); return t * t * (3 - 2 * t); };
 const _a = new THREE.Matrix4(), _st = new THREE.Matrix4(), _b = new THREE.Matrix4();
 const _d = V(), _n = V(), _e1 = V(), _e2 = V(), _e3 = V(), _f1 = V(), _f2 = V(), _f3 = V();
-const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4();
+const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _sq1 = V(), _sq2 = V(), _sq3 = V(), _sq4 = V();
 
 /** The turn taking the frame (a1, a2) to (b1, b2), each pair unit and at right angles. */
 export function turn(q, a1, a2, b1, b2) {
-  _e3.crossVectors(a1, a2); _f3.crossVectors(b1, b2);
-  _m1.makeBasis(a1, a2, _e3); _m2.makeBasis(b1, b2, _f3);
-  return q.setFromRotationMatrix(_m2.multiply(_m1.transpose()));
+  // both frames made exactly square first: a second axis that is not square to the first (or nearly along it) gives a matrix that is not a rotation,
+  // and a quaternion from it that is not unit length, which stretches and shears the bone (an arm held straight was exploding that way)
+  _sq1.copy(a1).normalize(); _sq2.copy(a2).addScaledVector(_sq1, -a2.dot(_sq1)); if (_sq2.lengthSq() < 1e-10) _sq2.set(_sq1.y, -_sq1.x, 0).lengthSq() < 1e-10 && _sq2.set(0, _sq1.z, -_sq1.y); _sq2.normalize();
+  _sq3.copy(b1).normalize(); _sq4.copy(b2).addScaledVector(_sq3, -b2.dot(_sq3)); if (_sq4.lengthSq() < 1e-10) _sq4.set(_sq3.y, -_sq3.x, 0).lengthSq() < 1e-10 && _sq4.set(0, _sq3.z, -_sq3.y); _sq4.normalize();
+  _e3.crossVectors(_sq1, _sq2); _f3.crossVectors(_sq3, _sq4);
+  _m1.makeBasis(_sq1, _sq2, _e3); _m2.makeBasis(_sq3, _sq4, _f3);
+  return q.setFromRotationMatrix(_m2.multiply(_m1.transpose())).normalize();
 }
 /** Joint between a and b, bones l1 and l2, bending toward pole. */
 export function jointFor(out, a, b, l1, l2, pole) {
@@ -158,7 +162,7 @@ export function makeWizardModel(root, cloth, scene) {
       a.shoulder.copy(sol.shoulder); a.elbow.copy(sol.elbow);
       a.dir.subVectors(a.hand, a.elbow); const Lfg = a.dir.length(); a.dir.divideScalar(Math.max(Lfg, 1e-5)); // the forearm, on to the fist
       a.wrist.copy(a.elbow).addScaledVector(a.dir, Lfg * lf / lfg);
-      a.pole.copy(a.elbow).sub(tmp.copy(a.shoulder).lerp(a.hand, .5)); if (a.pole.lengthSq() < 1e-8) a.pole.copy(_uw).negate(); a.pole.normalize(); // where the elbow sticks out
+      a.pole.copy(sol.side); // where the elbow sticks out: the solver's (eased) side, which a straight arm still has (the elbow's offset from the line has none)
       const du = _f1.subVectors(a.elbow, a.shoulder), Lu = du.length(); du.divideScalar(Math.max(Lu, 1e-5));
       a.poleU.copy(a.pole).addScaledVector(du, -a.pole.dot(du)).normalize();
       setBone(a.s + '_Upperarm', a.shoulder, turn(Rs, a.up1, a.upP, du, a.poleU), s, a.up1, Lu / lu);

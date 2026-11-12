@@ -30,8 +30,15 @@ export const STICK = { len: 1.0, axis: [0, 1, 0], up: [0, 0, 1], hand: { fwd: 0.
 //   level: up to h = sideH the upper arm follows the stick, the elbow straight; past it the upper arm eases back to foldH while the forearm
 //          keeps following, so by h = 180 the elbow is out to the right and the fist in front of the body.
 //   up / down: up to v = liftV the upper arm follows, the elbow straight; past it the upper arm rises at liftRate and the forearm follows the stick.
-//   behind the body the arm stops at backH; a stick near upright has no heading to read, so the arm leans to the front (vertH: how far from upright).
-export const ARM = { sideH: 80, foldH: 55, liftV: 45, liftRate: .5, backH: -60, vertH: .3 };
+//   a stick near upright has no heading to read, so the arm leans to the front (vertH: how far from upright).
+//   the upper arm never goes behind the body's side (a stick tipped back is held so by the forearm and the wrist), and the more upright the stick,
+//   the less its heading turns the upper arm and the forearm: toward upH (raised in front, a little to the side) by the time it is within upVert (its level part) of upright.
+//   A stick held up has a heading that swings right round with every small tilt; the upper arm must not swing with it.
+//   grip: the stick leaves the fist at this many degrees from the forearm, toward the thumb (a fist round a stick, the wrist relaxed). The rules
+//   above pose the forearm, not the stick: an arm in line with the stick looks like a pointer, its wrist snapped.
+export const ARM = { sideH: 80, foldH: 55, liftV: 45, liftRate: .5, backH: -60, vertH: .3, upH: 70, upVert: .9, grip: 45, gripDown: .7, thumbPole: [-1, .6, -1], poleNear: [20, 60], downVert: .7 };
+//   thumbPole: (fwd, up, right) the one stick direction with no thumb's side (back over the left shoulder); poleNear: degrees from it where the grip angle fades out;
+//   downVert: a stick pointing down within this (its level part) of straight down turns the arm less and less.
 
 // Tag layouts. Pick one with ?layout= (browser) or LAYOUT= (node); default 'map4'.
 // - map4:  four sheets (ids 0-3, any size listed here) lying anywhere on the floor, roughly the corners of the play area.
@@ -250,18 +257,42 @@ export const ARM_OF = {
  * { shoulder, elbow, hand, upper, fore }: points, and the upper arm's / forearm's directions. The hand is where the fist holds the stick (the game's stick base).
  */
 export function armAt(body, dir, arm = ARM_OF.person) {
-  const D = Math.PI / 180, d = app3(tr3(body.R), dir), flat = Math.hypot(d[0], d[2]); // body frame: x forward, y up, z right
+  const D = Math.PI / 180, s0 = app3(tr3(body.R), dir); // the stick, body frame: x forward, y up, z right
+  // the forearm: the stick turned away from the thumb's side by ARM.grip. The thumb's side: the stick turned a right angle about the body's
+  // right axis (stick forward: up; up: back; down: forward), so the forearm comes from below a stick held forward, from in front of one held up
+  // and from behind one pointing down; for a stick pointing out to the side, up.
+  // the thumb's side: one smooth field over every stick direction whose only zero (a sphere's field must have one) is where a stick is not held,
+  // back over the left shoulder (ARM.thumbPole). It is the body's up carried round the sphere from that pole (a stereographic projection's
+  // constant field): stick forward or out to a side, up; up, back and left; down, forward and right (the forearm hangs a little behind, gripDown).
+  const P = ARM.thumbPole, pn = Math.hypot(...P), Pu = P.map(x => x / pn), cu = [0, 1, 0].map((x, i) => x - Pu[1] * Pu[i]), cn = Math.hypot(...cu);
+  const C = cu.map(x => x / cn), sp = Pu[0] * s0[0] + Pu[1] * s0[1] + Pu[2] * s0[2], den = Math.max(1e-6, 1 - sp);
+  const X = s0.map((x, i) => (x - sp * Pu[i]) / den), r2 = X[0] * X[0] + X[1] * X[1] + X[2] * X[2], xc = X[0] * C[0] + X[1] * C[1] + X[2] * C[2]; // the stick, projected from the pole
+  const u = C.map((c, i) => (2 * c + 2 * xc * Pu[i]) * (r2 + 1) - (2 * X[i] + (r2 - 1) * Pu[i]) * 2 * xc); // the plane's constant up, carried back onto the sphere
+  const un = Math.hypot(...u) || 1;
+  // pointing down, the wrist bends it there: less of the angle in the arm, the fist not swung behind. Near the pole (where the thumb's side turns
+  // fast, and at it has none) none at all: the forearm along the stick there
+  const pg = Math.acos(Math.max(-1, Math.min(1, sp))) / D, kp = Math.max(0, Math.min(1, (pg - ARM.poleNear[0]) / (ARM.poleNear[1] - ARM.poleNear[0])));
+  const ga = ARM.grip * (1 - ARM.gripDown * Math.max(0, -s0[1])) * kp * kp * (3 - 2 * kp);
+  const ca = Math.cos(ga * D), sa = Math.sin(ga * D), d = s0.map((x, i) => ca * x - sa * u[i] / un);
+  const flat = Math.hypot(d[0], d[2]);
   const v = Math.acos(Math.max(-1, Math.min(1, -d[1]))) / D;
   let h = Math.atan2(d[0], d[2]) / D; // 0 right, 90 forward, 180 / -180 left, -90 back
-  if (h < ARM.backH) h = h < (ARM.backH - 180) / 2 ? 180 : ARM.backH; // behind: back-left reads as left, back-right stops at backH
+  // behind the body (past backH on the right, round to the left): brought round the front, continuously (it was a switch from one side to the
+  // other, which a stick wobbling at the edge flipped every frame): from backH at backH, through the front, to the left at straight left
+  if (h < ARM.backH) h = ARM.backH + (h - ARM.backH) * (180 - ARM.backH) / (-180 - ARM.backH);
   const k = Math.min(1, flat / ARM.vertH), sk = k * k * (3 - 2 * k); h = 90 + (h - 90) * sk; // near upright: toward the front
   const fold = Math.max(0, Math.min(1, (h - ARM.sideH) / (180 - ARM.sideH)));
-  const hu = h <= ARM.sideH ? h : ARM.sideH + (ARM.foldH - ARM.sideH) * fold; // the upper arm's heading
+  let hu = h < 0 ? 0 : h <= ARM.sideH ? h : ARM.sideH + (ARM.foldH - ARM.sideH) * fold; // the upper arm's heading: not behind the body's side
+  // a stick near upright or pointing down: its heading (which swings right round with every small tilt there) barely turns the arm
+  const ku = Math.min(1, flat / ARM.upVert), sF = Math.hypot(s0[0], s0[2]), kd = s0[1] < 0 ? Math.min(1, sF / ARM.downVert) : 1;
+  const sku = Math.min(ku * ku * (3 - 2 * ku), kd * kd * (3 - 2 * kd));
+  hu = ARM.upH + (hu - ARM.upH) * sku;
   const vu = v <= ARM.liftV ? v : ARM.liftV + (v - ARM.liftV) * ARM.liftRate; // its angle from down
   const at = (hh, vv) => { const s = Math.sin(vv * D); return [s * Math.sin(hh * D), -Math.cos(vv * D), s * Math.cos(hh * D)]; };
-  const { shoulder: s, upper, fore } = arm ?? ARM_OF.person, a = at(hu, vu), b = at(h, v);
+  const hf = ARM.upH + (h - ARM.upH) * sku; // the forearm too: near upright the fist stays over the shoulder, in front, whichever way the stick tips
+  const { shoulder: s, upper, fore } = arm ?? ARM_OF.person, a = at(hu, vu), b = at(hf, v);
   const sh = [s.fwd, s.up, s.right], el = sh.map((x, i) => x + a[i] * upper), hd = el.map((x, i) => x + b[i] * fore);
-  return { shoulder: apply(body, sh), elbow: apply(body, el), hand: apply(body, hd), upper: app3(body.R, a), fore: app3(body.R, b) };
+  return { shoulder: apply(body, sh), elbow: apply(body, el), hand: apply(body, hd), upper: app3(body.R, a), fore: app3(body.R, b), thumb: app3(body.R, u.map(x => x / un)) };
 }
 /** The stick hand (world): armAt's fist. */
 export const handAt = (body, dir, arm) => armAt(body, dir, arm).hand;

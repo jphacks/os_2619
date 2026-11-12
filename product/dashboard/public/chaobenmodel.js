@@ -11,6 +11,7 @@ const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const SIZE = 1.35;              // the model's scale per metre of the rig's leg: a 1.3 m chest mount (rig leg .74) stands him at his own 1.73 m
 const BODY_X = -.04;            // the body's centre behind the chest's sensor point, m
 const LOW = { hip: .5, neck: 1.02, lean: .12, back: -.06, frontFoot: .32, backFoot: -.34, backFootY: .13 }; // down on the right knee, in the model's metres
+const HAND_EASE = .05; // s the stick hand's turn eases in (no flicker from the sensors' jitter)
 const GRIP = .07, HANDS_APART = .11; // the fist's centre past the wrist; between the two fists on the stick (model's metres)
 const RIG_HANG = .5;            // the rig's free hand hangs this far from its shoulder (field3d.js): taken as his arm hanging straight
 const HAIR = 0x16110e;
@@ -49,7 +50,7 @@ export function makeChaobenModel(root, scene) {
     const g0 = J[s + '_Grip'], g1 = J[s + '_GripEnd'], gripOff = g0 ? al(V().subVectors(g0, J[s + '_Hand'])) : V(GRIP, 0, 0);
     const gripAxis = g0 && g1 ? al(V().subVectors(g1, g0)).normalize() : null; // the hole's direction at rest
     const gripAlong = gripAxis && fo1.clone().addScaledVector(gripAxis, -fo1.dot(gripAxis)).normalize(); // the hand's length, square to it
-    return { s, side, upper, fore, up1, upP, fo1, foP, handAxis, gripOff, gripAxis, gripAlong, root: V(), shoulder: V(), elbow: V(), wrist: V(), hand: V(), dir: V(), pole: V(), poleU: V(), poleF: V(), rest: V(), ik: {} };
+    return { s, side, upper, fore, up1, upP, fo1, foP, handAxis, gripOff, gripAxis, gripAlong, root: V(), shoulder: V(), elbow: V(), wrist: V(), hand: V(), dir: V(), pole: V(), poleU: V(), poleF: V(), rest: V(), ik: {}, gripHint: V() };
   });
   const LEGS = [['L', 0], ['R', 1]].map(([s, i]) => ({ s, i, thigh: seg(s + '_Thigh', s + '_Calf'), calf: seg(s + '_Calf', s + '_Foot'), hipAt: V(), knee: V(), foot: V() }));
   const THIGH_OFF = { L: al(V().subVectors(J.L_Thigh, J.Hip)), R: al(V().subVectors(J.R_Thigh, J.Hip)) };
@@ -71,7 +72,7 @@ export function makeChaobenModel(root, scene) {
     B[name].matrix.multiplyMatrices(_a, restW[name]); B[name].matrixWorldNeedsUpdate = true;
   }
 
-  const _fw = V(), _uw = V(), _ow = V(), _hl = V(); let lastT = null;
+  const _fw = V(), _uw = V(), _ow = V(), _hl = V(), _qh = new THREE.Quaternion(); let lastT = null;
   return function update(r) {
     const dt = lastT == null ? 0 : Math.min(.1, Math.max(0, (r.time ?? 0) - lastT)); lastT = r.time ?? 0; // for the elbow's easing (armik.js)
     const legs = r.legs, s = r.leg * SIZE, fy = Math.min(legs[0].foot.y, legs[1].foot.y), floor = fy - .04;
@@ -112,18 +113,26 @@ export function makeChaobenModel(root, scene) {
       // arm reaches the wrist. The hand's length axis stays as near the arm's line as it can (square to the stick)
       const grip = onStick && a.gripAxis;
       if (grip) {
-        _hl.subVectors(st.base, a.shoulder).addScaledVector(st.dir, -st.dir.dot(tmp.subVectors(st.base, a.shoulder))); if (_hl.lengthSq() < 1e-8) _hl.set(1, 0, 0); _hl.normalize();
-        turn(Rhand, a.gripAxis, a.gripAlong, st.dir, _hl);
+        // the hand's length: from the last frame's elbow to the fist, square to the stick (the shoulder's line is near the stick's whenever it is
+        // held out forward, and that leaves a hint that flips with every jitter); if even that is too short, the last frame's
+        if (st.thumb) _hl.copy(st.thumb).negate(); // the hand's length: away from the thumb's side (world.js armAt), smooth over every stick direction
+        else _hl.subVectors(st.base, a.ik.elbow ?? a.shoulder);
+        _hl.addScaledVector(st.dir, -st.dir.dot(_hl));
+        if (_hl.lengthSq() > 1e-4) a.gripHint.copy(_hl.normalize()); else if (a.gripHint.lengthSq() < .5) a.gripHint.set(0, -1, 0);
+        a.gripHint.addScaledVector(st.dir, -st.dir.dot(a.gripHint)).normalize();
+        turn(_qh, a.gripAxis, a.gripAlong, st.dir, a.gripHint);
+        if (!a.ik.hand || !(dt > 0)) a.ik.hand = _qh.clone(); else a.ik.hand.slerp(_qh, 1 - Math.exp(-dt / HAND_EASE)); // eased: no flicker
+        Rhand.copy(a.ik.hand);
         a.wrist.copy(st.base).sub(tmp.copy(a.gripOff).multiplyScalar(s).applyQuaternion(Rhand));
       }
       // the arm from its shoulder to the wrist / fist (armik.js: two bones, the elbow's side, the clavicle and shoulder as VRArmIK places them)
       _fw.set(1, 0, 0).applyQuaternion(R); _uw.set(0, 1, 0).applyQuaternion(R); _ow.set(0, 0, a.side).applyQuaternion(R);
       const sol = solveArm({ root: a.root, shoulder: a.shoulder, fwd: _fw, up: _uw, out: _ow, upper: lu, fore: grip ? lf : lfg, target: grip ? a.wrist : a.hand, state: a.ik, dt });
       setBone(a.s + '_Clavicle', a.root, Rs.copy(sol.clavicle).multiply(R), s);
-      a.shoulder.copy(sol.shoulder); a.elbow.copy(sol.elbow);
+      a.shoulder.copy(sol.shoulder); a.elbow.copy(sol.elbow); a.ik.elbow = (a.ik.elbow ?? V()).copy(sol.elbow);
       if (grip) { a.dir.subVectors(a.wrist, a.elbow).normalize(); }
       else { a.dir.subVectors(a.hand, a.elbow); const Lfg = a.dir.length(); a.dir.divideScalar(Math.max(Lfg, 1e-5)); a.wrist.copy(a.elbow).addScaledVector(a.dir, Lfg * lf / lfg); } // the forearm, on to the fist
-      a.pole.copy(a.elbow).sub(tmp.copy(a.shoulder).lerp(a.wrist, .5)); if (a.pole.lengthSq() < 1e-8) a.pole.copy(_uw).negate(); a.pole.normalize(); // where the elbow sticks out
+      a.pole.copy(sol.side); // where the elbow sticks out: the solver's (eased) side, which a straight arm still has (the elbow's offset from the line has none)
       const du = _f1.subVectors(a.elbow, a.shoulder), Lu = du.length(); du.divideScalar(Math.max(Lu, 1e-5));
       a.poleU.copy(a.pole).addScaledVector(du, -a.pole.dot(du)).normalize();
       setBone(a.s + '_Upperarm', a.shoulder, turn(Rs, a.up1, a.upP, du, a.poleU), s, a.up1, Lu / lu);
