@@ -21,6 +21,10 @@ const loadDesign = () => designJob ??= fetch('mahoujin-design.bin.gz')
   .then(b => parseDesign(new Uint8Array(b)))
   .catch(e => { console.warn('mahoujin design', e); return null; });
 
+// Every step also goes out as a page event 'stickscan' { slot, step: start | picture (n) | building | built (rec) | failed (error) | cancel }
+// for the scan show (scanfx.js, screen 6).
+const tell = (slot, step, more) => dispatchEvent(new CustomEvent('stickscan', { detail: { slot, step, ...more } }));
+
 export function createStickScan(onText, onBuilt = () => {}) {
   const scans = {}; // slot -> { views: [], jpgs: [] (the pictures with a camera), jobs: [], noPose: 0 }
   const fresh = () => ({ views: [], jpgs: [], jobs: [], noPose: 0 });
@@ -28,20 +32,20 @@ export function createStickScan(onText, onBuilt = () => {}) {
   return {
     async ingest(k) {
       const slot = k.slot;
-      if (k.step === 'start' || !scans[slot]) scans[slot] = fresh();
+      if (k.step === 'start' || !scans[slot]) { scans[slot] = fresh(); tell(slot, 'start'); }
       const s = scans[slot];
-      if (k.step === 'cancel') { delete scans[slot]; return onText(slot, 'スキャンを中止しました'); }
+      if (k.step === 'cancel') { delete scans[slot]; tell(slot, 'cancel'); return onText(slot, 'スキャンを中止しました'); }
       if (k.step === 'stick' && k.jpg) {
         const job = decode(k.jpg).then(img => {
           const cam = viewCamera(k.tags, k.k, img.width, img.height);
           if (cam) { s.views.push({ img, cam }); s.jpgs.push(k.jpg); } else s.noPose++;
-          say(slot, s);
+          say(slot, s); tell(slot, 'picture', { n: s.views.length });
         }).catch(e => console.warn('stick scan picture', e));
         s.jobs.push(job);
       }
       if (k.step === 'done') {
         await Promise.all(s.jobs);
-        onText(slot, `モデルを作成中…（写真 ${s.views.length} 枚）`);
+        onText(slot, `モデルを作成中…（写真 ${s.views.length} 枚）`); tell(slot, 'building');
         await new Promise(r => setTimeout(r, 30)); // let the text show: the build holds this thread for ~1 s
         try {
           // shortcut: runs on the page's thread (~1 s per scan); move to a worker if it stutters a match
@@ -55,10 +59,10 @@ export function createStickScan(onText, onBuilt = () => {}) {
             throw new Error(`保存できませんでした（${r.status} ${why}）。${why === 'features or image' ? 'PC のサーバーが古いままです。サーバーを再起動してください。' : ''}${shape}`);
           }
           const rec = await r.json();
-          onBuilt(slot, rec);
+          onBuilt(slot, rec); tell(slot, 'built', { rec });
           const element = { fire: '炎', thunder: '電気（雷）', wind: '風', water: '水' }[rec.element] ?? rec.element;
           onText(slot, `作成しました（まだ反映していません）：${shape}。形から判定した属性は ${element}。体積 ${rec.volume} cm³ → 威力 ×${rec.stats.power.toFixed(2)}・弾速 ×${rec.stats.speed.toFixed(2)}。「反映」でこのスマホの棒になります`);
-        } catch (e) { onText(slot, '作成できませんでした：' + e.message); console.warn(e); }
+        } catch (e) { onText(slot, '作成できませんでした：' + e.message); tell(slot, 'failed', { error: e.message }); console.warn(e); }
         delete scans[slot];
       }
     },

@@ -53,6 +53,20 @@
   .screen { position: absolute; inset: 0; display: none; }
   .screen.active { display: grid; }
   #scr-sticks { overflow: auto; }
+  /* 新しい枝 (scanfx.js): white, the words and the OK fade in over the 3D view */
+  .scanfx { position: relative; background: #fff; overflow: hidden; }
+  .scanfx canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .scanfx-msg { position: absolute; left: 0; right: 0; bottom: 6%; text-align: center; color: #555; font-size: 18px; transition: opacity .6s; }
+  .scanfx-msg.off { opacity: 0; }
+  .scanfx-title, .scanfx-name, .scanfx-ok { position: absolute; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity 1s, transform 1s; pointer-events: none; }
+  .scanfx-title { top: 9%; font: 400 clamp(48px, 9vw, 120px) 'Dela Gothic One', sans-serif; color: #c8941a; letter-spacing: .08em; white-space: nowrap;
+    text-shadow: 0 0 18px rgba(255, 214, 102, .9), 0 3px 0 #8a5d00; transform: translateX(-50%) scale(.9); }
+  .scanfx-name { top: calc(9% + clamp(60px, 11vw, 150px)); font-size: 22px; color: #6b5420; }
+  .scanfx-ok { bottom: 8%; padding: 14px 64px; font-size: 24px; font-weight: 700; color: #fff; background: linear-gradient(#e8b93a, #b9861a);
+    border: 0; border-radius: 999px; box-shadow: 0 4px 18px rgba(185, 134, 26, .5); cursor: pointer; }
+  .scanfx-title.on, .scanfx-name.on, .scanfx-ok.on { opacity: 1; pointer-events: auto; }
+  .scanfx-title.on { transform: translateX(-50%) scale(1); }
+  @media (prefers-reduced-motion: reduce) { .scanfx-title, .scanfx-name, .scanfx-ok { transition: none; } }
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-width: 0; }
   .card > header { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; flex-wrap: wrap; }
   .card h2 { margin: 0; font-size: 15px; font-weight: 700; }
@@ -329,6 +343,7 @@
     <button role="tab" data-screen="game"><span>3</span>ゲーム</button>
     <button role="tab" data-screen="final"><span>4</span>最終映像</button>
     <button role="tab" data-screen="sticks"><span>5</span>棒設定</button>
+    <button role="tab" data-screen="scanfx"><span>6</span>新しい枝</button>
   </nav>
   <span class="grow"></span>
   <div class="pills">
@@ -368,6 +383,8 @@
   <section class="screen" id="scr-sticks">
     <div id="sticksRoot"></div>
   </section>
+
+  <section class="screen" id="scr-scanfx"></section>
 </main>
 
 <aside id="settings" aria-label="設定"></aside>

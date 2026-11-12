@@ -13,6 +13,7 @@ import { createVideoSource } from './video.js';
 import { createStage, DRONE_JA } from './stage.js';
 import { POSE, CHARAS } from './field3d.js';
 import { mountSticks } from './sticks.js';
+import { mountScanFx } from './scanfx.js';
 import { createGame, PHASE_JA, POS_JA, ELEMENT_JA, RULES, TIER_JA, speedRule } from './game.js';
 import { createSmashStyle } from './fx-smash.js';
 import { createSpace } from './space3d.js';
@@ -185,7 +186,7 @@ let screen = null, sticksUi = null;
 const sentPhase = { ph: null, at: 0 }; // the game phase told to the server (phones grey out 枝 in a match)
 const sentHp = { A: { key: '', dist: null, at: -9 }, B: { key: '', dist: null, at: -9 } }; // what the phones were last told (their HP screen)
 function show(name) {
-  if (!['connect', 'space', 'game', 'final', 'sticks'].includes(name)) name = 'connect';
+  if (!['connect', 'space', 'game', 'final', 'sticks', 'scanfx'].includes(name)) name = 'connect';
   screen = name; cfg.screen = name; save();
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('active', s.id === 'scr-' + name);
   for (const b of document.querySelectorAll('nav.tabs button')) b.setAttribute('aria-selected', b.dataset.screen === name);
@@ -193,9 +194,13 @@ function show(name) {
   if (name === 'sticks') sticksUi ??= mountSticks($('#sticksRoot')); // built on first open
   if (name === 'final') stage.attach($('#finalBox'), 'final');
   if (name === 'space') space.resize();
+  scanFx.setActive(name === 'scanfx');
   if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
 }
 for (const b of document.querySelectorAll('nav.tabs button')) b.onclick = () => show(b.dataset.screen);
+// 新しい枝 (screen 6): a phone starting a stick scan brings it up; its OK goes back to the game
+const scanFx = mountScanFx($('#scr-scanfx'), { onOk: () => show('game') });
+addEventListener('stickscan', e => { if (e.detail.step === 'start') show('scanfx'); });
 addEventListener('hashchange', () => show(location.hash.slice(1)));
 
 // ---- game screen controls ----
@@ -450,7 +455,7 @@ const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 2: { cmd: 'phase', phase: 'd
 const held = { q: 'A', p: 'B' };
 addEventListener('keydown', e => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) || e.repeat || e.ctrlKey || e.metaKey) return;
-  if (e.altKey) { const n = { Digit1: 'connect', Digit2: 'space', Digit3: 'game', Digit4: 'final' }[e.code]; if (n) { e.preventDefault(); show(n); } return; }
+  if (e.altKey) { const n = { Digit1: 'connect', Digit2: 'space', Digit3: 'game', Digit4: 'final', Digit5: 'sticks', Digit6: 'scanfx' }[e.code]; if (n) { e.preventDefault(); show(n); } return; }
   if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (held[k] && screen !== 'final') return holdCharge(held[k], true);
