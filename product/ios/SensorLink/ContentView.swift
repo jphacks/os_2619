@@ -1,12 +1,10 @@
 import SwiftUI
-import WebKit
 
 /// Camera picture with the detected tags drawn on top, the status lines, and the three buttons (IMU / Calibrate / LAN).
 struct ContentView: View {
     @EnvironmentObject var model: Model
     @State private var showImu = false
     @State private var showLan = false
-    @State private var showStick = false
     @State private var showScan = false
     @State private var showSaved = false
 
@@ -37,8 +35,6 @@ struct ContentView: View {
                     Button("Calibrate") { model.calibrate() }
                     Button("LAN") { showLan = true }
                     Button(model.scanning ? "Finish" : "Scan") { showScan = true }
-                    Button("枝") { showStick = true }
-                        .disabled(model.inMatch) // no stick changes during a match
                 }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity)
@@ -51,7 +47,6 @@ struct ContentView: View {
         .sheet(isPresented: $showImu) { ImuSheet().environmentObject(model) }
         .sheet(isPresented: $showLan) { LanSheet().environmentObject(model) }
         .sheet(isPresented: $showSaved) { SavedScansSheet().environmentObject(model) }
-        .sheet(isPresented: $showStick) { StickSheet(url: URL(string: "http://\(model.host):\(model.port)/sticks.html")!).environmentObject(model) }
         .alert(model.scanning ? "Finish the scan?" : "Scan the stick", isPresented: $showScan) {
             if model.scanning {
                 Button("Send to PC") { model.scanFinish() }
@@ -192,39 +187,10 @@ struct LanSheet: View {
         .onAppear { host = model.host; port = String(model.port) }
     }
 }
-
-/// The PC's branch-scan page (sticks.html) inside the app: its photo button opens the camera, and the page measures and uploads.
-struct StickSheet: View {
-    let url: URL
-    @EnvironmentObject var model: Model
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationView {
-            Group {
-                if model.lanUp {
-                    WebView(url: url)
-                } else {
-                    VStack(spacing: 12) {
-                        Text("PC につながっていません").font(.headline)
-                        Text("閉じて LAN を開き、PC の IP とポートを入れてください。\n今の行き先: \(url.host ?? "") : \(url.port ?? 0)")
-                            .font(.subheadline).foregroundColor(.secondary).multilineTextAlignment(.center)
-                    }.padding()
                 }
             }
-                .navigationTitle("枝をスキャン")
-                .navigationBarTitleDisplayMode(.inline)
-                .navigationBarItems(trailing: Button("閉じる") { dismiss() })
         }
     }
 }
-
-struct WebView: UIViewRepresentable {
-    let url: URL
-    func makeUIView(context: Context) -> WKWebView {
-        let v = WKWebView()
-        v.load(URLRequest(url: url))
-        return v
     }
-    func updateUIView(_ v: WKWebView, context: Context) {}
 }
