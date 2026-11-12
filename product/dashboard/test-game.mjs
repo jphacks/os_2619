@@ -259,16 +259,16 @@ scenario('ガードのセンサー判定だけでは何も起きない（ガー�
   S.swing('A'); S.run(1);
   eq(S.B.hp, 95, 'B の HP');
 });
-scenario('回避（横の加速度）でキャラが横へ転がって素早く 2〜3 m 動き、2 秒ほどで横跳びして元の位置へ戻る', () => {
+scenario('回避（横の加速度）でキャラが横へ転がって素早く 1.25 m ほど動き、1 秒で横跳びして元の位置へ戻る', () => {
   const S = setup(); S.fight(); S.run(.1);
   const x0 = S.B.chest.clone();
   S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'right', side: 1, acc: 9 });
   S.run(.22); if (!(Math.abs(S.B.roll) > 1)) throw new Error(`転がっていない（roll ${S.B.roll}）`);
   S.run(.3); const d = S.B.chest.distanceTo(x0);
-  if (!(d > 2 && d < 3)) throw new Error(`0.5 秒後のずれ ${d.toFixed(2)} m`);
+  if (!(d > 1 && d < 1.5)) throw new Error(`0.5 秒後のずれ ${d.toFixed(2)} m`);
   if (S.B.roll || S.B.hop) throw new Error('転がり終わっても回っている／浮いている');
-  S.run(.9); if (!(Math.abs(S.B.chest.distanceTo(x0) - d) < .05)) throw new Error('戻るのが早すぎる');
-  S.run(.48); const mid = S.B.chest.distanceTo(x0);
+  S.run(.1); if (!(Math.abs(S.B.chest.distanceTo(x0) - d) < .05)) throw new Error('戻るのが早すぎる');
+  S.run(.23); const mid = S.B.chest.distanceTo(x0);
   if (!(mid > .1 && mid < d && S.B.hop > .2)) throw new Error(`横跳びの途中 ${mid.toFixed(2)} m、高さ ${S.B.hop}`);
   S.run(.4); if (!(S.B.chest.distanceTo(x0) < .01 && !S.B.lean && !S.B.hop && !S.B.roll)) throw new Error('元の位置に戻らない');
 });
