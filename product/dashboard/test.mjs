@@ -49,13 +49,14 @@ dash.ws.send(JSON.stringify({ type: 'flash', slot: 'B', ms: 99999 }));
 assert.equal((await wait(() => b.inbox.find(k => k.type === 'flash' && k.ms !== 250))).ms, 2000);
 assert.ok(!a.inbox.some(k => k.type === 'flash')); assert.ok(!dash.inbox.some(k => k.type === 'flash'));
 // the same for the vibration, and only the known kinds pass
-dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'charge' }));
+dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'charge', element: 'water', tier: 'm', level: 3 }));
 dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'nope' }));
 a.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'off' }));
 dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'win' }));
 await wait(() => b.inbox.some(k => k.type === 'vibrate' && k.kind === 'win'));
 assert.deepEqual(b.inbox.filter(k => k.type === 'vibrate').map(k => k.kind), ['charge', 'win']);
 assert.ok(!a.inbox.some(k => k.type === 'vibrate'));
+assert.deepEqual(b.inbox.find(k => k.type === 'vibrate' && k.kind === 'charge'), { type: 'vibrate', kind: 'charge', element: 'water', tier: 'm', level: 1 }); // the phone plays the same charge sound
 
 // the sensor recording: only a dashboard starts it, only known labels, only imu and ar go in the file
 a.ws.send(JSON.stringify({ type: 'record', label: 'walk', sec: 5 }));

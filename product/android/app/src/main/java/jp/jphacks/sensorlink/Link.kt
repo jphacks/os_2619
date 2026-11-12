@@ -38,6 +38,8 @@ class Link(private val id: String, private val name: String) {
     @Volatile var onFlash: ((Int) -> Unit)? = null
     /** The PC's vibration word: charge, win or off (Vibe.kt). Called on OkHttp's thread. */
     @Volatile var onVibrate: ((String) -> Unit)? = null
+    /** A `vibrate` charge packet also says what the PC's charge sound is doing: element, tier (s / m / l), level 0..1. OkHttp's thread. */
+    @Volatile var onCharge: ((String, String, Double) -> Unit)? = null
     /** The PC's word on this slot's scanned stick (dashboard stickscan.js): "91 cm", "none", or null before it said anything. */
     @Volatile var stick: String? = null; private set
 
@@ -91,7 +93,10 @@ class Link(private val id: String, private val name: String) {
                 "welcome" -> { slot = k.optString("slot", "-"); marker = k.optString("marker", "april"); status = "connected" }
                 "marker" -> marker = k.optString("marker", marker)
                 "flash" -> onFlash?.invoke(k.optInt("ms"))
-                "vibrate" -> onVibrate?.invoke(k.optString("kind"))
+                "vibrate" -> {
+                    onVibrate?.invoke(k.optString("kind"))
+                    if (k.optString("kind") == "charge") onCharge?.invoke(k.optString("element"), k.optString("tier", "s"), k.optDouble("level", 0.0))
+                }
                 "stick" -> stick = k.optJSONObject("model")?.let { "%.0f cm".format(it.optDouble("length") * 100) } ?: "none"
                 "full" -> status = "PC already has 2 phones"
             }

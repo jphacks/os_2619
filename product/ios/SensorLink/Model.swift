@@ -44,6 +44,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     private let arQueue = DispatchQueue(label: "ar", qos: .userInitiated)
     private let vibe = Vibe()
     private let hitSound = HitSound()
+    private let chargeSound = ChargeSound()
     private let torchQ = DispatchQueue(label: "torch") // lockForConfiguration can block
     private var torchOff = DispatchTime(uptimeNanoseconds: 0) // on torchQ: when the torch goes off
 
@@ -80,8 +81,9 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
                 "q": s.q.map { r4($0) },
             ])
         }
-        link.onFlash = { [weak self] ms in self?.flash(ms: ms); self?.redScreen(ms: ms); if ms > 0 { self?.hitSound.play() } }
-        link.onVibrate = { [weak self] kind in self?.vibe.handle(kind) }
+        link.onFlash = { [weak self] ms in self?.flash(ms: ms); self?.redScreen(ms: ms); if ms > 0 { self?.hitSound.play(); self?.vibe.hit() } }
+        link.onVibrate = { [weak self] kind in self?.vibe.handle(kind); if kind == "off" || kind == "win" { self?.chargeSound.stop() } }
+        link.onCharge = { [weak self] el, tier, level in self?.chargeSound.charge(element: el, tier: tier, level: level) }
         session.delegate = self
         session.delegateQueue = arQueue
     }

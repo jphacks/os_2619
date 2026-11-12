@@ -331,11 +331,13 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     log(w?.slot ?? null, 'win', w ? `${w.slot} の勝ち` : '引き分け');
   }
   // the charging player's phone vibrates: 'charge' is repeated, and the phone stops by itself if the repeats end (Vibe.swift, Vibe.kt: 1 s)
+  // it also plays the same charge loop as the PC (ChargeSound.kt / .swift): element, tier (pitch, 大 sting) and level (loudness) ride
+  // along, and a new tier is sent at once so the phone's step up in pitch is not up to 0.25 s late
   function stepBuzz() {
     for (const p of Object.values(players)) {
-      const on = p.charging && canAct();
-      if (on && now() - (p.buzzAt ?? -9) >= .25) { p.buzzAt = now(); onVibrate(p.slot, 'charge'); }
-      else if (!on && p.buzzAt != null) { p.buzzAt = null; onVibrate(p.slot, 'off'); }
+      const on = p.charging && canAct(), tier = p.tier ?? 's';
+      if (on && (now() - (p.buzzAt ?? -9) >= .25 || p.buzzTier !== tier)) { p.buzzAt = now(); p.buzzTier = tier; onVibrate(p.slot, 'charge', { element: p.element, tier, level: Math.round((p.charge ?? 0) * 100) / 100 }); }
+      else if (!on && p.buzzAt != null) { p.buzzAt = null; p.buzzTier = null; onVibrate(p.slot, 'off'); }
     }
   }
   function stepMatch(dt) {

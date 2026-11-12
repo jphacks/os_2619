@@ -190,9 +190,10 @@ wss.on('connection', (ws, req) => {
     }
     if (k.type === 'setRuneScale' && role === 'dashboard') return setRuneScale(k.scale);
     if (k.type === 'record') { if (role === 'dashboard') { if (k.label) startRecording(k.label, k.sec); else stopRecording(); } return; }
-    if (k.type === 'vibrate') { // { type: 'vibrate', slot, kind: 'charge' | 'win' | 'off' } from a dashboard goes to that slot's phone
+    if (k.type === 'vibrate') { // { type: 'vibrate', slot, kind: 'charge' | 'win' | 'off', (charge:) element, tier, level } from a dashboard goes to that slot's phone
       if (role !== 'dashboard' || !['charge', 'win', 'off'].includes(k.kind)) return;
-      for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, { type: 'vibrate', kind: k.kind });
+      const m = k.kind === 'charge' ? { type: 'vibrate', kind: 'charge', element: String(k.element ?? ''), tier: ['s', 'm', 'l'].includes(k.tier) ? k.tier : 's', level: Math.max(0, Math.min(1, +k.level || 0)) } : { type: 'vibrate', kind: k.kind };
+      for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, m);
       return;
     }
     if (k.type === 'flash') { // a hit: { type: 'flash', slot, ms } from a dashboard lights the torch of that slot's phone
