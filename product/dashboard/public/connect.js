@@ -7,7 +7,7 @@
 import { ACTIONS } from './actions.js';
 import * as W from './world.js';
 import { SOURCES } from './video.js';
-import { createStickScan, createStickView } from './stickui.js';
+import { createStickScan, createStickView, backfillSnaps } from './stickui.js';
 
 const WINDOW = 10; // seconds shown in the IMU charts
 const now = () => Date.now() / 1000;
@@ -194,6 +194,7 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
   info(); setInterval(info, 5000);
 
   // ---- data in ----
+  backfillSnaps(); // older sticks get their picture for the phones' Stick menu
   const stickScan = createStickScan((slot, text) => { const s = slots[slot]; if (s) s.q('.stickinfo').textContent = text; },
     (slot, rec) => { const s = slots[slot]; if (s) { s.pending = rec; showStick(slot); } });
   /** The 3D view and badge of a slot's stick: one just built and not applied yet (反映 on), else the one in use (server 'stick'). */
