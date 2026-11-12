@@ -1,4 +1,4 @@
-// Stylized arena for the 3D / drone views: floor, boundary line painted along FIELD.poly, start rings, the tags with their real images,
+// Stylized arena for the 3D / drone views: floor (no border line: FIELD.poly only bounds the floor), start rings, the tags with their real images,
 // two team-coloured avatars posed from the players' body / stick, and a 2D top-down minimap.
 // Everything lives in one group the integrator shows only in 3D views; effects.js renders on top (no depth test).
 // World frame and layout: world.js (metres, y up, origin floor centre). Body frame: x forward, y up, z right.
@@ -83,7 +83,7 @@ export function fieldSig() {
   return h;
 }
 
-// ---- floor: one quad, everything analytic (grid, boundary glow, centre line, start rings, player shadows + HP arcs) ----
+// ---- floor: one quad, everything analytic (grid, centre line, start rings, player shadows + HP arcs) ----
 const FLOOR_VS = `
 varying vec2 vP;
 void main() { vec4 w = modelMatrix * vec4(position, 1.); vP = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }`;
@@ -120,17 +120,13 @@ void main() {
     }
     discard;
   }
-  vec3 team = p.x < 0. ? uCA : uCB;
   vec3 c = mix(vec3(.028, .034, .052), vec3(.05, .06, .09), inside);
   c += inside * vec3(.035, .04, .06) * exp(-r * r / 5.);                                           // soft centre spot
   c += mix(vec3(.04, .05, .08), vec3(.10, .12, .17), inside) * gridAt(p, .5) * (inside > .5 ? 1. : exp(-d * .8));
   c += inside * vec3(.07, .08, .11) * gridAt(p, 1.);
   if (uRock > .5) { // the canyon or the courtyard: the same ground as outside the floor, the lines below are painted on it
     c = uRock > 1.5 ? lawnColor(p) : sandColor(p);
-    float lines = 1. - smoothstep(.1, .15, abs(d));
-    c *= 1. - .5 * lines; // a dark edge, so a team colour reads on the orange stone
-    float wide = 1. - smoothstep(.055, .055 + fwidth(d) * 1.5, abs(d));
-    c = mix(c, team, wide);
+    // no border line round the field (taken out on request): the centre line and the start rings mark it
     float dash = step(.45, fract(p.y * 2.5 + uTime * .3));
     c = mix(c, vec3(.97, .93, .84), inside * aline(abs(p.x) / fwidth(p.x), 1.4) * dash * .8);
     c = mix(c, vec3(.97, .93, .84), inside * ring(p, vec2(0.), .6, .02) * .7);
@@ -153,8 +149,6 @@ void main() {
     gl_FragColor = vec4(c, 1. - smoothstep(uR + 1.4, uR + 5.7, r));
     return;
   }
-  // boundary: a line painted on the floor, 6 cm wide (no wall, no posts)
-  c += team * (1. - smoothstep(.03, .03 + fwidth(d) * 1.5, abs(d)));
   // centre line (dashed, x = 0 runs across the field between the A and B halves) and circle
   float dash = step(.45, fract(p.y * 2.5 + uTime * .3));
   c += inside * vec3(.55, .6, .7) * aline(abs(p.x) / fwidth(p.x), .7) * dash * .5;
