@@ -263,8 +263,8 @@ scenario('回避（横の加速度）でキャラが横へ素早く飛んで傾�
   const S = setup(); S.fight(); S.run(.1);
   const x0 = S.B.chest.clone();
   S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'right', side: 1, acc: 9 });
-  S.run(.16); const d = S.B.chest.distanceTo(x0);
-  if (!(d > .3 && d < .6)) throw new Error(`0.16 秒後のずれ ${d.toFixed(2)} m`);
+  S.run(.26); const d = S.B.chest.distanceTo(x0);
+  if (!(d > 2 && d < 3)) throw new Error(`0.26 秒後のずれ ${d.toFixed(2)} m`);
   if (!(S.B.lean > .2)) throw new Error(`傾き ${S.B.lean}`);
   S.run(.7); const mid = S.B.chest.distanceTo(x0); if (!(mid > .05 && mid < d)) throw new Error(`戻る途中 ${mid.toFixed(2)} m`);
   S.run(.8); if (!(S.B.chest.distanceTo(x0) < .01 && !S.B.lean)) throw new Error('元の位置に戻らない');
