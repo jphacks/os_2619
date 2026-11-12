@@ -62,6 +62,10 @@ dash.ws.send(JSON.stringify({ type: 'sfx', slot: 'B', voices: [{ file: 'fire2', 
 a.ws.send(JSON.stringify({ type: 'sfx', slot: 'B', kind: 'chargeFail' }));
 dash.ws.send(JSON.stringify({ type: 'sfx', slot: 'B', kind: 'chargeFail' }));
 await wait(() => b.inbox.some(k => k.type === 'sfx' && k.kind === 'chargeFail'));
+dash.ws.send(JSON.stringify({ type: 'sfx', slot: 'B', voices: [{ file: 'win', gain: 1, rate: 1 }, { file: 'youwin3', gain: 1, rate: 1 }] })); // the result: fanfare + a "YOU WIN!" voice
+await wait(() => b.inbox.some(k => k.type === 'sfx' && k.voices?.length === 2));
+assert.deepEqual(b.inbox.find(k => k.type === 'sfx' && k.voices?.length === 2).voices.map(v => v.file), ['win', 'youwin3']);
+b.inbox.splice(b.inbox.findIndex(k => k.type === 'sfx' && k.voices?.length === 2), 1);
 assert.deepEqual(b.inbox.filter(k => k.type === 'sfx'), [{ type: 'sfx', voices: [{ file: 'fire2', gain: 1, rate: 1.1, offset: 0, dur: .8, rel: .35, fade: null }] }, { type: 'sfx', kind: 'chargeFail' }]);
 assert.ok(!a.inbox.some(k => k.type === 'sfx'));
 

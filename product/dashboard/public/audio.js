@@ -12,13 +12,13 @@
 // admin.html are not gestures. unlock() is idempotent; the first pointerdown / keydown / touchend on the page calls it.
 
 const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3', 'water1', 'water2', 'water3', 'wind1', 'wind2', 'wind3', 'guard',
-  'charge_fire', 'charge_thunder', 'charge_water', 'charge_wind', 'full_fire', 'full_thunder', 'full_water', 'full_wind', 'damage', 'my_shot', 'my_launch', 'swing', 'win'];
+  'charge_fire', 'charge_thunder', 'charge_water', 'charge_wind', 'full_fire', 'full_thunder', 'full_water', 'full_wind', 'damage', 'my_shot', 'my_launch', 'swing', 'win', 'youwin1', 'youwin2', 'youwin3', 'youwin4']; // youwin1-4: a voice saying "YOU WIN!" (app.js picks one)
 const EXT = { my_shot: 'wav', my_launch: 'wav' }; // per-file extension when not mp3 (damage, my_shot, my_launch: only the phones play them, here only auditioned)
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
 const LUFS = { bgm: -4.0, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2,
   water1: -13.5, water2: -13.2, water3: -14.9, wind1: -13.5, wind2: -17.2, wind3: -13.7, guard: -18.0,
-  charge_fire: -15.2, charge_thunder: -15.3, charge_water: -15.5, charge_wind: -15.1, full_fire: -14.2, full_thunder: -13.3, full_water: -13.4, full_wind: -14.5, swing: -18.8, win: -15.3 }; // water / wind / charge_* / full_*: audio/README.md // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
+  charge_fire: -15.2, charge_thunder: -15.3, charge_water: -15.5, charge_wind: -15.1, full_fire: -14.2, full_thunder: -13.3, full_water: -13.4, full_wind: -14.5, swing: -18.8, win: -15.3, youwin1: -17.5, youwin2: -17.7, youwin3: -19.4, youwin4: -18.4 }; // water / wind / charge_* / full_*: audio/README.md // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
 // fire3 is also the 大 hit: its 0-6 s faded from 3 s measures differently from the 3 s bed, so that use is corrected by this
 const BIG_LUFS = { fire3: -11.8, lightning3: -7.2, water3: -14.0, wind3: -13.6 };
 const REF_LUFS = -16;

@@ -163,7 +163,11 @@ const koShow = createKoShow(hud, {
   },
   sound(kind) {
     const w = game.winner; if (kind === 'ko' || kind === 'burst') sfx?.hit(w?.element ?? 'thunder', 0, 1, 'l');
-    if (kind === 'result' && w) { sfx?.play('win'); if (!sfx?.muted) hub.send?.({ type: 'sfx', slot: w.slot, voices: [{ file: 'win', gain: 1, rate: 1 }] }); } // the fanfare, here and on the winner's phone (none on a draw)
+    if (kind === 'result' && w) { // the fanfare and one of the "YOU WIN!" voices at random, here and on the winner's phone (none on a draw)
+      const say = 'youwin' + (1 + Math.floor(Math.random() * 4));
+      sfx?.play('win'); sfx?.play(say);
+      if (!sfx?.muted) hub.send?.({ type: 'sfx', slot: w.slot, voices: [{ file: 'win', gain: 1, rate: 1 }, { file: say, gain: 1, rate: 1 }] });
+    }
   },
 });
 let koPhase = null;
