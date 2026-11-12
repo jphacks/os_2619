@@ -113,6 +113,8 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
     </section>
     <section class="card rec"><header><h2>センサーの記録</h2><span class="sub">溜めの調整用</span></header>
       <div class="row" style="flex-wrap:wrap;gap:6px"><button data-rec="walk">回さずに歩く</button><button data-rec="walk-circle">回しながら歩く</button><button data-rec="still-circle">止まって回す</button><button data-rec="dodge-good">回避（良い例）</button><button data-rec="dodge-bad">回避じゃない（悪い例）</button></div>
+      <p class="kv" style="font-size:12px;margin:10px 0 4px">判定の見本：「正しい」は 3 秒ほど間をあけて何回か。「間違った」は判定されてしまう／されそうな、でも違う動き</p>
+      <div class="row" style="flex-wrap:wrap;gap:6px"><button data-rec="charge-good">正しいチャージ</button><button data-rec="charge-bad">間違ったチャージ</button><button data-rec="guard-good">正しいガード</button><button data-rec="guard-bad">間違ったガード</button><button data-rec="shot-good">正しい発射</button><button data-rec="shot-bad">間違った発射</button></div>
       <p class="kv rec-msg" style="font-size:12px;margin:8px 0 0">棒を立てた状態で行う。押して 5 秒後に音が鳴ったら開始、20 秒後の音で終了。</p>
     </section>
     <section class="card"><header><h2>動作の判定</h2><span class="sub">棒の IMU と胸のスマホから</span></header>
