@@ -113,14 +113,15 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         }
     }
 
-    // the HP screen: the top half one big HP bar (green for what is left, red from the right for what was lost), the bottom half black, at full
-    // brightness while it is up. Opened by the HP button or when the dashboard starts a match; the red hit blink stays over it
-    private val hpBar by lazy { HpBar(this) }
+    // match mode: the top half of the screen is the HP display (HpBar), turned upside down (flipped top to bottom only), at full brightness
+    // while it is up; the bottom half stays the camera. Opened by the HP button or when the dashboard starts a match; a tap on it, or the
+    // match going back to setup, closes it. The red hit blink stays over it
+    private val hpBar by lazy { HpBar(this).apply { scaleY = -1f } }
     private val hpScreen by lazy {
         FrameLayout(this).apply {
-            setBackgroundColor(Color.BLACK); visibility = View.GONE; isClickable = true // takes the touches: the camera's buttons are under it
+            setBackgroundColor(Color.BLACK); visibility = View.GONE
+            isClickable = true; setOnClickListener { closeHp() } // takes the touches: the buttons are under it
             addView(hpBar, FrameLayout.LayoutParams(-1, -1))
-            addView(Button(context).apply { text = "Close"; setOnClickListener { closeHp() } }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = 48 })
         }
     }
     private fun openHp() {
@@ -158,8 +159,8 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         link.onSound = { gameSound.play(it) }
         link.onChargeFail = { chargeSound.fail() }
         hitSound; chargeSound; gameSound // load the sounds now, so the first hit / charge is not silent
-        link.onHp = { hp, mx -> runOnUiThread { hpBar.share = (hp / maxOf(1.0, mx)).coerceIn(0.0, 1.0).toFloat(); hpBar.invalidate() } }
-        link.onPhase = { p -> if (p == "countdown" || p == "fight") runOnUiThread { openHp() } } // the dashboard started a match
+        link.onHp = { hp, mx -> runOnUiThread { hpBar.hp = hp; hpBar.max = maxOf(1.0, mx); hpBar.invalidate() } }
+        link.onPhase = { p -> runOnUiThread { if (p == "countdown" || p == "fight") openHp() else if (p == "setup") closeHp() } } // a match starts / is over
         link.onFlash = { ms ->
             torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + ms) // another hit can only make it last longer
             if (ms > 0) { hitSound.play(); vibe.hit() }
@@ -189,7 +190,8 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             gravity = Gravity.CENTER
             setBackgroundColor(0x99000000.toInt())
             fun btn(label: String, onClick: (Button) -> Unit): Button = Button(context).apply {
-                text = label; textSize = 12f; setSingleLine(true); setOnClickListener { onClick(this) }
+                text = label; textSize = 14f; setSingleLine(true); setPadding(0, paddingTop, 0, paddingBottom); setOnClickListener { onClick(this) }
+                minHeight = (64 * resources.displayMetrics.density).toInt() // big: easy to hit on a phone strapped to the chest
                 addView(this, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             }
             btn("IMU") { imuDialog() }
@@ -198,14 +200,27 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             btn("Scan") { scanButton(it) }
             btn("HP") { openHp() }
         }
-        setContentView(FrameLayout(this).apply {
-            // ARCore needs a GL context to run; the picture itself is drawn by Overlay from the CPU image
-            addView(gl, FrameLayout.LayoutParams(1, 1))
-            addView(this@MainActivity.overlay, FrameLayout.LayoutParams(-1, -1))
-            addView(bar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-            addView(hpScreen, FrameLayout.LayoutParams(-1, -1))
-            addView(hitRed, FrameLayout.LayoutParams(-1, -1)) // last: over everything, buttons and the HP screen too
-        })
+        // the five buttons on top (below the status bar), the picture filling everything under them
+        bar.setOnApplyWindowInsetsListener { v, ins -> v.setPadding(0, ins.systemWindowInsetTop, 0, 0); ins }
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(bar, LinearLayout.LayoutParams(-1, -2))
+            addView(FrameLayout(context).apply {
+                // ARCore needs a GL context to run; the picture itself is drawn by Overlay from the CPU image
+                addView(gl, FrameLayout.LayoutParams(1, 1))
+                addView(this@MainActivity.overlay, FrameLayout.LayoutParams(-1, -1))
+            }, LinearLayout.LayoutParams(-1, 0, 1f))
+        }
+        val root = FrameLayout(this).apply {
+            addView(column, FrameLayout.LayoutParams(-1, -1))
+            addView(hpScreen, FrameLayout.LayoutParams(-1, 0, Gravity.TOP)) // the top half: sized below once the screen's height is known
+            addView(hitRed, FrameLayout.LayoutParams(-1, -1)) // last: over everything, buttons and the HP display too
+        }
+        root.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
+            val half = (bottom - top) / 2
+            if (hpScreen.layoutParams.height != half) hpScreen.post { hpScreen.layoutParams = hpScreen.layoutParams.apply { height = half } }
+        }
+        setContentView(root)
 
         val perms = mutableListOf(Manifest.permission.CAMERA)
         perms += if (Build.VERSION.SDK_INT >= 31) listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
@@ -516,15 +531,53 @@ class Overlay(private val a: MainActivity) : View(a) {
     }
 }
 
-/** The HP screen's bar: the top half, pure green for the share of HP left (`share`, 0..1) and pure red from the right for what was lost; the bottom half black. */
+/**
+ * Match mode's HP display (the top half of the screen; MainActivity flips it upside down): on black, a pure red heart with the HP in pure
+ * white beside it, and under them a white-framed gauge, round at both ends, green for the HP left and red for what was lost.
+ */
 class HpBar(a: Activity) : View(a) {
-    var share = 1f
-    private val green = Paint().apply { color = 0xFF00FF00.toInt() }
-    private val red = Paint().apply { color = 0xFFFF0000.toInt() }
+    var hp = 100.0
+    var max = 100.0
+    private val red = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF0000.toInt() }
+    private val green = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF00E040.toInt() }
+    private val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; typeface = android.graphics.Typeface.DEFAULT_BOLD; textAlign = Paint.Align.LEFT }
+    private val frame = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.STROKE }
+    private val heart = android.graphics.Path()
     override fun onDraw(c: Canvas) {
-        val w = width.toFloat(); val h = height / 2f; val g = w * share
+        val w = width.toFloat()
+        val h = height.toFloat()
         c.drawColor(Color.BLACK)
-        c.drawRect(0f, 0f, g, h, green)
-        c.drawRect(g, 0f, w, h, red)
+        val share = (hp / max).coerceIn(0.0, 1.0).toFloat()
+        // the heart and the number: the upper part, centred together
+        val size = minOf(h * .34f, w * .22f)
+        white.textSize = size * 1.05f
+        val text = "${Math.round(hp)}"
+        val tw = white.measureText(text)
+        val gap = size * .35f
+        val x0 = (w - (size + gap + tw)) / 2
+        val cy = h * .32f
+        heart.reset() // two lobes and a point, size wide
+        val s = size / 2f
+        val hx = x0 + s
+        heart.moveTo(hx, cy + s * .95f)
+        heart.cubicTo(hx - s * 1.9f, cy - s * .05f, hx - s * .95f, cy - s * 1.25f, hx, cy - s * .45f)
+        heart.cubicTo(hx + s * .95f, cy - s * 1.25f, hx + s * 1.9f, cy - s * .05f, hx, cy + s * .95f)
+        heart.close()
+        c.drawPath(heart, red)
+        c.drawText(text, x0 + size + gap, cy - (white.descent() + white.ascent()) / 2, white)
+        // the gauge: a pill, red under all of it, green over the share left, a white frame round it
+        val gh = minOf(h * .2f, w * .12f)
+        val gx = w * .08f
+        val gw = w - 2 * gx
+        val gy = h * .66f - gh / 2
+        val r = gh / 2
+        val box = RectF(gx, gy, gx + gw, gy + gh)
+        c.save()
+        c.clipPath(android.graphics.Path().apply { addRoundRect(box, r, r, android.graphics.Path.Direction.CW) })
+        c.drawRect(box, red)
+        c.drawRect(gx, gy, gx + gw * share, gy + gh, green)
+        c.restore()
+        frame.strokeWidth = maxOf(3f, gh * .08f)
+        c.drawRoundRect(box, r, r, frame)
     }
 }
