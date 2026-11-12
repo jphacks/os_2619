@@ -282,6 +282,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       }
       if (hit) {
         fx.hit(s.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.element, panOf(s.pos), T.hit, s.tier); onSound([foe.slot], 'hit', s.element, 0, T.hit, s.tier);
+        onSound([s.owner.slot], 'hitConfirm'); // the shooter's phone: ピコーン, my shot hit (app.js phoneSound)
         if (s.tier !== 's') onSound([s.owner.slot], 'landed', s.element, 0, T.hit, s.tier); // a charged shot landing: the shooter's phone plays what the one hit hears (no light, no buzz); a 小 only had its launch sound
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
         onHit(foe.slot, T.flash); // the phone of the player who was hit lights its torch for this many ms (app.js, server.mjs)
