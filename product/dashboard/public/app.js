@@ -40,6 +40,7 @@ const DEFAULTS = {
   zoom: { fixed: 1, auto: 1, orbit: 1, chaseA: 1, chaseB: 1, top: 1, side: 1 }, // game screen: zoom per camera mode (free: the mouse wheel)
   chara: { A: 'wizard', B: 'wizard' }, // who each player is drawn as (field3d.js CHARAS): the wizard, or the special character チャオベン
   mimic: true, // the avatars copy the poses MediaPipe finds in phone C's picture (screen 3, and the small 3D window of screen 4)
+  crt: true, // screens 3 and 4 look like an old CRT screen: fewer lines, scanlines, a little bleed and glow (stage.js), 30 fps
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen }, zoom: { ...DEFAULTS.zoom, ...saved.zoom }, chara: { ...DEFAULTS.chara, ...saved.chara } };
@@ -53,7 +54,7 @@ if ((saved.rulesVer ?? 0) < 5) cfg.drone = 'fixed'; // the game screen starts on
 if ((saved.rulesVer ?? 0) < 6) cfg.backdrop = 'court'; // the game screen stands in the school courtyard (11/3)
 cfg.rulesVer = 8;
 cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg }, size: { ...RULES.size, ...saved.rules?.size }, speed: speedRule(saved.rules?.speed ?? RULES.speed) };
-if ((saved.rulesVer ?? 0) < 8) { cfg.rules.t1 = RULES.t1; cfg.rules.t2 = RULES.t2; } // the charge takes half as long (11/4), then 2/3 of that (11/12): a saved older time must not hide it
+if ((saved.rulesVer ?? 0) < 8) { cfg.rules.t1 = RULES.t1; cfg.rules.t2 = RULES.t2; } // the charge takes half as long (11/4), then 2/3 of 1 / 3 s (11/12): a saved older time must not hide it
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
 const axis = { A: W.STICK.axis, B: W.STICK.axis }; // the IMU's +Y points to the stick tip, on both sticks
 
@@ -189,7 +190,7 @@ gameCtrl.innerHTML = `
   <div class="players2">${['A', 'B'].map(s => `
     <div class="pc" data-s="${s}"><div class="row" style="justify-content:space-between"><b class="el" style="color:var(--${s})"></b><span class="num hpv"></span></div>
       <div class="facts"></div>
-      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="1.7 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
+      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="2 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
   </div>
   <h3>キャラクター</h3>
   <div id="charas">${['A', 'B'].map(s => `<div class="row" style="align-items:center;gap:6px"><b style="color:var(--${s});width:1.2em">${s}</b><div class="seg">${Object.entries(CHARAS).map(([k, v]) => `<button data-chara="${k}" data-s="${s}">${v}</button>`).join('')}</div></div>`).join('')}</div>
@@ -221,7 +222,7 @@ ${['s', 'm', 'l'].map(t => `<label title="${TIER_JA[t]}の弾の速さ。1 が�
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
   <div class="row" id="zoomRow"><label title="今のカメラのズーム。カメラごとに覚える。1 が元の大きさ">ズーム <input id="zoom" type="range" min="0.5" max="3" step="0.05" style="width:130px;vertical-align:middle"> <span id="zoomOut" class="num"></span> 倍</label><button id="zoomReset">1 倍に戻す</button><span class="muted" id="zoomFor" style="font-size:12px"></span></div>
   <h3>表示</h3>
-  <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="debug">デバッグ</button></div>
+  <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="crt" title="試合画面と最終映像を昔のブラウン管テレビ風に：解像度を下げ、走査線と少しのにじみ・光り、30 fps">ブラウン管風</button><button data-tog="debug">デバッグ</button></div>
   <div class="row"><span class="muted" style="font-size:12px">背景</span><span class="seg" id="backdrops"><button data-backdrop="court">中庭</button><button data-backdrop="rock">岩場</button><button data-backdrop="chaoben">チャオベン劇場</button><button data-backdrop="plain">無地</button></span></div>
   <div class="row"><label title="中庭と岩場の空と光の時刻。動かすと影も付け直す"><span class="muted" style="font-size:12px">時刻</span> <input id="tod" type="range" min="0" max="24" step="0.25" style="width:130px;vertical-align:middle"> <span id="todOut" class="num"></span></label><span class="seg" id="todPresets">${PRESETS.map(([n, h]) => `<button data-tod="${h}">${n}</button>`).join('')}</span></div>
   <div class="row"><button id="todAuto" title="空の時刻がひとりでに進む。プリセットを押すと、そこから進む">時刻を自動で進める</button><span class="seg" id="todSpeeds">${TOD_SPEEDS.map(([n, v]) => `<button data-todspeed="${v}" title="1分で${v}時間">${n}</button>`).join('')}</span></div>
@@ -523,6 +524,8 @@ function applyMimic(on) {
 }
 
 // ---- main loop ----
+const CRT_FPS = 30;
+let stageDt = 0; // time since the stage last drew
 let last = performance.now() / 1000, fps = 60, lastSlow = 0, est = PA.estimate(nowS()), dummyDrawnAt = -1e9;
 function frame(ts) {
   requestAnimationFrame(frame);
@@ -552,8 +555,11 @@ function frame(ts) {
   if (mimicOn || layersOn) vision.setHints(visionHints());
   applyMimic(mimicOn);
   watchEnd();
-  if (screen === 'game' || screen === 'final') { stage.render(dt, game, est, koShow.state(dt)); updateHud(); }
-  else stage.fx.step(dt); // effects keep their time even when nobody looks
+  stageDt += dt;
+  if (screen === 'game' || screen === 'final') {
+    if (!cfg.crt || stageDt >= 1 / CRT_FPS - .004) { stage.render(stageDt, game, est, koShow.state(stageDt)); stageDt = 0; } // the CRT look draws 30 frames a second
+    updateHud();
+  } else { stage.fx.step(stageDt); stageDt = 0; } // effects keep their time even when nobody looks
   if (screen === 'final') finalControls.updateStatus();
   if (screen === 'space') space.frame(nowS(), est);
   if (screen === 'connect') connect.frame();

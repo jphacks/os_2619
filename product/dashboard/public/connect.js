@@ -18,7 +18,7 @@ export const ACTION_JA = { Charge: '溜め', Swing: '振り', Dodge: '回避', G
 const HOW_JA = {
   Charge: '棒を真上から 45° 以内に立てて先を 2 秒以内に 1 周回すか、直近 1 秒の揺れが 120°/秒以上で 4 回以上向きを変える。続けるのは 90°/秒以上で 3 回でよい',
   Swing: '棒が 300°/秒より速く回って止まる。向きと始め・終わりの位置',
-  Dodge: '胸のスマホが 1.2 m/秒より速く動く。左・右・後ろ・前',
+  Dodge: '胸のスマホの、向きに対して横方向の加速度が 6 m/秒² を超えて跳ねる（素早い横への一歩）。左・右',
   Guard: '棒を水平から 45° 以内で 1 秒静止（60°/秒未満）',
 };
 const DIR_JA = { up: '上', down: '下', left: '左', right: '右', forward: '前', back: '後ろ' };
@@ -28,7 +28,7 @@ export function detailJa(ev) {
   const d = ev.detail ?? '';
   if (ev.name === 'Charge') return /counter/.test(d) ? '反時計回り（上から見て）' : '時計回り（上から見て）';
   if (ev.name === 'Swing') { const m = d.match(/(\d+)° in (\d+) ms/); return `${dirJa(ev.dir) || '—'}へ${m ? ` ${m[1]}° を ${m[2]} ms` : ''} · 強さ ${Math.round((ev.power ?? 0) * 100)}%`; }
-  if (ev.name === 'Dodge') return `${dirJa(ev.dir)}へ ${(ev.speed ?? 0).toFixed(1)} m/秒`;
+  if (ev.name === 'Dodge') return `${dirJa(ev.dir)}へ ${(ev.acc ?? 0).toFixed(1)} m/秒²`;
   if (ev.name === 'Guard') { const m = d.match(/elev (-?\d+)°, heading (-?\d+)°/); return `1 秒静止${m ? ` · 仰角 ${m[1]}° 方位 ${m[2]}°` : ''}`; }
   return d;
 }
@@ -60,13 +60,16 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
       </div>
       <h3>棒の 3D モデル <span class="badge off stickstate">なし</span></h3>
       <canvas class="stick3d" style="width:100%;height:110px;display:block" aria-label="スキャンした棒の 3D モデル（左が先端）"></canvas>
-      <div class="row" style="margin-top:6px;align-items:center"><span class="kv stickinfo" style="font-size:12px;flex:1">アプリの「Scan」で作る（魔法陣の上に棒を置き、周りを歩いて撮る）。形だけを測り、色は茶色。左が先端</span><button class="stickclear">モデルを消す</button></div>
+      <div class="row" style="margin-top:6px;align-items:center"><span class="kv stickinfo" style="font-size:12px;flex:1">アプリの「Scan」で作る（魔法陣の上に棒を置き、周りを歩いて撮る）。作るとこのスマホの棒になり、棒設定に保存される。左が先端</span><button class="stickclear">外す</button></div>
     </section>`;
   for (const s of ['A', 'B']) {
     cards.insertAdjacentHTML('beforeend', tpl(s));
     const el = cards.lastElementChild, q = c => el.querySelector(c);
     slots[s] = { el, q, imu: [], traj: [], stick: createStickView(q('.stick3d')) };
-    q('.stickclear').onclick = () => { if (slots[s].stick.model && confirm(`スマホ ${s} の棒のモデルを消します（ゲームはいつもの棒に戻る）`)) hub.send({ type: 'setStick', slot: s, model: null }); };
+    q('.stickclear').onclick = () => { // the stick stays saved (棒設定); only this slot goes back to the plain rod
+      if (slots[s].stick.model && confirm(`スマホ ${s} の棒を外します（ゲームはいつもの棒に戻る。棒は棒設定に残る）`))
+        fetch('/sticks/assign', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ [s]: null }) }).catch(e => alert('外せませんでした: ' + e.message));
+    };
     // euler[0] is WitMotion's "roll" (about sensor X), but on the mounted sensor that reads as pitch, so the labels are swapped
     for (const [k, names] of [['euler', ['ピッチ', 'ロール', 'ヨー']], ['gyro', ['x', 'y', 'z']], ['acc', ['x', 'y', 'z']]])
       q('.legend.' + k).innerHTML = names.map((n, i) => `<span><i style="background:var(--s${i + 1})"></i>${n} <b data-i="${i}">–</b></span>`).join('');
@@ -183,7 +186,7 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
   info(); setInterval(info, 5000);
 
   // ---- data in ----
-  const stickScan = createStickScan(hub, (slot, text) => { const s = slots[slot]; if (s) s.q('.stickinfo').textContent = text; });
+  const stickScan = createStickScan((slot, text) => { const s = slots[slot]; if (s) s.q('.stickinfo').textContent = text; });
   function ingest(k) {
     const s = slots[k.slot]; if (!s) return;
     if (k.type === 'scan') stickScan.ingest(k);

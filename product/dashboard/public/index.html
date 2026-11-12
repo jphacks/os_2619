@@ -148,6 +148,7 @@
   @font-face { font-family: 'Barlow Condensed'; src: url(assets/fonts/BarlowCondensed-ExtraBoldItalic.ttf) format('truetype'); font-weight: 800; font-style: italic; font-display: swap; }
   @font-face { font-family: 'Dela Gothic One'; src: url(assets/fonts/DelaGothicOne-Regular.ttf) format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
   .hud { position: absolute; inset: 0; pointer-events: none; font-family: 'Barlow Condensed', 'Dela Gothic One', sans-serif; font-weight: 800; font-style: italic; font-synthesis: none; }
+  .stage.crt .hud { filter: blur(1px) drop-shadow(0 0 4px rgba(255, 255, 255, .45)); } /* the CRT look (stage.js) on the HUD too: soft, glowing */
   .hud .pl { position: absolute; top: 12px; width: 38%; text-shadow: 0 0 8px #000; display: grid; grid-template-columns: 92px minmax(0, 1fr); column-gap: 10px; align-content: start; }
   .hud .pl > :not(.gauge) { grid-column: 2; }
   .hud .pl.B { grid-template-columns: minmax(0, 1fr) 92px; } .hud .pl.B > :not(.gauge) { grid-column: 1; }
