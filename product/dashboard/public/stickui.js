@@ -1,6 +1,7 @@
-// Stick scan on the dashboard: the phones' { type: 'scan' } pictures in, a model out (stickscan.js), saved by the server
-// ({ type: 'setStick' } -> sticks.json -> { type: 'stick' } to every page, which puts it in the game: field3d.js setStick).
-// createStickScan(hub, onText): collects one scan per slot; onText(slot, text) says how far it got.
+// Stick scan on the dashboard: the phones' { type: 'scan' } pictures in, a model out (stickscan.js), saved by the server as a new stick
+// with one of the photos and given to the slot that scanned it (POST /sticks: its power and speed from the volume, stick-stats.js; the
+// server then sends { type: 'stick' } to every page, which puts it in the game: field3d.js setStick). 棒設定 (sticks.js) lists them.
+// createStickScan(onText): collects one scan per slot; onText(slot, text) says how far it got.
 // createStickView(canvas): the model turning slowly, for the connection screen.
 import * as THREE from 'three';
 import { buildStick, viewCamera, parseDesign } from './stickscan.js';
@@ -20,9 +21,9 @@ const loadDesign = () => designJob ??= fetch('mahoujin-design.bin.gz')
   .then(b => parseDesign(new Uint8Array(b)))
   .catch(e => { console.warn('mahoujin design', e); return null; });
 
-export function createStickScan(hub, onText) {
-  const scans = {}; // slot -> { views: [], jobs: [], noPose: 0 }
-  const fresh = () => ({ views: [], jobs: [], noPose: 0 });
+export function createStickScan(onText) {
+  const scans = {}; // slot -> { views: [], jpgs: [] (the pictures with a camera), jobs: [], noPose: 0 }
+  const fresh = () => ({ views: [], jpgs: [], jobs: [], noPose: 0 });
   const say = (slot, s) => onText(slot, `写真 ${s.views.length} 枚${s.noPose ? ` · タグ不足で捨てた ${s.noPose} 枚` : ''}`);
   return {
     async ingest(k) {
@@ -33,7 +34,7 @@ export function createStickScan(hub, onText) {
       if (k.step === 'stick' && k.jpg) {
         const job = decode(k.jpg).then(img => {
           const cam = viewCamera(k.tags, k.k, img.width, img.height);
-          if (cam) s.views.push({ img, cam }); else s.noPose++;
+          if (cam) { s.views.push({ img, cam }); s.jpgs.push(k.jpg); } else s.noPose++;
           say(slot, s);
         }).catch(e => console.warn('stick scan picture', e));
         s.jobs.push(job);
@@ -45,9 +46,13 @@ export function createStickScan(hub, onText) {
         try {
           // shortcut: runs on the page's thread (~1 s per scan); move to a worker if it stutters a match
           const model = buildStick(s.views, await loadDesign());
-          hub.send({ type: 'setStick', slot, model });
           const ends = model.nodes.filter((_, i) => model.edges.filter(e => e.includes(i)).length === 1).length; // grip, tip and one per branch
-          onText(slot, `作成しました：長さ ${(model.length * 100).toFixed(0)} cm、枝分かれ ${ends - 2} 本、太さ 根元 ${(2000 * model.r[0]).toFixed(0)} mm・先 ${(2000 * model.r[1]).toFixed(0)} mm（${model.views} 方向から）`);
+          const shape = `長さ ${(model.length * 100).toFixed(0)} cm、枝分かれ ${ends - 2} 本、太さ 根元 ${(2000 * model.r[0]).toFixed(0)} mm・先 ${(2000 * model.r[1]).toFixed(0)} mm（${model.views} 方向から）`;
+          const image = 'data:image/jpeg;base64,' + s.jpgs[s.jpgs.length >> 1]; // a picture from the middle of the walk round
+          const r = await fetch('/sticks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, image, slot }) });
+          if (!r.ok) throw new Error(`保存できませんでした（${r.status}）。${shape}`);
+          const rec = await r.json();
+          onText(slot, `作成して ${slot} の棒にしました：${shape}。体積 ${rec.volume} cm³ → 威力 ×${rec.stats.power.toFixed(2)}・弾速 ×${rec.stats.speed.toFixed(2)}（棒設定で変えられる）`);
         } catch (e) { onText(slot, '作成できませんでした：' + e.message); console.warn(e); }
         delete scans[slot];
       }

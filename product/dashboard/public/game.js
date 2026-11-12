@@ -29,7 +29,7 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷', water: '水', wind: '�
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 1, t2: 2.5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: 1 }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × (all tiers)
+export const RULES = { t1: 1, t2: 3, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: 1 }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × (all tiers)
 // how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
 // a little larger than the ball looks so near misses still count (10/18: .12 / .28 / .5 were too strict)
 const TIER = {
@@ -67,16 +67,17 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   let winner = null;
   const canAct = () => !match.paused && match.phase === 'fight';
   const rules = () => cfg.rules ?? RULES;
-  // assigned sticks (server.mjs 'sticks'): stat multipliers, 1 = the global rule. Taken on at reset / while setting up, never mid-fight
+  // assigned sticks (server.mjs 'sticks'): power and speed multipliers (stick-stats.js), 1 = the global rule; HP and the charge times are
+  // the rules' alone, the same for every stick. Taken on at reset / while setting up, never mid-fight
   const assigned = { A: null, B: null };
   const st = (p, k) => Math.min(3, Math.max(.3, +p?.stick?.stats?.[k] || 1)); // clamped: a bad record never stalls or breaks a match
-  const hpOf = p => Math.round((rules().hp ?? RULES.hp) * st(p, 'hp'));
+  const hpOf = () => Math.round(rules().hp ?? RULES.hp);
   const takeStick = p => { p.stick = assigned[p.slot]; p.element = p.stick?.element ?? ELEMENT[p.slot]; };
   const MOVE_GRACE = .5; // s added to chargeHold while the player steps or turns. Measured: while circling, Charge events stop for at most 1 s; a longer wait keeps a stopped charge (and the vibration) alive while just walking
   const CHARGE_LIVE = .4; // s after a Charge event the circling counts as still going (actions.js sends one every ~.15 s while it does)
   const speedOf = (T, p) => T.speed * (rules().speed ?? 1) * st(p, 'speed'); // m/s, the dashboard's ball-speed slider and the stick applied
-  const t2Of = p => rules().t2 / st(p, 'charge');
-  const tierOf = (t, p) => t < rules().t1 / st(p, 'charge') ? 's' : t < t2Of(p) ? 'm' : 'l';
+  const t2Of = () => rules().t2;
+  const tierOf = t => t < rules().t1 ? 's' : t < t2Of() ? 'm' : 'l';
   const IMU_SIDE = cross(W.STICK.axis, W.STICK.up);
 
   function place(p, est, sensorOnly = false) {
@@ -146,7 +147,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   /** Fires one projectile of tier 's' | 'm' | 'l' along the aim. 小 is limited to one every rules().rapid s. */
   function shoot(p, tier = 's') {
     if (!canAct()) return false;
-    if (tier === 's' && now() - p.lastShot < rules().rapid / st(p, 'speed')) return false;
+    if (tier === 's' && now() - p.lastShot < rules().rapid) return false;
     p.lastShot = now();
     const T = TIER[tier], s = sfx();
     const dummyTarget = !!getDummyFrame(), homing = dummyTarget || match.mode === 'demo';
