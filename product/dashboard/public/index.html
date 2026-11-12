@@ -58,16 +58,13 @@
   .scanfx canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   .scanfx-msg { position: absolute; left: 0; right: 0; bottom: 6%; text-align: center; color: #bbb; font-size: 18px; transition: opacity .6s; }
   .scanfx-msg.off { opacity: 0; }
-  .scanfx-title, .scanfx-name, .scanfx-ok { position: absolute; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity 1s, transform 1s; pointer-events: none; }
+  .scanfx-title, .scanfx-name { position: absolute; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity 1s, transform 1s; pointer-events: none; }
   .scanfx-title { top: 9%; font-size: clamp(48px, 8vw, 110px); color: #fff; letter-spacing: .04em; white-space: nowrap;
     transform: translateX(-50%) scale(.96); }
   .scanfx-name { top: calc(9% + clamp(60px, 11vw, 150px)); font-size: 30px; color: #f0dfa8; }
-  .scanfx .scanfx-ok { bottom: 8%; padding: 12px 72px; font: inherit; font-size: 30px; letter-spacing: .08em; color: #fff; background: #000;
-    border: 2px solid #fff; border-radius: 0; box-shadow: none; cursor: pointer; }
-  .scanfx .scanfx-ok:hover, .scanfx .scanfx-ok:focus-visible { background: #fff; color: #000; outline: none; }
-  .scanfx-title.on, .scanfx-name.on, .scanfx-ok.on { opacity: 1; pointer-events: auto; }
+  .scanfx-title.on, .scanfx-name.on { opacity: 1; }
   .scanfx-title.on { transform: translateX(-50%) scale(1); }
-  @media (prefers-reduced-motion: reduce) { .scanfx-title, .scanfx-name, .scanfx-ok { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .scanfx-title, .scanfx-name { transition: none; } }
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-width: 0; }
   .card > header { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; flex-wrap: wrap; }
   .card h2 { margin: 0; font-size: 15px; font-weight: 700; }

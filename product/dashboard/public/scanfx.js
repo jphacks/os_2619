@@ -5,8 +5,8 @@
 //  - building (the phone's 送信): the storm winds up, wider and faster, while the model is made (in a worker)
 //  - built: the motes pull back, snap all at once into one point (a whoosh) and at once explode, the screen shakes and the stick is
 //    there; gold and silver sparks dance round it, the mahoujin turns
-//    gold, the camera closes in on the stick, "New Stick" and then an OK button fade in (a boom and a bright chime). OK goes back to
-//    the game screen (onOk). The sounds are synthesised here (Web Audio, no files); the stick's entrance is an organ fanfare.
+//    gold, the camera closes in on the stick, "New Stick" fades in (a boom and a bright chime); 4 s after the boom the screen fades
+//    to black and goes back to the game screen (onOk). The sounds are synthesised here (Web Audio, no files); the stick's entrance is an organ fanfare.
 // mountScanFx(section, { onOk }) -> { setActive(on) }; it draws only while its screen is shown.
 import * as THREE from 'three';
 import { parseDesign } from './stickscan.js';
@@ -16,6 +16,7 @@ import * as W from './world.js';
 const N = 3000, SPARKS = 700, FULL_AT = 30, FIRST = 400; // motes; sparks after the build; pictures until every mote is out; motes at once when a scan starts
 const GOLD = new THREE.Color(0xd9a520), SILVER = new THREE.Color(0xc9d3de), BLACK = new THREE.Color(0x111111);
 const STICK_Y = .32; // m: the new stick floats this high over the mahoujin
+const LEAVE = 4, FADE = .6; // s after the boom: the fade to black begins; its length (then the game screen)
 const PULL = .35, SNAP = .3; // s: the pull back before the rush, the rush into one point (it explodes the moment they meet)
 const ease = x => (x = Math.min(1, Math.max(0, x)), x * x * (3 - 2 * x));
 const outCubic = x => 1 - (1 - Math.min(1, Math.max(0, x))) ** 3;
@@ -43,7 +44,7 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
     <div class="scanfx-msg" data-msg></div>
     <div class="scanfx-title" data-title>New Stick</div>
     <div class="scanfx-name" data-name></div>
-    <button class="scanfx-ok" data-ok>OK</button>
+    <div data-fade style="position:absolute;inset:0;background:#000;opacity:0;pointer-events:none"></div>
   </div>`;
   const $ = s => section.querySelector(`[data-${s}]`), canvas = section.querySelector('canvas');
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -152,13 +153,13 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
   }
 
   // ---- state ----
-  let phase = 'idle', t = 0, phaseAt = 0, pictures = 0, rec = null, active = false, okShown = false, level = 0;
+  let phase = 'idle', t = 0, phaseAt = 0, pictures = 0, rec = null, active = false, level = 0;
   const storm = { h: .4, eye: .25, top: .7, spin: 1.5, rise: .06 }; // the hurricane's height, its eye's and top's radius (m), turn and climb speeds
   const go = p => { phase = p; phaseAt = t; };
   function reset() {
     go('idle'); pictures = 0; level = 0; rec = null; came.fill(-1); sparks.visible = false; holder.visible = false; stickMat.emissiveIntensity = 0;
-    lineMat.color.copy(BLACK); glowMat.opacity = 0; okShown = false; $('flash').style.opacity = 0;
-    for (const k of ['title', 'name', 'ok']) $(k).classList.remove('on');
+    lineMat.color.copy(BLACK); glowMat.opacity = 0; $('flash').style.opacity = 0; $('fade').style.opacity = 0;
+    for (const k of ['title', 'name']) $(k).classList.remove('on');
     $('msg').textContent = ''; $('msg').classList.remove('off');
   }
   function rush() { // every mote, out or not yet, from where it is now
@@ -189,7 +190,6 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
     }
     if (k.step === 'failed') { reset(); $('msg').textContent = '棒を作れませんでした：' + k.error; }
   });
-  $('ok').onclick = () => { reset(); onOk(); };
 
   // ---- camera: the whole mahoujin from the front and above, closing in on the stick once it is made ----
   const far = { p: V(0, 1.55, 2.1), at: V(0, 0, .05) }, near = { p: V(0, .62, .95), at: CENTRE.clone() };
@@ -250,7 +250,8 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
     const shake = B < 0 ? 0 : .06 * Math.exp(-5 * B); // the screen shakes with the boom
     if (shake > .001) cam.position.add(o.set((Math.random() - .5) * shake, (Math.random() - .5) * shake, (Math.random() - .5) * shake));
     if (B > 1.6) { $('title').classList.add('on'); $('name').classList.add('on'); }
-    if (B > 2.8 && !okShown) { okShown = true; $('ok').classList.add('on'); }
+    if (B > LEAVE) $('fade').style.opacity = ease((B - LEAVE) / FADE).toFixed(3); // 4 s after the stick appears: fade to black, then the game
+    if (B > LEAVE + FADE) { reset(); onOk(); }
     renderer.render(scene, cam);
   }
   let last = performance.now();
