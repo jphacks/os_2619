@@ -253,11 +253,26 @@ scenario('棒が水平より下で回しても溜まらず、上なら溜まる�
   aim(-.3); for (let i = 0; i < 4; i++) { S.charge('A'); S.run(.5); }
   eq(S.A.charging, false, '溜め中に下向きで回し続けたあと');
 });
-scenario('回避とガードのセンサー判定だけでは何も起きない（ガードは棒の姿勢で決まる）', () => {
+scenario('ガードのセンサー判定だけでは何も起きない（ガードは棒の姿勢で決まる）', () => {
   const S = setup(); S.fight();
-  S.g.onSensed({ slot: 'B', name: 'Guard' }); S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'left', speed: 1.5 });
+  S.g.onSensed({ slot: 'B', name: 'Guard' });
   S.swing('A'); S.run(1);
-  eq(S.B.hp, 95, 'B の HP（無敵なし）');
+  eq(S.B.hp, 95, 'B の HP');
+});
+scenario('回避（横の加速度）でキャラが横へ素早く飛んで傾き、ゆっくり元の位置へ戻る', () => {
+  const S = setup(); S.fight(); S.run(.1);
+  const x0 = S.B.chest.clone();
+  S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'right', side: 1, acc: 9 });
+  S.run(.16); const d = S.B.chest.distanceTo(x0);
+  if (!(d > .3 && d < .6)) throw new Error(`0.16 秒後のずれ ${d.toFixed(2)} m`);
+  if (!(S.B.lean > .2)) throw new Error(`傾き ${S.B.lean}`);
+  S.run(.7); const mid = S.B.chest.distanceTo(x0); if (!(mid > .05 && mid < d)) throw new Error(`戻る途中 ${mid.toFixed(2)} m`);
+  S.run(.8); if (!(S.B.chest.distanceTo(x0) < .01 && !S.B.lean)) throw new Error('元の位置に戻らない');
+});
+scenario('回避で弾の通り道から外れると当たらない', () => {
+  const S = setup(); S.fight();
+  S.swing('A'); S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'left', side: -1, acc: 9 }); S.run(1.5);
+  eq(S.B.hp, 100, 'B の HP（よけた）');
 });
 // B holds the stick level across the body (真一文字): pointing along z, square to the facing (-x)
 const guardB = S => (S.wob.B = false, S.g.ingest)({ type: 'truth', slot: 'B', chest: [1.2, 1.3, 0], yaw: Math.PI, base: [1, 1.2, -.4], dir: [0, 0, 1] });

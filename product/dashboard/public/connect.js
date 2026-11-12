@@ -18,7 +18,7 @@ export const ACTION_JA = { Charge: '溜め', Swing: '振り', Dodge: '回避', G
 const HOW_JA = {
   Charge: '棒を真上から 45° 以内に立てて先を 2 秒以内に 1 周回すか、直近 1 秒の揺れが 120°/秒以上で 4 回以上向きを変える。続けるのは 90°/秒以上で 3 回でよい',
   Swing: '棒が 300°/秒より速く回って止まる。向きと始め・終わりの位置',
-  Dodge: '胸のスマホが 1.2 m/秒より速く動く。左・右・後ろ・前',
+  Dodge: '胸のスマホの、向きに対して横方向の加速度が 6 m/秒² を超えて跳ねる（素早い横への一歩）。左・右',
   Guard: '棒を水平から 45° 以内で 1 秒静止（60°/秒未満）',
 };
 const DIR_JA = { up: '上', down: '下', left: '左', right: '右', forward: '前', back: '後ろ' };
@@ -28,7 +28,7 @@ export function detailJa(ev) {
   const d = ev.detail ?? '';
   if (ev.name === 'Charge') return /counter/.test(d) ? '反時計回り（上から見て）' : '時計回り（上から見て）';
   if (ev.name === 'Swing') { const m = d.match(/(\d+)° in (\d+) ms/); return `${dirJa(ev.dir) || '—'}へ${m ? ` ${m[1]}° を ${m[2]} ms` : ''} · 強さ ${Math.round((ev.power ?? 0) * 100)}%`; }
-  if (ev.name === 'Dodge') return `${dirJa(ev.dir)}へ ${(ev.speed ?? 0).toFixed(1)} m/秒`;
+  if (ev.name === 'Dodge') return `${dirJa(ev.dir)}へ ${(ev.acc ?? 0).toFixed(1)} m/秒²`;
   if (ev.name === 'Guard') { const m = d.match(/elev (-?\d+)°, heading (-?\d+)°/); return `1 秒静止${m ? ` · 仰角 ${m[1]}° 方位 ${m[2]}°` : ''}`; }
   return d;
 }

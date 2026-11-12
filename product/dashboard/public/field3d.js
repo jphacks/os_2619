@@ -499,7 +499,7 @@ function makeAvatar(slot) {
   }
 
 
-  const _P0 = V(), _m = new THREE.Matrix4(), _s = new THREE.Matrix4();
+  const _P0 = V(), _f = V(), _m = new THREE.Matrix4(), _s = new THREE.Matrix4(), _r = new THREE.Matrix4();
   return {
     root, world, holder, hud, slot, setStick, setChara, get chara() { return chara; },
     /** p.base / p.tip come in at the character's size (game.js shrink); the figure is posed at a person's size and the holder shrinks the drawing. */
@@ -511,7 +511,10 @@ function makeAvatar(slot) {
         const up = v => v && v.clone().sub(_P0).divideScalar(k).add(_P0);
         p = { ...p, base: up(p.base), tip: up(p.tip) };
       }
-      holder.matrix.makeTranslation(_P0.x, 0, _P0.z).multiply(_s.makeScale(k, k, k)).multiply(_m.makeTranslation(-_P0.x, 0, -_P0.z)); holder.matrixWorldNeedsUpdate = true;
+      if (p?.body) _P0.set(p.body.t[0], 0, p.body.t[2]);
+      // a dodge (game.js): the whole figure and its stick lean to that side, about the floor under the chest
+      if (p?.lean) _r.makeRotationAxis(_f.set(p.body.R[0], 0, p.body.R[6]).normalize(), p.lean); else _r.identity();
+      holder.matrix.makeTranslation(_P0.x, 0, _P0.z).multiply(_r).multiply(_s.makeScale(k, k, k)).multiply(_m.makeTranslation(-_P0.x, 0, -_P0.z)); holder.matrixWorldNeedsUpdate = true;
       const r = this.pose(dt, p);
       hud.visible = world.visible;
       if (k !== 1) hpSprite.position.y = hpSprite.position.y * k + .15; // over the small head

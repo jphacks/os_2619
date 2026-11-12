@@ -111,7 +111,21 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     p.base.copy(v3(W.handAt(p.body, p.dir.toArray()))); // the hand swings with the stick, the arm turning at the shoulder
     if (T && cfg.useTruth) { p.base.copy(v3(T.base)); p.dir.copy(v3(T.dir)); }
     p.tip.copy(p.base).addScaledVector(p.dir, cfg.stickLen?.[p.slot] ?? W.STICK.len);
+    dodgeOffset(p);
     shrink(p);
+  }
+  // Dodge (actions.js: a spike of the chest's sideways acceleration): the character leaps DODGE.dist m to that side in DODGE.out s,
+  // leaning into it (p.lean, rad: field3d.js tilts the figure), then drifts back to where the player really is over DODGE.back s.
+  // Shots hit it where it is drawn, so a dodge in time gets out of a shot's way.
+  const DODGE = { dist: .5, out: .15, back: 1.2, lean: 22 * Math.PI / 180 };
+  function dodgeOffset(p) {
+    const d = p.dodge, t = d ? now() - d.t0 : Infinity;
+    if (t > DODGE.out + DODGE.back) { p.dodge = null; p.lean = 0; return; }
+    const k = t < DODGE.out ? 1 - (1 - t / DODGE.out) ** 3 : .5 * (1 + Math.cos(Math.PI * (t - DODGE.out) / DODGE.back)); // fast out, eased back
+    const r = v3(W.app3(p.body.R, [0, 0, 1])).setY(0).normalize().multiplyScalar(d.side * DODGE.dist * k); // the body's right
+    p.body = { R: p.body.R, t: [p.body.t[0] + r.x, p.body.t[1], p.body.t[2] + r.z] };
+    for (const v of [p.chest, p.base, p.tip]) v.add(r);
+    p.lean = d.side * DODGE.lean * k;
   }
   /** The player's character is smaller than a person (W.CHARA_SCALE, cfg.chara): the chest and the hand are drawn in toward the floor
    *  under the chest by its scale, the stick shortened to W.STICK_SCALE, so hits, shots and the drawn figure all agree. p.body stays the person's (full size): field3d.js poses the figure
@@ -283,8 +297,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     sfx()?.chargeFail?.(p.slot); onSound([p.slot], 'chargeFail'); // the charge sound runs backwards and fades instead of stopping dead (the phone's too)
     fx.hit(p.element, p.tip.clone(), .1); showAct(p, '溜め失敗'); log(p.slot, 'charge', `溜め失敗（${why}）`);
   }
-  /** A detector event from actions.js ({ slot, name, dir, power, speed }). Dodge is not part of the game; Guard comes from
-   *  the stick pose every frame (stepGuard: the detector's 1 s hold is too slow for a block). */
+  /** A detector event from actions.js ({ slot, name, dir, power, speed, side }). Dodge makes the character leap aside (dodgeOffset);
+   *  Guard comes from the stick pose every frame (stepGuard: the detector's 1 s hold is too slow for a block). */
   function onSensed(ev) {
     const p = players[ev.slot]; if (!p || !canAct()) return;
     if (ev.name === 'Charge') { // only while the stick is not below horizontal (its IMU elevation; exactly level only happens in scripted tests);
@@ -293,6 +307,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       p.chargeSeen = now(); startCharge(p);
     }
     else if (ev.name === 'Swing') { p.swingAt = now(); if (inFront(p)) attack(p); else log(p.slot, 'shot', '背中側で止めたので撃たない'); }
+    else if (ev.name === 'Dodge' && (ev.side === 1 || ev.side === -1)) { p.dodge = { t0: now(), side: ev.side }; showAct(p, '回避'); log(p.slot, 'dodge', `${ev.side > 0 ? '右' : '左'}へ回避`); }
   }
   /** A swing only fires when the stick stops in front of the body: tip ahead of the chest along the body's facing
    *  (horizontal). A stick that comes to rest behind the back (wind-up, putting it down) is not a shot. */

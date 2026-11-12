@@ -46,11 +46,11 @@ import { STICK } from './public/world.js';
 // charge on the move: a shake on top of the body's turning still counts; footsteps alone do not start a charge
 {
   const A = createActions(), ev = [];
-  let t = 700, x = 0;
+  let t = 700, x = 0, vel = 0;
   const shake = (i, a) => (i % 16 < 8 ? a : -a), step = i => 45 * Math.sin(2 * Math.PI * 2 * i / 100); // 2 steps a second
   const run = (dur, f, speed = 0) => {
     for (let i = 0; i < dur * 100; i++, t += 0.01) {
-      x += speed * .01;
+      vel += Math.max(-.02, Math.min(.02, speed - vel)); x += vel * .01; // speeds up / slows down at 2 m/s², as a walk does
       ev.push(...A.ingest({ type: 'imu', slot: 'A', t, ...f(i) }, [1, 0, 0]));
       ev.push(...A.ingest({ type: 'ar', slot: 'A', t, tracking: 'TRACKING', wp: [x, 1.3, 0], wq: [0, 0, 0, 1] }));
     }
@@ -71,6 +71,17 @@ import { STICK } from './public/world.js';
   assert.equal(charges(), 0, 'footsteps started a charge');
 
   console.log('charge on the move ok: a shake counts while turning, footsteps do not');
+
+  { // a quick sidestep (10 m/s² for 0.15 s, then stopping) is one dodge to that side; walking sideways at 1 m/s was none
+    const D = createActions(), out = []; let tt = 900, xx = 0, v = 0;
+    for (let i = 0; i < 100; i++, tt += .01) {
+      v = i < 15 ? v - .1 : i < 30 ? Math.min(0, v + .1) : 0; xx += v * .01; // to the left (-x): the chest faces -z, so its right is +x
+      out.push(...D.ingest({ type: 'ar', slot: 'A', t: tt, tracking: 'TRACKING', wp: [xx, 1.3, 0], wq: [0, 0, 0, 1] }));
+    }
+    const d = out.filter(e => e.name === 'Dodge');
+    assert.equal(d.length, 1, `sidestep: ${d.length} dodges`); assert.equal(d[0].dir, 'left'); assert.equal(d[0].side, -1);
+    console.log(`dodge ok: a sidestep dodges ${d[0].dir} (${d[0].acc.toFixed(1)} m/s²), walking does not`);
+  }
 
   // walking does not raise the bar: a smaller shake keeps the charge through a step and a long walk; and a running charge survives the stick dipping to 40°
   const C = createActions(), evC = []; let tc = 1100, xc = 0;
