@@ -4,7 +4,7 @@
 //  /ws    phones A and B (the SensorLink app) and the dashboards. Same protocol as sensing/dashboard/server.mjs:
 //         slots A / B, packets relayed with `slot` added, ping → pong, `phones` list. Phones A / B send no picture.
 //  /cam   phone C, the third-person camera (cam.html + camlink.js): WebRTC signalling and a JPEG fallback relay
-//  /sticks  scanned branches (sticks.html): records, photos, which one players A / B use, sent to dashboards as { type: 'sticks' }
+//  /sticks  the saved sticks (3D models from the Scan button, stickui.js): records, which one players A / B use, sent as { type: 'sticks' }
 //  /marker.js  the floor sheets' marker (april | rune), saved in settings.json;  /info  JSON for the dashboard;  /ca.crt /ca.pem  the local CA phone C trusts once (trust.html)
 //  /cdn/npm/<pkg>@<x.y.z>/<file>  cdn.jsdelivr.net cached in vendor/cdn/ (works offline once fetched)
 //  /cdn/mp-models/<path>.task      MediaPipe's models (storage.googleapis.com/mediapipe-models), cached the same way
@@ -20,8 +20,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, extname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { stickStats, stickElement, stickRarity, cleanRarityMul } from './public/stick-stats.js';
-import { shapeScore } from './public/stick-analyze.js';
+import { stickElement, stickVolume, statsFromVolume, ELEMENTS, STATS, STAT_RANGE } from './public/stick-stats.js';
 
 const PORT = +process.env.PORT || 8000;
 const root = fileURLToPath(new URL('.', import.meta.url));
@@ -188,9 +187,19 @@ wss.on('connection', (ws, req) => {
     }
     if (k.type === 'setRuneScale' && role === 'dashboard') return setRuneScale(k.scale);
     if (k.type === 'record') { if (role === 'dashboard') { if (k.label) startRecording(k.label, k.sec); else stopRecording(); } return; }
-    if (k.type === 'vibrate') { // { type: 'vibrate', slot, kind: 'charge' | 'win' | 'off' } from a dashboard goes to that slot's phone
+    if (k.type === 'vibrate') { // { type: 'vibrate', slot, kind: 'charge' | 'win' | 'off', (charge:) element, tier, level } from a dashboard goes to that slot's phone
       if (role !== 'dashboard' || !['charge', 'win', 'off'].includes(k.kind)) return;
-      for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, { type: 'vibrate', kind: k.kind });
+      const m = k.kind === 'charge' ? { type: 'vibrate', kind: 'charge', element: String(k.element ?? ''), tier: ['s', 'm', 'l'].includes(k.tier) ? k.tier : 's', level: Math.max(0, Math.min(1, +k.level || 0)) } : { type: 'vibrate', kind: k.kind };
+      for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, m);
+      return;
+    }
+    if (k.type === 'sfx') { // a game sound for that slot's phone (app.js phoneSound): { kind: 'chargeFail' } or { voices: [{ file, gain, rate, offset, dur, rel, fade }] }
+      if (role !== 'dashboard') return;
+      const num = (x, lo, hi, d = 0) => Number.isFinite(+x) ? Math.max(lo, Math.min(hi, +x)) : d;
+      const m = k.kind === 'chargeFail' ? { type: 'sfx', kind: 'chargeFail' } : { type: 'sfx', voices: (Array.isArray(k.voices) ? k.voices : []).slice(0, 4)
+        .filter(v => PHONE_SFX.has(v?.file)).map(v => ({ file: v.file, gain: num(v.gain, 0, 1), rate: num(v.rate, .25, 4, 1), offset: num(v.offset, 0, 10), dur: num(v.dur, 0, 10), rel: num(v.rel, 0, 2, .25),
+          fade: Array.isArray(v.fade) ? [num(v.fade[0], 0, 10), num(v.fade[1], 0, 10)] : null })) };
+      if (m.kind || m.voices.length) for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, m);
       return;
     }
     if (k.type === 'flash') { // a hit: { type: 'flash', slot, ms } from a dashboard lights the torch of that slot's phone
@@ -329,6 +338,8 @@ const withStats = s => {
   const v = okStick(s.model) ? stickVolume(s.model) : null;
   return { ...s, volume: v && Math.round(v * 1e6), stats: s.custom ? pick(s.custom) : v ? statsFromVolume(v) : pick(null) };
 };
+// the game sounds a phone has (Android res/raw, iOS bundle): what { type: 'sfx' } may name
+const PHONE_SFX = new Set(['fire', 'lightning', 'water', 'wind'].flatMap(e => [1, 2, 3].map(i => e + i)).concat(['guard', 'guard_reflect']));
 const assigned = () => ({ A: withStats(byId(db.assign.A)), B: withStats(byId(db.assign.B)) });
 const sticksMsg = () => JSON.stringify({ type: 'sticks', ...assigned() });
 const saveDb = () => { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(STICKS_FILE, JSON.stringify(db, null, 2)); }; // sync: two saves never interleave

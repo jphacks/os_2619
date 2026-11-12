@@ -49,13 +49,21 @@ dash.ws.send(JSON.stringify({ type: 'flash', slot: 'B', ms: 99999 }));
 assert.equal((await wait(() => b.inbox.find(k => k.type === 'flash' && k.ms !== 250))).ms, 2000);
 assert.ok(!a.inbox.some(k => k.type === 'flash')); assert.ok(!dash.inbox.some(k => k.type === 'flash'));
 // the same for the vibration, and only the known kinds pass
-dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'charge' }));
+dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'charge', element: 'water', tier: 'm', level: 3 }));
 dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'nope' }));
 a.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'off' }));
 dash.ws.send(JSON.stringify({ type: 'vibrate', slot: 'B', kind: 'win' }));
 await wait(() => b.inbox.some(k => k.type === 'vibrate' && k.kind === 'win'));
 assert.deepEqual(b.inbox.filter(k => k.type === 'vibrate').map(k => k.kind), ['charge', 'win']);
 assert.ok(!a.inbox.some(k => k.type === 'vibrate'));
+assert.deepEqual(b.inbox.find(k => k.type === 'vibrate' && k.kind === 'charge'), { type: 'vibrate', kind: 'charge', element: 'water', tier: 'm', level: 1 }); // the phone plays the same charge sound
+// game sounds: only to that slot, only from a dashboard, only files the phones have, numbers clamped
+dash.ws.send(JSON.stringify({ type: 'sfx', slot: 'B', voices: [{ file: 'fire2', gain: 3, rate: 1.1, dur: .8, rel: .35, fade: null }, { file: '../etc/passwd', gain: 1 }] }));
+a.ws.send(JSON.stringify({ type: 'sfx', slot: 'B', kind: 'chargeFail' }));
+dash.ws.send(JSON.stringify({ type: 'sfx', slot: 'B', kind: 'chargeFail' }));
+await wait(() => b.inbox.some(k => k.type === 'sfx' && k.kind === 'chargeFail'));
+assert.deepEqual(b.inbox.filter(k => k.type === 'sfx'), [{ type: 'sfx', voices: [{ file: 'fire2', gain: 1, rate: 1.1, offset: 0, dur: .8, rel: .35, fade: null }] }, { type: 'sfx', kind: 'chargeFail' }]);
+assert.ok(!a.inbox.some(k => k.type === 'sfx'));
 
 // the sensor recording: only a dashboard starts it, only known labels, only imu and ar go in the file
 a.ws.send(JSON.stringify({ type: 'record', label: 'walk', sec: 5 }));

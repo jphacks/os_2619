@@ -12,6 +12,7 @@ import android.os.VibratorManager
  * The phone's vibration on the PC's word (`vibrate` packets, game.js):
  * charge = keep vibrating (the PC repeats it; with no repeat for LEASE_MS it stops by itself, so a lost PC or link cannot leave it on),
  * win = on / off 5 times, off = stop. Same timings as Vibe.swift.
+ * hit() (a `flash` packet: this player took a hit) = one short, light buzz; a charge vibration resumes with the next charge packet.
  */
 class Vibe(context: Context) {
     private val vibrator: Vibrator =
@@ -40,6 +41,15 @@ class Vibe(context: Context) {
         vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 60_000), 0)) // repeats until cancelled
     }
 
+    /** Any thread. */
+    fun hit() {
+        main.post {
+            charging = false // the next charge packet (every 0.25 s) starts the charge vibration again
+            vibrator.cancel()
+            vibrator.vibrate(VibrationEffect.createOneShot(HIT_MS, if (vibrator.hasAmplitudeControl()) HIT_AMP else VibrationEffect.DEFAULT_AMPLITUDE))
+        }
+    }
+
     private fun win() {
         stop()
         // wait 0, on, off, on, off, ... on: the waveform starts with a wait
@@ -58,5 +68,7 @@ class Vibe(context: Context) {
         const val PULSE_ON_MS = 400L
         const val PULSE_OFF_MS = 300L
         const val PULSES = 5
+        const val HIT_MS = 80L
+        const val HIT_AMP = 140 // of 255: light
     }
 }

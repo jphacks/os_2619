@@ -11,9 +11,10 @@ const SIZE = 1.35;              // the model's scale per metre of the rig's leg:
 const BODY_X = -.04;            // the body's centre behind the chest's sensor point, m
 const LOW = { hip: .5, neck: 1.02, lean: .12, back: -.06, frontFoot: .32, backFoot: -.34, backFootY: .13 }; // down on the right knee, in the model's metres
 const GRIP = .07, HANDS_APART = .11; // the fist's centre past the wrist; between the two fists on the stick (model's metres)
-const RIG_ARM = .6;             // the rig's shoulder to hand (field3d.js UPPER + FORE)
+const RIG_HANG = .5;            // the rig's free hand hangs this far from its shoulder (field3d.js): taken as his arm hanging straight
 const HAIR = 0x16110e;
-const POLE = { R: V(-.25, -1, .55).normalize(), L: V(-.25, -1, -.55).normalize() }; // the elbows point down and out
+const POLE = { R: V(-.25, -1, .55).normalize(), L: V(-.25, -1, -.55).normalize() }; // on the stick the elbows point down and out
+const FREE_POLE = { R: V(-1, -.2, .25).normalize(), L: V(-1, -.2, -.25).normalize() }; // a free arm's elbow points back, as a relaxed arm's does
 
 const clamp01 = v => Math.max(0, Math.min(1, v));
 const smooth = v => { const t = clamp01(v); return t * t * (3 - 2 * t); };
@@ -46,11 +47,11 @@ export function makeChaobenModel(root, scene) {
     const up1 = upper.dir.clone(), upP = back.clone().addScaledVector(up1, -back.dot(up1)).normalize();
     const fo1 = fore.dir.clone(), foP = back.clone().addScaledVector(fo1, -back.dot(fo1)).normalize();
     const handAxis = V(1, 0, 0).addScaledVector(fo1, -fo1.x).normalize(); // at rest the palm faces the thigh, the thumb forward
-    return { s, side, upper, fore, up1, upP, fo1, foP, handAxis, shoulder: V(), elbow: V(), wrist: V(), hand: V(), dir: V(), poleU: V(), poleF: V(), rest: V() };
+    return { s, side, upper, fore, up1, upP, fo1, foP, handAxis, shoulder: V(), elbow: V(), wrist: V(), hand: V(), dir: V(), pole: V(), poleU: V(), poleF: V(), rest: V() };
   });
   const LEGS = [['L', 0], ['R', 1]].map(([s, i]) => ({ s, i, thigh: seg(s + '_Thigh', s + '_Calf'), calf: seg(s + '_Calf', s + '_Foot'), hipAt: V(), knee: V(), foot: V() }));
   const THIGH_OFF = { L: al(V().subVectors(J.L_Thigh, J.Hip)), R: al(V().subVectors(J.R_Thigh, J.Hip)) };
-  const armLen = ARMS[0].upper.len + ARMS[0].fore.len;
+  const armLen = ARMS[0].upper.len + ARMS[0].fore.len + GRIP; // shoulder to the fist's centre
 
   const hip = V(), neck = V(), spine = V(), t = V(), tmp = V(), tmp2 = V(), head = V(), pole = V(), side = V();
   const pose = fig.userData.pose = { low: 0, k: 1, floor: 0, knees: LEGS.map(l => l.knee), feet: LEGS.map(l => l.foot), hands: ARMS.map(a => a.hand), head };
@@ -95,22 +96,23 @@ export function makeChaobenModel(root, scene) {
       const rigS = a.s === 'R' ? r.sR : r.sL, rigH = a.s === 'R' ? r.hR : r.hL, onStick = st && st.hand === a.s;
       setBone(a.s + '_Clavicle', tmp.copy(al(V().subVectors(J[a.s + '_Clavicle'], J.Neck))).multiplyScalar(s).applyQuaternion(R).add(neck), R, s);
       a.shoulder.copy(al(V().subVectors(J[a.s + '_Upperarm'], J.Neck))).multiplyScalar(s).applyQuaternion(R).add(neck);
-      a.rest.copy(a.shoulder).add(tmp.subVectors(rigH, rigS).multiplyScalar(armLen * s / RIG_ARM)); // the rig's reach, at his arm's length
+      tmp.subVectors(rigH, rigS); const reach = tmp.length(); // the rig's reach: its direction, and how far out of hanging straight
+      a.rest.copy(a.shoulder).addScaledVector(tmp.divideScalar(Math.max(reach, 1e-5)), armLen * s * .98 * Math.min(1, reach / RIG_HANG));
       a.rest.z += a.side * .05 * s; // clear of the thigh
       if (onStick) a.hand.copy(st.base);
       else if (st && g > 0) a.hand.copy(a.rest).lerp(tmp.copy(st.base).addScaledVector(st.dir, -HANDS_APART * s), g);
       else a.hand.copy(a.rest);
-      const w = onStick ? 1 : g;
+      const w = onStick ? 1 : g, P = a.pole.copy(FREE_POLE[a.s]).lerp(POLE[a.s], w).normalize();
       a.dir.subVectors(a.hand, a.shoulder); if (st) a.dir.addScaledVector(st.dir, -a.dir.dot(st.dir) * w);
       if (a.dir.lengthSq() < 1e-6) a.dir.set(1, 0, 0); a.dir.normalize();
       a.wrist.copy(a.hand).addScaledVector(a.dir, -GRIP * s);
       const lu = a.upper.len * s, lf = a.fore.len * s;
-      jointFor(a.elbow, a.shoulder, a.wrist, lu, lf, POLE[a.s]);
+      jointFor(a.elbow, a.shoulder, a.wrist, lu, lf, P);
       const du = _f1.subVectors(a.elbow, a.shoulder), Lu = du.length(); du.divideScalar(Math.max(Lu, 1e-5));
-      a.poleU.copy(POLE[a.s]).addScaledVector(du, -POLE[a.s].dot(du)).normalize();
+      a.poleU.copy(P).addScaledVector(du, -P.dot(du)).normalize();
       setBone(a.s + '_Upperarm', a.shoulder, turn(Rs, a.up1, a.upP, du, a.poleU), s, a.up1, Lu / lu);
       const df = _f2.subVectors(a.wrist, a.elbow), Lf = df.length(); df.divideScalar(Math.max(Lf, 1e-5));
-      a.poleF.copy(POLE[a.s]).addScaledVector(df, -POLE[a.s].dot(df)).normalize();
+      a.poleF.copy(P).addScaledVector(df, -P.dot(df)).normalize();
       turn(Rs, a.fo1, a.foP, df, a.poleF);
       setBone(a.s + '_Forearm', a.elbow, Rs, s, a.fo1, Lf / lf);
       Rhand.copy(Rs);

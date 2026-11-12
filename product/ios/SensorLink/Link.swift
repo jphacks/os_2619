@@ -39,6 +39,12 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
     var onFlash: ((Int) -> Void)?
     /// The PC's vibration word: charge, win or off (Vibe.swift). Set before connect; called on the socket's queue.
     var onVibrate: ((String) -> Void)?
+    /// A `vibrate` charge packet also says what the PC's charge sound is doing: element, tier (s / m / l), level 0...1.
+    var onCharge: ((String, String, Double) -> Void)?
+    /// A game sound for this player (`sfx`, dashboard app.js phoneSound): its voices (GameSound.play). The socket's queue.
+    var onSound: (([[String: Any]]) -> Void)?
+    /// The charge broke off (`sfx` kind chargeFail): ChargeSound.fail. The socket's queue.
+    var onChargeFail: (() -> Void)?
     /// The PC's word on this slot's scanned stick (dashboard stickscan.js): "91 cm", "none", or nil before it said anything.
     var stick: String? { lock.lock(); defer { lock.unlock() }; return _stick }
 
@@ -141,8 +147,13 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
             if let p = k["phase"] as? String { lock.lock(); _phase = p; lock.unlock() }
         case "flash":
             if let ms = (k["ms"] as? NSNumber)?.intValue { onFlash?(ms) }
+        case "sfx":
+            if (k["kind"] as? String) == "chargeFail" { onChargeFail?() } else if let v = k["voices"] as? [[String: Any]] { onSound?(v) }
         case "vibrate":
-            if let kind = k["kind"] as? String { onVibrate?(kind) }
+            if let kind = k["kind"] as? String {
+                onVibrate?(kind)
+                if kind == "charge" { onCharge?((k["element"] as? String) ?? "", (k["tier"] as? String) ?? "s", (k["level"] as? NSNumber)?.doubleValue ?? 0) }
+            }
         case "stick":
             let len = ((k["model"] as? [String: Any])?["length"] as? NSNumber)?.doubleValue
             lock.lock(); _stick = len.map { String(format: "%.0f cm", $0 * 100) } ?? "none"; lock.unlock()

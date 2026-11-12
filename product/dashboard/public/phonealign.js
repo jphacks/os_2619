@@ -276,7 +276,7 @@ export function createPhoneAlign(opts = {}) {
     let yaw0 = W.START[s].yaw, src = 'start';
     if (st.calibPose && g.theta != null) { const f = rotY(g.theta, qrot(st.calibPose.q, [0, 0, -1])); yaw0 = Math.atan2(-f[2], f[0]); src = 'calib-ar'; }
     const dir = W.app3(W.bodyPose([0, 0, 0], yaw0).R, body);
-    const h = W.STICK.hand, base = g.chest ? W.apply(W.bodyPose(g.chest, g.yaw ?? yaw0, g.chest[1]), [h.fwd, h.up, h.right]) : null;
+    const base = g.chest ? W.handAt(W.bodyPose(g.chest, g.yaw ?? yaw0, g.chest[1]), dir) : null;
     return { dir, base, src };
   }
 
