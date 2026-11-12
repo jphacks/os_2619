@@ -341,7 +341,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     renderer.setScissorTest(false);
     field.setLook(cfg.backdrop, !!cfg.debug);
     field.setBattle(game.match.phase === 'fight');
-    field.setTime(cfg.timeOfDay);
+    field.setTime(S.hour ?? cfg.timeOfDay); // S.hour: app.js's waiting sky (noon before a match), else the meter's
     if (S.mode === 'game') {
       canvas.style.transform = '';
       drawGuide2d(false);
@@ -406,7 +406,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
   }
 
   return {
-    el, scene, camera, fx, drone, field, state: S, render, project, phoneCam, scan, autoAlign, clearScan, tagChecks, seenTags: seen, applyCam,
+    el, scene, camera, fx, drone, field, state: S, render, project, setHour(h) { S.hour = h; }, phoneCam, scan, autoAlign, clearScan, tagChecks, seenTags: seen, applyCam,
     attach(box, mode) { S.box = box; S.mode = mode; if (el.parentNode !== box) box.append(el); resize(); applyCam(); },
     attachMinimap(c) { minimap = createMinimap(c); minimap.canvas = c; },
     resize,

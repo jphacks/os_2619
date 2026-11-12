@@ -25,6 +25,9 @@ import { createPlayable } from './playable.js';
 import { createTutorial } from './tutorial.js';
 import { createGauge } from './hudgauge.js';
 import { PRESETS, DEFAULT_HOUR, clock } from './sky.js';
+// the sky: before a match (waiting) it is noon (WAIT_HOUR); when the match starts it is the time on the side panel's meter (cfg.timeOfDay),
+// sunset by default. 時刻を自動で進める runs both clocks (the waiting one starts at noon again whenever the match goes back to setup).
+const WAIT_HOUR = DEFAULT_HOUR, SUNSET = PRESETS.find(([n]) => n === '夕焼け')[1];
 import { createKoShow } from './ko-show.js';
 import { createSwingSense, SWING_DEFAULT, SWING_GAIN, ATTACK_SPEED } from './swing-sense.js';
 const TOD_SPEEDS = [['ゆっくり', 2], ['ふつう', 6], ['はやい', 24]]; // hours per minute: ふつう = a 60 s match from sunset into the night
@@ -37,7 +40,7 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
   minimap: true, debug: false, pip: false, mirrorX: false, mirrorY: false, swordFlip: false, fovC: 40, viewVer: 2, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
-  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 8, fxStyle: 'smash', backdrop: 'court', timeOfDay: DEFAULT_HOUR,
+  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 8, fxStyle: 'smash', backdrop: 'court', timeOfDay: SUNSET, todVer: 1,
   zoom: { fixed: 1, auto: 1, orbit: 1, chaseA: 1, chaseB: 1, top: 1, side: 1 }, // game screen: zoom per camera mode (free: the mouse wheel)
   chara: { A: 'wizard', B: 'wizard' }, // who each player is drawn as (field3d.js CHARAS): the wizard, or the special character チャオベン
   mimic: true, // the avatars copy the poses MediaPipe finds in phone C's picture (screen 3, and the small 3D window of screen 4)
@@ -46,6 +49,8 @@ const DEFAULTS = {
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, swing: { ...SWING_DEFAULT, ...saved.swing }, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen }, zoom: { ...DEFAULTS.zoom, ...saved.zoom }, chara: { ...DEFAULTS.chara, ...saved.chara } };
+if (saved.todVer !== DEFAULTS.todVer) { cfg.timeOfDay = SUNSET; cfg.todVer = DEFAULTS.todVer; } // the meter's default became sunset: once, for saved settings
+let waitHour = WAIT_HOUR; // the sky before a match (see WAIT_HOUR)
 if ((saved.viewVer ?? 0) < 2) { cfg.mirrorX = cfg.mirrorY = cfg.swordFlip = false; cfg.viewVer = 2; } // the left-right / up-down guesses are off until a measured need: the alignment is solved from the tags now
 cfg.visOn = false; // picture recognition (MediaPipe) is off at every start: nothing is loaded or run until it is switched on in the final bar
 if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
@@ -595,8 +600,13 @@ function frame(ts) {
   fps = .95 * fps + .05 / Math.max(raw, 1e-3);
   try { est = PA.estimate(nowS()); } catch (e) { console.warn('phonealign', e); }
   playable.step(dt, t);
-  if (cfg.todAuto && cfg.backdrop !== 'plain') { // the clock runs by itself: hours per minute; saved now and then, not every frame
-    cfg.timeOfDay = +(((cfg.timeOfDay ?? DEFAULT_HOUR) + dt * (cfg.todSpeed ?? TOD_SPEEDS[1][1]) / 60) % 24).toFixed(4);
+  const waiting = game.match.phase === 'setup';
+  if (waiting && !frame.waiting) waitHour = WAIT_HOUR; // back to setup: noon again
+  frame.waiting = waiting;
+  if (cfg.todAuto && cfg.backdrop !== 'plain' && waiting) waitHour = (waitHour + dt * (cfg.todSpeed ?? TOD_SPEEDS[1][1]) / 60) % 24; // the waiting clock runs too
+  stage.setHour(waiting ? waitHour : null); // null: the meter's time (cfg.timeOfDay)
+  if (cfg.todAuto && cfg.backdrop !== 'plain' && !waiting) { // the clock runs by itself: hours per minute; saved now and then, not every frame
+    cfg.timeOfDay = +(((cfg.timeOfDay ?? SUNSET) + dt * (cfg.todSpeed ?? TOD_SPEEDS[1][1]) / 60) % 24).toFixed(4);
     if (t - (frame.todSaved ?? 0) > 5) { frame.todSaved = t; save(); }
   }
   // The picture and game placement consume this exact same pose snapshot. Screen 3 does not show the picture, so it is drawn once a second there:
