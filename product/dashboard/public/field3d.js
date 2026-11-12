@@ -20,6 +20,7 @@ const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
 const m4 = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
 export const TEAM = { A: 0xff6600, B: 0x0078ff };
+const STICK_LIGHT = { fire: 0xff5a18, thunder: 0xffd52a, water: 0x168cff, wind: 0xb9f7ff };
 const CLOTH_S = .39, CLOTH_V = .3; // the wizards' clothes: only the hue is the player's, saturation and value are the same for everyone
 /** The clothes' colour for a player's colour: its hue at CLOTH_S, CLOTH_V (HSV, as displayed). */
 export function clothColor(team) {
@@ -347,20 +348,18 @@ function makeAvatar(slot) {
   const legs = [-1, 1].map(s => ({ s, thigh: limb(.07, dark), shin: limb(.06, dark), knee: joint(.065, dark), boot: mesh(new THREE.BoxGeometry(.22, .08, .11), suit) }));
   // stick (world space)
   const metal = slot === 'A' ? 0xc8ccd2 : 0xd4af37; // A silver, B gold
-  const stickMat = new THREE.MeshStandardMaterial({ color: metal, metalness: .85, roughness: .28, emissive: metal, emissiveIntensity: .25 });
-  const stick = mesh(new THREE.CylinderGeometry(1, 1, 1, 6), stickMat, world); stick.userData.r = .02; stick.userData.glow = .25;
+  const stickMat = new THREE.MeshStandardMaterial({ color: metal, metalness: .15, roughness: .42, emissive: STICK_LIGHT.fire, emissiveIntensity: 2 });
+  const stick = mesh(new THREE.CylinderGeometry(1, 1, 1, 6), stickMat, world); stick.userData.r = .02;
   const plainStick = stick.geometry;
   /** The scanned model (stickscan.js) in place of the metal rod, or back to the rod with null. */
   function setStick(m) {
     if (stick.geometry !== plainStick) stick.geometry.dispose();
     const g = m && stickGeometry(m);
     stick.geometry = g || plainStick;
-    stickMat.color.set(g ? STICK_COLOR : metal); stickMat.metalness = g ? 0 : .85; stickMat.roughness = g ? .8 : .28; // the scanned one: solid brown wood
-    stick.userData.r = g ? 1 : .02; stick.userData.glow = g ? 0 : .25; stick.userData.scanned = !!g; // solid brown; it still glows while charging
+    stickMat.color.set(g ? STICK_COLOR : metal); stickMat.metalness = g ? 0 : .15; stickMat.roughness = g ? .8 : .42;
+    stick.userData.r = g ? 1 : .02; stick.userData.scanned = !!g;
     stickMat.needsUpdate = true;
   }
-  const tipMat = new THREE.MeshBasicMaterial({ color: metal });
-  const tip = joint(.04, tipMat, world);
   root.traverse(o => { if (o.isMesh) o.visible = false; }); // the rig: only the wireframe figure is drawn
   const wire = new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: .55, depthWrite: false });
   const clothC = clothColor(color), cloth = new THREE.MeshStandardMaterial({ color: clothC, roughness: .85, metalness: 0, emissive: clothC, emissiveIntensity: .1, side: THREE.DoubleSide }); // all the wizard wears: one colour, the player's hue, connected or not
@@ -439,11 +438,15 @@ function makeAvatar(slot) {
         _up.set(p.up.x, p.up.y, p.up.z).addScaledVector(d, -_up.set(p.up.x, p.up.y, p.up.z).dot(d));
         if (_up.lengthSq() > 1e-6) { _up.normalize(); stick.quaternion.setFromRotationMatrix(_basis.makeBasis(_side.crossVectors(d, _up), d, _up)); } // x = side = along × up (stickscan.js)
       }
-      tip.position.copy(tipP);
-      stickMat.emissiveIntensity = p.charging ? .5 + 1.2 * (p.charge ?? 0) * (.7 + .3 * Math.sin(st.time * 30)) : stick.userData.glow;
-      tip.scale.setScalar(.04 * st.thick * (1 + (p.charging ? (p.charge ?? 0) : 0)));
+      if (st.element !== p.element) {
+        st.element = p.element;
+        const color = STICK_LIGHT[p.element] ?? STICK_LIGHT.fire;
+        stickMat.emissive.setHex(color);
+      }
+      const pulse = p.charging ? (p.charge ?? 0) * (.85 + .15 * Math.sin(st.time * 24)) : 0;
+      stickMat.emissiveIntensity = p.lit ? 2 + 2.4 * pulse : 0; // the stick itself glows in its element's colour only during a match; plain wood otherwise
     }
-    stick.visible = tip.visible = !!(base && tipP);
+    stick.visible = !!(base && tipP);
     const online = p.online !== false;
     if (online !== wasOnline) {
       wasOnline = online;
