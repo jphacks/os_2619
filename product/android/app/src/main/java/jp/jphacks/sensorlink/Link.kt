@@ -34,6 +34,8 @@ class Link(private val id: String, private val name: String) {
     @Volatile var rttMs = 0.0; private set
     /** The floor sheets' marker the PC chose: "april" or "rune" (Rune.kt reads the mahoujin tags, ids 0-6, then). Older servers say nothing: april. */
     @Volatile var marker = "april"; private set
+    /** The dashboard's game phase (setup, countdown, fight, result). */
+    @Volatile var phase = "setup"; private set
     /** The PC says this phone's player was hit: light the torch for this many ms. Called on OkHttp's thread. */
     @Volatile var onFlash: ((Int) -> Unit)? = null
     /** The PC's vibration word: charge, win or off (Vibe.kt). Called on OkHttp's thread. */
@@ -61,7 +63,7 @@ class Link(private val id: String, private val name: String) {
         gen++
         data?.close(1000, null)
         data = null
-        status = "not connected"; slot = "-"
+        status = "not connected"; slot = "-"; phase = "setup"
     }
 
     private fun open(g: Int) {
@@ -96,6 +98,7 @@ class Link(private val id: String, private val name: String) {
                 }
                 "welcome" -> { slot = k.optString("slot", "-"); marker = k.optString("marker", "april"); status = "connected" }
                 "marker" -> marker = k.optString("marker", marker)
+                "match" -> phase = k.optString("phase", phase)
                 "flash" -> onFlash?.invoke(k.optInt("ms"))
                 "sfx" -> if (k.optString("kind") == "chargeFail") onChargeFail?.invoke() else k.optJSONArray("voices")?.let { onSound?.invoke(it) }
                 "vibrate" -> {
@@ -114,7 +117,7 @@ class Link(private val id: String, private val name: String) {
             if (g != gen) return
             gen++
             data?.cancel()
-            status = "$why, retrying"; slot = "-"
+            status = "$why, retrying"; slot = "-"; phase = "setup"
             val next = gen
             main.postDelayed({ if (next == gen) open(next) }, 1000)
         }

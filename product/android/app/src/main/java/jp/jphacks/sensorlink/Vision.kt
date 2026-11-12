@@ -27,6 +27,8 @@ fun tagSizeOf(id: Int, rune: Boolean = false) = if (rune && id in Rune.IDS) Rune
 
 /** AprilTag tag36h11 via OpenCV's aruco module (and RuneTags 0-6 via Rune.kt when [rune]), pose by solvePnP. Positions in the OpenCV camera frame (x right, y down, z forward), metres. */
 class TagDetector {
+    var info = ""
+        private set
     private val det = ArucoDetector(
         Objdetect.getPredefinedDictionary(Objdetect.DICT_APRILTAG_36h11),
         DetectorParameters().apply { set_cornerRefinementMethod(Objdetect.CORNER_REFINE_SUBPIX) },
@@ -37,12 +39,24 @@ class TagDetector {
         gray.create(f.height, f.width, CvType.CV_8UC1)
         gray.put(0, 0, f.gray)
         val found = ArrayList<Pair<Int, FloatArray>>() // id, corners (x, y) x 4 in OpenCV order
-        if (rune) {
-            for (m in Rune.detect(f.gray, f.width, f.height)) found.add(m.id to FloatArray(8) { m.corners[it].toFloat() })
-        }
         val corners = ArrayList<Mat>()
         val ids = Mat()
-        det.detectMarkers(gray, corners, ids)
+        var aprilMs = 0L
+        var aprilFailure: Throwable? = null
+        // Match iOS: AprilTag detection runs on another core while the RuneTag reader works.
+        val april = Thread {
+            val started = System.nanoTime()
+            try { det.detectMarkers(gray, corners, ids) } catch (e: Throwable) { aprilFailure = e }
+            finally { aprilMs = (System.nanoTime() - started) / 1_000_000 }
+        }
+        april.start()
+        val runeStarted = System.nanoTime()
+        var runeMs = 0L
+        try {
+            if (rune) for (m in Rune.detect(f.gray, f.width, f.height)) found.add(m.id to FloatArray(8) { m.corners[it].toFloat() })
+        } finally { runeMs = (System.nanoTime() - runeStarted) / 1_000_000; april.join() }
+        aprilFailure?.let { throw it }
+        info = "img ${f.width}x${f.height} rune ${if (rune) found.size else 0} ${runeMs}ms april ${ids.rows()} ${aprilMs}ms"
         for (i in 0 until ids.rows()) {
             val id = ids.get(i, 0)[0].toInt()
             if (!(rune && id in Rune.IDS)) found.add(id to FloatArray(8).also { corners[i].get(0, 0, it) })

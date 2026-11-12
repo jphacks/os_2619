@@ -12,12 +12,14 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * RuneTag reader for the mahoujin's 7 tags (ids 0-6) when the PC says marker = rune: a line-for-line port of detectRunes in
- * dashboard/public/runetag.js (the marker, its code and the method are described there; keep the two in step).
+ * RuneTag reader for the mahoujin's 7 tags (ids 0-6) when the PC says marker = rune: a port of detectRunes in
+ * dashboard/public/runetag.js. The two blob sizes run in parallel, as in the iOS reader.
  * Plain Kotlin on a grey byte array, no Android or OpenCV, so the same file runs on the desktop JVM for checks.
  * Corners are those of the virtual RUNE square (side SQUARE), in OpenCV order: tag (-h,h), (h,h), (h,-h), (-h,-h).
  */
 object Rune {
+    @Volatile var info = ""
+        private set
     const val SQUARE = 0.224
     const val S = 43
     private val RINGS = doubleArrayOf(0.12782, 0.12782 * 5 / 6, 0.12782 * 4 / 6)
@@ -40,8 +42,15 @@ object Rune {
     private class Blob(val x: Double, val y: Double, val cov: DoubleArray, val n: Int, val a: Double)
     private class Hit(val k: Int, val j: Int, val i: Int)
     private class Read(val bits: IntArray, val hits: List<Hit>, val known: Int)
+    private class PassResult(val found: List<Found>, val scanned: Int, val lastFound: Int)
+    private class TimedPass(val result: PassResult, val blobs: Int, val blobMs: Long, val passMs: Long)
 
-    private fun slotPos(k: Int, j: Int): DoubleArray { val a = -j * STEP; return doubleArrayOf(RINGS[k] * cos(a), RINGS[k] * sin(a)) }
+    // The same 129 sector coordinates are projected many times for every candidate marker.
+    private val SLOTS = Array(K) { k -> Array(S) { j ->
+        val a = -j * STEP
+        doubleArrayOf(RINGS[k] * cos(a), RINGS[k] * sin(a))
+    } }
+    private fun slotPos(k: Int, j: Int): DoubleArray = SLOTS[k][Math.floorMod(j, S)]
     private fun bit(id: Int, j: Int, k: Int) = CODES[id][j] shr k and 1
 
     /** ROT[id][r][k]: ring k of code id as a 43-bit word, turned so that bit j is the code's sector (j + r) % S.
@@ -52,16 +61,36 @@ object Rune {
 
     fun detect(g: ByteArray, w: Int, h: Int, ids: IntRange = IDS): List<Found> {
         val found = HashMap<Int, Found>()
-        val rads = intArrayOf(max(4, (min(w, h) / 40.0).roundToInt()), (min(w, h) / 10.0).roundToInt())
-        // the two blob sizes are independent: read the second on another core, then merge in the same order as one after the other
-        var second: List<Found> = emptyList(); var fail: Throwable? = null
-        val th = Thread { try { second = pass(blobs(g, w, h, rads[1]), w, h, ids) } catch (e: Throwable) { fail = e } }.also { it.start() }
-        val first = pass(blobs(g, w, h, rads[0]), w, h, ids)
-        th.join(); fail?.let { throw it }
-        for (fs in listOf(first, second)) for (m in fs) {
-            val o = found[m.id]
-            if (o == null || m.n - 2 * m.err > o.n - 2 * o.err) found[m.id] = m
+        fun merge(marks: List<Found>) {
+            for (m in marks) {
+                val old = found[m.id]
+                if (old == null || m.n - 2 * m.err > old.n - 2 * old.err) found[m.id] = m
+            }
         }
+        val rads = intArrayOf(max(4, (min(w, h) / 40.0).roundToInt()), (min(w, h) / 10.0).roundToInt())
+        fun run(rad: Int): TimedPass {
+            val t0 = System.nanoTime()
+            val dots = blobs(g, w, h, rad)
+            val t1 = System.nanoTime()
+            val result = pass(dots, w, h, ids)
+            val t2 = System.nanoTime()
+            return TimedPass(result, dots.size, (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000)
+        }
+        // Match iOS: both independent blob sizes are read on separate cores, then merged in order.
+        var second: TimedPass? = null
+        var failure: Throwable? = null
+        val worker = Thread {
+            try { second = run(rads[1]) } catch (e: Throwable) { failure = e }
+        }
+        worker.start()
+        val first = try { run(rads[0]) } finally { worker.join() }
+        failure?.let { throw it }
+        val other = checkNotNull(second)
+        merge(first.result.found)
+        merge(other.result.found)
+        info = "blobs ${first.blobs}/${other.blobs} ${first.blobMs}/${other.blobMs}ms " +
+            "pass ${first.result.found.size}/${other.result.found.size} ${first.passMs}/${other.passMs}ms " +
+            "seeds ${first.result.lastFound}/${first.result.scanned} ${other.result.lastFound}/${other.result.scanned}"
         return found.values.toList()
     }
 
@@ -105,16 +134,14 @@ object Rune {
         return out
     }
 
-    private fun pass(blobs: List<Blob>, w: Int, h: Int, ids: IntRange): List<Found> {
+    private fun pass(blobs: List<Blob>, w: Int, h: Int, ids: IntRange): PassResult {
         val b = blobs.sortedByDescending { it.n }
         val byX = b.indices.sortedBy { b[it].x }; val xs = DoubleArray(byX.size) { b[byX[it]].x }
         fun lower(v: Double): Int { var lo = 0; var hi = xs.size; while (lo < hi) { val m = (lo + hi) ushr 1; if (xs[m] < v) lo = m + 1 else hi = m }; return lo }
-        val near: (Double, Double, Double, (Int) -> Unit) -> Unit = { x, y, r, cb ->
-            var t = lower(x - r)
-            while (t < xs.size && xs[t] <= x + r) { if (abs(b[byX[t]].y - y) <= r) cb(byX[t]); t++ }
-        }
         val used = BooleanArray(b.size); val out = ArrayList<Found>()
+        var scanned = 0; var lastFound = -1
         for (si in 0 until min(b.size, 400)) {
+            scanned = si + 1
             if (used[si]) continue
             val s = b[si]; val mi = sqrtSym(inv2(s.cov)).map { it / 2 }.toDoubleArray() // whitens the seed dot to radius 1
             val reach = 2.8 * RHO * s.a
@@ -127,18 +154,26 @@ object Rune {
                 if (rs > .78 && rs < 1.28 && hypot(p[0], p[1]) < 2 * RHO * 1.35) cand.add(i to p)
             }
             if (cand.size < 5) continue
-            cand.sortBy { hypot(it.second[0], it.second[1]) }
+            cand.sortBy { it.second[0] * it.second[0] + it.second[1] * it.second[1] }
             val cs = cand.take(24)
-            var best: List<Pair<Int, DoubleArray>>? = null
+            var bestN = 0; var bestCx = 0.0; var bestCy = 0.0; var bestR = 0.0
             for (a in cs.indices) for (c in a + 1 until cs.size) { // circle through the seed and two more
                 val pp = cs[a].second; val q = cs[c].second; val d = 2 * (pp[0] * q[1] - pp[1] * q[0]); if (abs(d) < 1e-9) continue
                 val p2 = pp[0] * pp[0] + pp[1] * pp[1]; val q2 = q[0] * q[0] + q[1] * q[1]
                 val cx = (p2 * q[1] - q2 * pp[1]) / d; val cy = (q2 * pp[0] - p2 * q[0]) / d; val r = hypot(cx, cy)
                 if (r < .7 * RHO || r > 1.4 * RHO) continue
-                val inl = cs.filter { abs(hypot(it.second[0] - cx, it.second[1] - cy) - r) < .12 * r }
-                if (best == null || inl.size > best.size) best = inl
+                val lo = .88 * r; val hi = 1.12 * r; val lo2 = lo * lo; val hi2 = hi * hi
+                var n = 0
+                for (o in cs) { val dx = o.second[0] - cx; val dy = o.second[1] - cy; val d2 = dx * dx + dy * dy; if (d2 > lo2 && d2 < hi2) n++ }
+                if (n > bestN) { bestN = n; bestCx = cx; bestCy = cy; bestR = r }
             }
-            // the nearest 24 cover only an arc of a 43-sector layer: fit an ellipse through them and collect that layer's dots from every
+            if (bestN < 4) continue
+            val lo = .88 * bestR; val hi = 1.12 * bestR; val lo2 = lo * lo; val hi2 = hi * hi
+            var best: List<Pair<Int, DoubleArray>>? = cs.filter { o ->
+                val dx = o.second[0] - bestCx; val dy = o.second[1] - bestCy; val d2 = dx * dx + dy * dy
+                d2 > lo2 && d2 < hi2
+            }
+            // the nearest 24 cover an arc of a 43-sector layer: fit an ellipse through them and collect that layer's dots from every
             // candidate (the layers are >= 1/6 apart, so 0.06 keeps the neighbours out)
             for (it in 0 until 2) {
                 val bb = best ?: break; if (bb.size < 4) break
@@ -147,14 +182,16 @@ object Rune {
                 best = cand.filter { o -> val q = mul2(rr, o.second[0] - e.first[0], o.second[1] - e.first[1]); abs(hypot(q[0], q[1]) - 1) < .06 }
             }
             if (best == null || best.size < 5) continue
-            val m = readMarker(b, near, listOf(si) + best.map { it.first }, w, h, ids) ?: continue
+            val m = readMarker(b, byX, xs, listOf(si) + best.map { it.first }, w, h, ids)
+            if (m == null) continue
             for (i in m.second) used[i] = true
             out.add(m.first)
+            lastFound = si
         }
-        return out
+        return PassResult(out, scanned, lastFound)
     }
 
-    private fun readMarker(b: List<Blob>, near: (Double, Double, Double, (Int) -> Unit) -> Unit, ring: List<Int>, w: Int, h: Int, ids: IntRange): Pair<Found, List<Int>>? {
+    private fun readMarker(b: List<Blob>, byX: List<Int>, xs: DoubleArray, ring: List<Int>, w: Int, h: Int, ids: IntRange): Pair<Found, List<Int>>? {
         val p = ring.map { doubleArrayOf(b[it].x, b[it].y) }
         val e = fitEllipse(p) ?: return null
         val r = sqrtSym(e.second)
@@ -178,7 +215,7 @@ object Rune {
             var hm = homography(sec.map { slotPos(k, it) }, run) ?: continue
             var read: Read? = null
             for (it in 0 until 3) {
-                read = readSlots(b, near, hm, w, h)
+                read = readSlots(b, byX, xs, hm, w, h)
                 if (read.hits.size < 6) break
                 hm = homography(read.hits.map { slotPos(it.k, it.j) }, read.hits.map { doubleArrayOf(b[it.i].x, b[it.i].y) }) ?: break
             }
@@ -203,7 +240,7 @@ object Rune {
         var err = bestErr; var known = br.known
         for (it in 0 until 2) {
             if (hits.size < 8) break
-            val rd = readSlots(b, near, fit(hits) ?: break, w, h)
+            val rd = readSlots(b, byX, xs, fit(hits) ?: break, w, h)
             err = 0; known = rd.known; for (k in 0 until K) for (jj in 0 until S) { val v = rd.bits[k * S + jj]; if (v >= 0 && v != bit(bestId, jj, k)) err++ }
             hits = rd.hits.filter { bit(bestId, it.j, it.k) == 1 }
         }
@@ -219,20 +256,38 @@ object Rune {
     private fun maxErr(known: Int) = max(7, known shr 3)
 
     /** Look for a dot at every slot through hm: bits (1 dot, 0 none, -1 unknown) and the dots it found. */
-    private fun readSlots(b: List<Blob>, near: (Double, Double, Double, (Int) -> Unit) -> Unit, hm: DoubleArray, w: Int, h: Int): Read {
+    private fun readSlots(b: List<Blob>, byX: List<Int>, xs: DoubleArray, hm: DoubleArray, w: Int, h: Int): Read {
         val bits = IntArray(S * K) { -1 }; val hits = ArrayList<Hit>(); var known = 0
         for (k in 0 until K) for (j in 0 until S) {
-            val xy = slotPos(k, j); val x = xy[0]; val y = xy[1]; val c = project(hm, x, y)
-            val pr = project(hm, x * (1 + DOT), y * (1 + DOT)); val pt = project(hm, x - y * DOT, y + x * DOT)
-            val er = hypot(pr[0] - c[0], pr[1] - c[1]); val et = hypot(pt[0] - c[0], pt[1] - c[1])
-            if (!(c[0] > er && c[1] > er && c[0] < w - er && c[1] < h - er) || !(er + et).isFinite()) continue
+            val xy = slotPos(k, j); val x = xy[0]; val y = xy[1]
+            val cw = hm[6] * x + hm[7] * y + hm[8]
+            val cx = (hm[0] * x + hm[1] * y + hm[2]) / cw
+            val cy = (hm[3] * x + hm[4] * y + hm[5]) / cw
+            val rx = x * (1 + DOT); val ry = y * (1 + DOT)
+            val rw = hm[6] * rx + hm[7] * ry + hm[8]
+            val prx = (hm[0] * rx + hm[1] * ry + hm[2]) / rw
+            val pry = (hm[3] * rx + hm[4] * ry + hm[5]) / rw
+            val tx = x - y * DOT; val ty = y + x * DOT
+            val tw = hm[6] * tx + hm[7] * ty + hm[8]
+            val ptx = (hm[0] * tx + hm[1] * ty + hm[2]) / tw
+            val pty = (hm[3] * tx + hm[4] * ty + hm[5]) / tw
+            val er = hypot(prx - cx, pry - cy); val et = hypot(ptx - cx, pty - cy)
+            if (!(cx > er && cy > er && cx < w - er && cy < h - er) || !(er + et).isFinite()) continue
             val e = sqrt(er * et)
             if (e < 1.2) continue // too small to see: unknown, not empty
             known++; bits[k * S + j] = 0
             val tol = max(1.5, .9 * max(er, et)); var bi = -1; var bd = tol
-            near(c[0], c[1], tol) { i ->
-                val o = b[i]; val d = hypot(o.x - c[0], o.y - c[1])
-                if (d < bd) { val rb = sqrt(o.n / PI); if (rb > .5 * e && rb < 2 * e + 1) { bd = d; bi = i } }
+            var lo = 0; var hi = xs.size
+            while (lo < hi) { val mid = (lo + hi) ushr 1; if (xs[mid] < cx - tol) lo = mid + 1 else hi = mid }
+            var t = lo
+            while (t < xs.size && xs[t] <= cx + tol) {
+                val i = byX[t]; val o = b[i]; t++
+                if (abs(o.y - cy) > tol) continue
+                val dx = o.x - cx; val dy = o.y - cy; val d2 = dx * dx + dy * dy
+                if (d2 < bd * bd) {
+                    val rb = sqrt(o.n / PI)
+                    if (rb > .5 * e && rb < 2 * e + 1) { bd = sqrt(d2); bi = i }
+                }
             }
             if (bi >= 0) { bits[k * S + j] = 1; hits.add(Hit(k, j, bi)) }
         }

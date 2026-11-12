@@ -123,6 +123,8 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     @Volatile var frame: Frame? = null
     @Volatile var preview: Bitmap? = null // colour picture for the screen, ~10 Hz, apart from the grey one the tags are read from
     @Volatile var tags: JSONArray? = null
+    @Volatile var tagInfo = ""
+    private var lastTagLogMs = 0L
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -164,8 +166,10 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setBackgroundColor(0x99000000.toInt())
-            fun btn(label: String, onClick: (Button) -> Unit) = addView(Button(context).apply { text = label; setOnClickListener { onClick(this) } },
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            fun btn(label: String, onClick: (Button) -> Unit): Button = Button(context).apply {
+                text = label; textSize = 12f; setSingleLine(true); setOnClickListener { onClick(this) }
+                addView(this, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            }
             btn("IMU") { imuDialog() }
             btn("Calibrate") { calibrate() }
             btn("LAN") { lanDialog() }
@@ -209,9 +213,12 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
                     installRequested = true; return
                 }
                 session = Session(this).also { s ->
-                    // CPU image: ARCore's default is 640x480, too few pixels for the RuneTag dots. Take the biggest 4:3 one up to 1920x1440 (what ARKit gives iOS).
+                    // Pixel 8a offers 640x480, 1280x720 and 1920x1080. Requiring 4:3 selected only 640x480,
+                    // which cannot resolve the small RuneTag dots reliably. Use 1280-wide when available:
+                    // enough detail for the dots without the 1920-wide frame's much larger per-frame cost.
                     val cfgs = s.getSupportedCameraConfigs(CameraConfigFilter(s).setFacingDirection(CameraConfig.FacingDirection.BACK))
-                    val pick = cfgs.filter { it.imageSize.width * 3 == it.imageSize.height * 4 && it.imageSize.width <= 1920 }.maxByOrNull { it.imageSize.width }
+                    val pick = cfgs.filter { it.imageSize.width <= 1280 }.maxByOrNull { it.imageSize.width * it.imageSize.height }
+                        ?: cfgs.minByOrNull { it.imageSize.width * it.imageSize.height }
                     if (pick != null) s.cameraConfig = pick
                     Log.i("SensorLink", "camera config ${s.cameraConfig.imageSize} (of ${cfgs.map { it.imageSize.toString() }})")
                     s.configure(Config(s).apply { focusMode = Config.FocusMode.AUTO; updateMode = Config.UpdateMode.BLOCKING })
@@ -331,8 +338,15 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         overlay.postInvalidate()
 
         tagW.offer {
-            val r = (tagDet ?: TagDetector().also { tagDet = it }).detect(fr, link.marker == "rune")
+            val detector = tagDet ?: TagDetector().also { tagDet = it }
+            val r = detector.detect(fr, link.marker == "rune")
             tags = r
+            tagInfo = detector.info
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastTagLogMs >= 1000) {
+                Log.i("SensorLink", "detect ${tagW.hz}Hz $tagInfo ${if (link.marker == "rune") Rune.info else ""}")
+                lastTagLogMs = now
+            }
             val kk = JSONArray().put(r4(fr.fx / fr.width)).put(r4(fr.fy / fr.height)).put(r4(fr.cx / fr.width)).put(r4(fr.cy / fr.height))
             link.send(JSONObject().put("type", "tags").put("t", fr.t).put("tags", r).put("k", kk))
             colour?.let { scan.offer(it, r, kk) }
@@ -347,6 +361,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         link.send(JSONObject().put("type", "calib").put("t", link.pcTime()))
         Toast.makeText(this, if (camPose == null) "IMU zeroed (AR not tracking yet)" else "IMU zeroed, AR origin set here", Toast.LENGTH_SHORT).show()
     }
+
 
     /** Scan -> (instructions) -> Start -> walk around the stick -> Finish. The PC builds the stick's shape (dashboard stickscan.js). */
     private fun scanButton(b: Button) {
@@ -433,6 +448,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         "IMU: ${imu.status}" + (imu.last?.let { "  %.0f Hz  p %.0f r %.0f y %.0f".format(imu.hz, it.euler[0], it.euler[1], it.euler[2]) } ?: ""),
         arError ?: arText,
         "Hz  cam %.0f  tag %.0f".format(convertW.hz, tagW.hz),
+        tagInfo,
         "tags: " + (tags?.let { a -> (0 until a.length()).joinToString { a.getJSONObject(it).getInt("id").toString() } } ?: ""),
     ) + listOfNotNull(scan.status())
 
@@ -470,7 +486,8 @@ class Overlay(private val a: MainActivity) : View(a) {
             }
         } else c.drawText("starting camera…", 40f, height / 2f, text)
 
-        a.statusLines().forEachIndexed { i, s -> c.drawText(s, 20f, 60f + i * 42f, text) }
+        val top = rootWindowInsets?.systemWindowInsetTop?.toFloat() ?: 80f
+        a.statusLines().forEachIndexed { i, s -> c.drawText(s, 20f, top + 40f + i * 42f, text) }
         postInvalidateDelayed(100) // keep status text fresh even without frames
     }
 }
