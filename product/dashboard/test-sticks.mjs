@@ -36,7 +36,15 @@ assert.equal(elementFromShape(curved(1, .01, t => .06 * Math.sin(2 * Math.PI * t
 assert.equal(elementFromShape(curved(1, .01, t => .06 * Math.sin(2 * Math.PI * t) ** 2)), 'water', 'two same-side bends');
 const twigs = curved(1, .01, t => .06 * Math.sin(2 * Math.PI * t));
 twigs.nodes.push([.15, -.1], [-.15, .1]); twigs.edges.push([12, 33], [20, 34]);
-assert.equal(elementFromShape(twigs), 'thunder', 'two branches override the trunk bend');
+assert.equal(elementFromShape(twigs), 'thunder', 'a large branch overrides the trunk bend');
+{ // thunder is one large branch, not many small ones
+  const one = rod(1, .01, 33); one.nodes.push([.2, .05]); one.edges.push([16, 33]); // 20 cm off the middle
+  assert.equal(elementFromShape(one), 'thunder', 'one large branch');
+  const bushy = rod(1, .01, 33); for (const [k, i] of [[0, 6], [1, 12], [2, 18], [3, 24]]) { bushy.nodes.push([.03 * (k % 2 ? 1 : -1), -.5 + i / 32]); bushy.edges.push([i, 33 + k]); }
+  assert.equal(elementFromShape(bushy), 'fire', 'four 3 cm twigs on a straight stick');
+  const bent = rod(1, .01, 33); bent.nodes.push([.05, .02], [.12, .06]); bent.edges.push([16, 33], [33, 34]); // a branch of two pieces, ~13 cm
+  assert.equal(elementFromShape(bent), 'thunder', 'a branch made of several edges counts whole');
+}
 console.log('stick stats ok');
 
 // ---- server: /sticks round trip (data and rules in a temp folder) ----
