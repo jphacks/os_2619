@@ -183,7 +183,7 @@ function flash(el) {
 
 let screen = null, sticksUi = null;
 const sentPhase = { ph: null, at: 0 }; // the game phase told to the server (phones grey out 枝 in a match)
-const sentHp = { A: { hp: null, max: null, at: -9 }, B: { hp: null, max: null, at: -9 } }; // what the phones were last told (their HP screen)
+const sentHp = { A: { key: '', dist: null, at: -9 }, B: { key: '', dist: null, at: -9 } }; // what the phones were last told (their HP screen)
 function show(name) {
   if (!['connect', 'space', 'game', 'final', 'sticks'].includes(name)) name = 'connect';
   screen = name; cfg.screen = name; save();
@@ -622,9 +622,14 @@ function frame(ts) {
   vsrc.dummy?.render(t, dummyPicture);
   game.step(dt, raw, est, { sensorOnly: screen === 'final' });
   if (game.match.phase !== sentPhase.ph || t - sentPhase.at > 2) { sentPhase.ph = game.match.phase; sentPhase.at = t; hub.send?.({ type: 'match', phase: sentPhase.ph }); }
-  for (const p of Object.values(game.players)) { // each phone's big HP bar (SensorLink's HP screen): on every change, and once a second
-    const h = sentHp[p.slot], hp = Math.max(0, Math.round(p.hp)), max = Math.max(1, Math.round(p.hpMax || 100));
-    if (h.hp !== hp || h.max !== max || t - h.at > 1) { h.hp = hp; h.max = max; h.at = t; hub.send?.({ type: 'hp', slot: p.slot, hp, max }); }
+  for (const p of Object.values(game.players)) { // each phone's HP screen (SensorLink): its HP, the opponent's HP, character and distance
+    const foe = game.players[p.slot === 'A' ? 'B' : 'A'], h = sentHp[p.slot];
+    const m = { type: 'hp', slot: p.slot, hp: Math.max(0, Math.round(p.hp)), max: Math.max(1, Math.round(p.hpMax || 100)),
+      foeSlot: foe.slot, foeHp: Math.max(0, Math.round(foe.hp)), foeMax: Math.max(1, Math.round(foe.hpMax || 100)), foeChara: cfg.chara[foe.slot] ?? 'wizard',
+      dist: +Math.hypot(foe.chest.x - p.chest.x, foe.chest.z - p.chest.z).toFixed(2) }; // m, along the floor
+    const key = `${m.hp}|${m.max}|${m.foeHp}|${m.foeMax}|${m.foeChara}`;
+    // HP or character: at once; the distance: at most 10 times a second, when it moved 5 cm; and once a second anyway
+    if (key !== h.key || t - h.at > 1 || (t - h.at > .1 && Math.abs(m.dist - h.dist) >= .05)) { h.key = key; h.dist = m.dist; h.at = t; hub.send?.(m); }
   }
   if (screen === 'final') finalControls.step(t);
   // MediaPipe runs for the avatars (pose only) and/or the final screen's layers (also the masks and the stick search)
