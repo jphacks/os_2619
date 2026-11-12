@@ -37,8 +37,8 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
     var phase: String { lock.lock(); defer { lock.unlock() }; return _phase }
     /// The PC says this phone's player was hit: light the torch for this many ms. Set before connect; called on the socket's queue.
     var onFlash: ((Int) -> Void)?
-    /// This player's HP and the most it can be (`hp`, dashboard app.js), for the HP screen. The socket's queue.
-    var onHp: ((Double, Double) -> Void)?
+    /// This player's HP, the opponent's and how far it is (`hp`, dashboard app.js), for the HP screen. The socket's queue.
+    var onHp: ((HpInfo) -> Void)?
     /// The game phase changed (setup / countdown / fight / result): the HP screen opens when a match starts. The socket's queue.
     var onPhase: ((String) -> Void)?
     /// The PC's vibration word: charge, win or off (Vibe.swift). Set before connect; called on the socket's queue.
@@ -150,7 +150,12 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
         case "match":
             if let p = k["phase"] as? String { lock.lock(); let was = _phase; _phase = p; lock.unlock(); if p != was { onPhase?(p) } }
         case "hp":
-            if let hp = (k["hp"] as? NSNumber)?.doubleValue, let mx = (k["max"] as? NSNumber)?.doubleValue { onHp?(hp, mx) }
+            if let hp = (k["hp"] as? NSNumber)?.doubleValue, let mx = (k["max"] as? NSNumber)?.doubleValue {
+                let num: (String, Double) -> Double = { key, d in (k[key] as? NSNumber)?.doubleValue ?? d }
+                let fs = k["foeSlot"] as? String
+                onHp?(HpInfo(hp: hp, max: mx, foeSlot: fs == "A" || fs == "B" ? fs : nil, foeChara: (k["foeChara"] as? String) ?? "wizard",
+                             foeHp: num("foeHp", 100), foeMax: num("foeMax", 100), dist: num("dist", 0)))
+            }
         case "flash":
             if let ms = (k["ms"] as? NSNumber)?.intValue { onFlash?(ms) }
         case "sfx":
@@ -226,4 +231,15 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         retry(generation(of: task), error.map { "error: \($0.localizedDescription)" } ?? "closed")
     }
+}
+
+/// The `hp` message: this player's HP and its most; the opponent (foeSlot nil: a PC too old to tell), its HP and character; their distance along the floor, m.
+struct HpInfo: Equatable {
+    var hp = 100.0
+    var max = 100.0
+    var foeSlot: String? = nil
+    var foeChara = "wizard"
+    var foeHp = 100.0
+    var foeMax = 100.0
+    var dist = 0.0
 }

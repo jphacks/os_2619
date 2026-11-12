@@ -27,9 +27,9 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     @Published var found: [ImuDevice] = []
     /// A hit: the whole screen blinks pure #FF0000 (ContentView) for as long as the hit lasts
     @Published var hitRed = 0.0
-    /// The HP screen (ContentView HpScreen): open, and the share of HP left (1 full, 0 none). It opens by the HP button or when a match starts.
+    /// The HP screen (ContentView HpScreen): open, and what it shows (this player's HP, the opponent's, their distance). It opens by the HP button or when a match starts.
     @Published var hpOpen = false
-    @Published var hpLeft = 1.0
+    @Published var hp = HpInfo()
     private var brightnessBefore: CGFloat?
     private var hitRedUntil = Date.distantPast
     private var hitTimer: Timer?
@@ -91,7 +91,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         link.onCharge = { [weak self] el, tier, level in self?.chargeSound.charge(element: el, tier: tier, level: level) }
         link.onSound = { [weak self] voices in self?.gameSound.play(voices) }
         link.onChargeFail = { [weak self] in self?.chargeSound.fail() }
-        link.onHp = { [weak self] hp, mx in DispatchQueue.main.async { self?.hpLeft = max(0, min(1, hp / max(1, mx))) } }
+        link.onHp = { [weak self] info in DispatchQueue.main.async { self?.hp = info } }
         link.onPhase = { [weak self] p in if p == "countdown" || p == "fight" { DispatchQueue.main.async { self?.openHp() } } } // the dashboard started a match
         session.delegate = self
         session.delegateQueue = arQueue
