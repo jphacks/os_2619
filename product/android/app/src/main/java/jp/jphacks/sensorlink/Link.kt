@@ -50,6 +50,8 @@ class Link(private val id: String, private val name: String) {
     @Volatile var onSound: ((org.json.JSONArray) -> Unit)? = null
     /** The charge broke off (`sfx` kind chargeFail): ChargeSound.fail. OkHttp's thread. */
     @Volatile var onChargeFail: (() -> Unit)? = null
+    /** The saved sticks with their models and the one this slot uses (`stickList`, server.mjs), for the Stick menu. OkHttp's thread. */
+    @Volatile var onStickList: ((JSONObject) -> Unit)? = null
     /** The PC's word on this slot's scanned stick (dashboard stickscan.js): "91 cm", "none", or null before it said anything. */
     @Volatile var stick: String? = null; private set
 
@@ -113,6 +115,7 @@ class Link(private val id: String, private val name: String) {
                     if (k.optString("kind") == "charge") onCharge?.invoke(k.optString("element"), k.optString("tier", "s"), k.optDouble("level", 0.0))
                 }
                 "stick" -> stick = k.optJSONObject("model")?.let { "%.0f cm".format(it.optDouble("length") * 100) } ?: "none"
+                "stickList" -> onStickList?.invoke(k)
                 "full" -> status = "PC already has 2 phones"
             }
         }

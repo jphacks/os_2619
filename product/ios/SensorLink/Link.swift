@@ -49,6 +49,8 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
     var onSound: (([[String: Any]]) -> Void)?
     /// The charge broke off (`sfx` kind chargeFail): ChargeSound.fail. The socket's queue.
     var onChargeFail: (() -> Void)?
+    /// The saved sticks with their models and the one this slot uses (`stickList`, server.mjs), for the Stick menu. The socket's queue.
+    var onStickList: (([String: Any]) -> Void)?
     /// The PC's word on this slot's scanned stick (dashboard stickscan.js): "91 cm", "none", or nil before it said anything.
     var stick: String? { lock.lock(); defer { lock.unlock() }; return _stick }
 
@@ -168,6 +170,8 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
         case "stick":
             let len = ((k["model"] as? [String: Any])?["length"] as? NSNumber)?.doubleValue
             lock.lock(); _stick = len.map { String(format: "%.0f cm", $0 * 100) } ?? "none"; lock.unlock()
+        case "stickList":
+            onStickList?(k)
         case "full":
             lock.lock(); _status = "PC already has 2 phones"; lock.unlock()
         default:

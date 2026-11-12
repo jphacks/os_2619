@@ -30,6 +30,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     /// The HP screen (ContentView HpScreen): open, and what it shows (this player's HP, the opponent's, their distance). It opens by the HP button or when a match starts.
     @Published var hpOpen = false
     @Published var hp = HpInfo()
+    @Published private(set) var matchPhase = "setup"
     private var brightnessBefore: CGFloat?
     private var hitRedUntil = Date.distantPast
     private var hitTimer: Timer?
@@ -92,7 +93,12 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         link.onSound = { [weak self] voices in self?.gameSound.play(voices) }
         link.onChargeFail = { [weak self] in self?.chargeSound.fail() }
         link.onHp = { [weak self] info in DispatchQueue.main.async { self?.hp = info } }
-        link.onPhase = { [weak self] p in if p == "countdown" || p == "fight" { DispatchQueue.main.async { self?.openHp() } } } // the dashboard started a match
+        link.onPhase = { [weak self] p in DispatchQueue.main.async {
+            guard let self = self else { return }
+            self.matchPhase = p
+            if p == "countdown" || p == "fight" { self.openHp() }
+            else if p == "setup" { self.closeHp() }
+        } }
         session.delegate = self
         session.delegateQueue = arQueue
     }
@@ -114,7 +120,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         brightnessBefore = UIScreen.main.brightness; UIScreen.main.brightness = 1; hpOpen = true
     }
     func closeHp() {
-        guard hpOpen else { return }
+        guard hpOpen, matchPhase != "countdown", matchPhase != "fight" else { return }
         hpOpen = false; if let b = brightnessBefore { UIScreen.main.brightness = b }; brightnessBefore = nil
     }
 
@@ -293,7 +299,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         prefs.removeObject(forKey: "imu")
     }
 
-    private func showToast(_ s: String) {
+    func showToast(_ s: String) {
         toast = s
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             if self?.toast == s { self?.toast = nil }

@@ -329,7 +329,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     if (needArena) {
       drone.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
       field.update(fdt, Object.fromEntries(Object.values(P).map(p => [p.slot,
-        { body: p.body, lean: p.lean ?? 0, up: p.up, base: p.base, tip: p.tip, scale: p.scale ?? 1, hp: p.hp, hpMax: p.hpMax, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, skel: p.skel, calibAt: p.calibAt, lost: game.match.phase === 'result' && !!game.winner && game.winner !== p }])), fdt);
+        { body: p.body, lean: p.lean ?? 0, up: p.up, base: p.base, tip: p.tip, scale: p.scale ?? 1, hp: p.hp, hpMax: p.hpMax, element: p.element, charging: p.charging, charge: p.charge, lit: ['countdown', 'fight'].includes(game.match.phase), online: p.online || !!p.imu, skel: p.skel, calibAt: p.calibAt, lost: game.match.phase === 'result' && !!game.winner && game.winner !== p }])), fdt);
     }
     fx.step(fdt);
     if (minimap) { const on = S.mode === 'game' && cfg.minimap && !setup; minimap.canvas.style.display = on ? '' : 'none'; if (on) minimap.draw(P, game.shots); }

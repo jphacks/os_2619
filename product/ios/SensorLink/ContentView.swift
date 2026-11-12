@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// Camera picture with the detected tags drawn on top, the status lines, and the three buttons (IMU / Calibrate / LAN).
+/// Camera picture with the detected tags drawn on top, the status lines, and the buttons (IMU / Calibrate / LAN / Scan / Stick / HP).
 struct ContentView: View {
     @EnvironmentObject var model: Model
     @State private var showImu = false
     @State private var showLan = false
     @State private var showScan = false
     @State private var showSaved = false
+    @State private var showSticks = false
 
     var body: some View {
         ZStack {
@@ -35,6 +36,7 @@ struct ContentView: View {
                     Button("Calibrate") { model.calibrate() }
                     Button("LAN") { showLan = true }
                     Button(model.scanning ? "Finish" : "Scan") { showScan = true }
+                    Button("Stick") { showSticks = true }
                     Button("HP") { model.openHp() }
                 }
                 .buttonStyle(.borderedProminent)
@@ -49,6 +51,7 @@ struct ContentView: View {
         .sheet(isPresented: $showImu) { ImuSheet().environmentObject(model) }
         .sheet(isPresented: $showLan) { LanSheet().environmentObject(model) }
         .sheet(isPresented: $showSaved) { SavedScansSheet().environmentObject(model) }
+        .sheet(isPresented: $showSticks) { StickSheet().environmentObject(model) }
         .alert(model.scanning ? "Finish the scan?" : "Scan the stick", isPresented: $showScan) {
             if model.scanning {
                 Button("Send to PC") { model.scanFinish() }
@@ -222,13 +225,15 @@ struct HpScreen: View {
                 }
                 .frame(width: w, height: h, alignment: .topLeading)
                 .scaleEffect(x: 1, y: -1) // mirror the HP display vertically, as Android's HpBar does
-                VStack {
-                    Spacer()
-                    Button("Close") { model.closeHp() }
-                        .foregroundColor(.gray)
-                        .padding(.bottom, 24)
+                if model.matchPhase != "countdown" && model.matchPhase != "fight" {
+                    VStack {
+                        Spacer()
+                        Button("Close") { model.closeHp() }
+                            .foregroundColor(.gray)
+                            .padding(.bottom, 24)
+                    }
+                    .frame(width: w, height: g.size.height)
                 }
-                .frame(width: w, height: g.size.height)
             }
         }
         .ignoresSafeArea()
