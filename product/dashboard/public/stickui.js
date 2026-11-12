@@ -39,8 +39,8 @@ export function createStickScan(hub, onText) {
           // shortcut: runs on the page's thread (~1 s per scan); move to a worker if it stutters a match
           const model = buildStick(s.views);
           hub.send({ type: 'setStick', slot, model });
-          const thick = (r, a = model.around) => (2000 * Math.max(...model.r.slice(r * a, (r + 1) * a))).toFixed(0); // the widest diameter of a ring, mm
-          onText(slot, `作成しました：長さ ${(model.length * 100).toFixed(0)} cm、太さ 根元 ${thick(2)} mm・中ほど ${thick(model.rings >> 1)} mm・先 ${thick(model.rings - 3)} mm（${model.views} 方向から）`);
+          const ends = model.nodes.filter((_, i) => model.edges.filter(e => e.includes(i)).length === 1).length; // grip, tip and one per branch
+          onText(slot, `作成しました：長さ ${(model.length * 100).toFixed(0)} cm、枝分かれ ${ends - 2} 本、太さ 根元 ${(2000 * model.r[0]).toFixed(0)} mm・先 ${(2000 * model.r[1]).toFixed(0)} mm（${model.views} 方向から）`);
         } catch (e) { onText(slot, '作成できませんでした：' + e.message); console.warn(e); }
         delete scans[slot];
       }

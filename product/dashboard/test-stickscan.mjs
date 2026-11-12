@@ -1,8 +1,8 @@
 // Stick scan (public/stickscan.js) on synthetic pictures: a black and white printed floor and a natural 0.9 m stick (brown bark with grey
 // patches, dark streaks, a pale knot) lying on it with its shadow, tip toward
-// -z: tapered (r 15 mm at the grip to 8 mm at the tip), a knot (+6 mm) at 30 %, bowed 25 mm sideways. Many angles, noise, a warm white
-// balance that differs per picture. Checks the cameras from the mahoujin's tag corners, then the model's length, radius, knot, taper, bow
-// and which end is the tip.   node test-stickscan.mjs
+// -z: tapered (r 15 mm at the grip to 8 mm at the tip), a knot (+6 mm) at 30 %, bowed 25 mm sideways, and a 22 cm side branch (a Y)
+// leaving it at 45 %. Many angles, noise, a warm white balance that differs per picture. Checks the cameras from the mahoujin's tag
+// corners, then the model's length, the branch, the thickness at both ends, the bow and which end is the tip.   node test-stickscan.mjs
 process.env.MARKER = 'rune';
 const W = await import('./public/world.js'), { buildStick, viewCamera } = await import('./public/stickscan.js');
 let fails = 0;
@@ -32,6 +32,10 @@ const rTrue = t => .015 - .007 * t + .006 * Math.exp(-(((t - .3) / .03) ** 2));
 const bow = t => .025 * Math.sin(Math.PI * t);
 const SEG = 80, pts = Array.from({ length: SEG + 1 }, (_, i) => { const t = i / SEG, r = rTrue(t); return [A0[0] + AX[0] * t * SL + SIDE[0] * bow(t), r, A0[1] + AX[1] * t * SL + SIDE[1] * bow(t)]; });
 const caps = pts.slice(1).map((b, i) => ({ a: pts[i], b, r: (rTrue(i / SEG) + rTrue((i + 1) / SEG)) / 2 }));
+// the branch: from the stick at 45 %, 45° off it toward -SIDE (away from the bow), r 7 mm
+const BT = .45, BL = .22, BR = .007, B0 = pts[Math.round(BT * SEG)], BD = norm([AX[0] - SIDE[0], AX[1] - SIDE[1]]);
+const B1 = [B0[0] + BD[0] * BL, BR, B0[2] + BD[1] * BL];
+caps.push({ a: [B0[0], BR, B0[2]], b: B1, r: BR });
 function capsule(ro, rd, { a, b, r }) { // ray / capsule (iq): distance or -1
   const ba = b.map((v, i) => v - a[i]), oa = ro.map((v, i) => v - a[i]);
   const baba = dot(ba, ba), bard = dot(ba, rd), baoa = dot(ba, oa), rdoa = dot(rd, oa), oaoa = dot(oa, oa);
@@ -51,10 +55,11 @@ function bark([x, y, z]) {
   if (w < -.6) return [70, 48, 30];
   return [140, 92, 52];
 }
-const BOUND = { a: [A0[0], .012, A0[1]], b: [A1[0], .012, A1[1]], r: .06 }; // around the whole stick: most rays miss it
+const BOUNDS = [{ a: [A0[0], .012, A0[1]], b: [A1[0], .012, A1[1]], r: .06 }, { a: [B0[0], .012, B0[2]], b: [B1[0], .012, B1[2]], r: .04 }]; // around the stick and the branch: most rays miss them
 function hitStick(O, d) {
-  const bb = BOUND.b.map((v, i) => v - BOUND.a[i]), ub = Math.max(0, Math.min(1, dot(O.map((v, i) => v - BOUND.a[i]), bb) / dot(bb, bb)));
-  if (Math.hypot(...O.map((v, i) => v - BOUND.a[i] - ub * bb[i])) > BOUND.r && capsule(O, d, BOUND) < 0) return null; // starts outside, misses
+  const near = B => { const bb = B.b.map((v, i) => v - B.a[i]), ub = Math.max(0, Math.min(1, dot(O.map((v, i) => v - B.a[i]), bb) / dot(bb, bb)));
+    return Math.hypot(...O.map((v, i) => v - B.a[i] - ub * bb[i])) <= B.r || capsule(O, d, B) >= 0; };
+  if (!BOUNDS.some(near)) return null; // starts outside, misses
   let best = Infinity, cap = null;
   for (const c of caps) { const t = capsule(O, d, c); if (t > 0 && t < best) { best = t; cap = c; } }
   if (!cap) return null;
@@ -105,23 +110,22 @@ check(worst < .02, `camera position error from the tags ${(worst * 1000).toFixed
 console.log(`rendered in ${Date.now() - t0} ms`);
 
 const t1 = Date.now(), m = buildStick(views);
-const ringR = r => m.r.slice(r * m.around, (r + 1) * m.around), upR = r => { const a = ringR(r); return (a[0] + a[m.around / 4] + a[3 * m.around / 4]) / 3; }; // top and both sides: what the views see
-const tOf = r => (r + .5) / m.rings;
-console.log(`built in ${Date.now() - t1} ms: length ${m.length} m, ${m.voxels} voxels`);
-console.log('radius mm  ' + Array.from({ length: m.rings }, (_, r) => (upR(r) * 1000).toFixed(0)).join(' '));
-console.log('true   mm  ' + Array.from({ length: m.rings }, (_, r) => (rTrue(tOf(r)) * 1000).toFixed(0)).join(' '));
+console.log(`built in ${Date.now() - t1} ms: length ${m.length} m, ${m.voxels} voxels, ${m.nodes.length} nodes, r ${m.r.map(v => (v * 1000).toFixed(1)).join(' / ')} mm`);
 const LEN = SL + rTrue(0) + rTrue(1); // the capsules' round ends stick out by their radius
 check(Math.abs(m.length - LEN) < .01, `length ${m.length.toFixed(3)} m (true ${LEN.toFixed(3)}, end to end)`);
-const inner = Array.from({ length: m.rings }, (_, r) => r).filter(r => r >= 2 && r < m.rings - 2);
-const err = inner.reduce((s, r) => s + Math.abs(upR(r) - rTrue(tOf(r))), 0) / inner.length;
-const bias = inner.reduce((s, r) => s + upR(r) - rTrue(tOf(r)), 0) / inner.length;
-check(err < .0015, `mean radius error ${(err * 1000).toFixed(2)} mm (< 1.5), bias ${(bias * 1000).toFixed(2)} mm`);
-const at = t => Math.min(m.rings - 1, Math.floor(t * m.rings));
-check(upR(at(.3)) > upR(at(.2)) + .003, `knot at 30 %: ${(upR(at(.3)) * 1000).toFixed(1)} mm vs ${(upR(at(.2)) * 1000).toFixed(1)} at 20 %`);
-check(upR(at(.1)) > upR(at(.9)) + .004, `taper: grip ${(upR(at(.1)) * 1000).toFixed(1)} mm, tip ${(upR(at(.9)) * 1000).toFixed(1)} mm (ring 0 is the grip)`);
-const lat = r => m.c[2 * r], sag = Math.abs(lat(at(.5)) - (lat(at(.05)) + lat(at(.95))) / 2), trueSag = bow(.5) - (bow(.05) + bow(.95)) / 2;
-check(Math.abs(sag - trueSag) < .006, `bow ${(sag * 1000).toFixed(1)} mm (true ${(trueSag * 1000).toFixed(1)})`);
-check(m.r.length === m.rings * m.around && m.c.length === 2 * m.rings && m.r.every(v => v > 0 && v < .1), 'model arrays complete');
+check(m.edges.every(([i, j]) => i !== j && m.nodes[i] && m.nodes[j]) && m.nodes.every(n => n.length === 2 && n.every(Number.isFinite)), 'nodes and edges complete');
+const deg = m.nodes.map((_, i) => m.edges.filter(e => e.includes(i)).length), leaves = deg.flatMap((d, i) => d === 1 ? [i] : []);
+check(leaves.length === 3, `one branch: ${leaves.length} ends (a Y has 3)`);
+// the true branch end in the model's frame: along from the stick's middle, side from the grip -> tip line (+ the side the bow bends to)
+const MID = [(A0[0] + A1[0]) / 2, (A0[1] + A1[1]) / 2], tf = ([x, z]) => [(x - MID[0]) * SIDE[0] + (z - MID[1]) * SIDE[1], (x - MID[0]) * AX[0] + (z - MID[1]) * AX[1]];
+const [bs, ba] = tf([B1[0] + BD[0] * BR, B1[2] + BD[1] * BR]), end = leaves.find(i => i > m.tip);
+const off = end === undefined ? Infinity : Math.min(Math.hypot(m.nodes[end][0] - bs, m.nodes[end][1] - ba), Math.hypot(-m.nodes[end][0] - bs, m.nodes[end][1] - ba));
+check(off < .025, `branch end ${(off * 1000).toFixed(0)} mm from the true one (< 25; side mirrored or not: the frame's side sign is free)`);
+check(Math.abs(m.r[0] - rTrue(.1)) < .004 && Math.abs(m.r[1] - rTrue(.9)) < .004, `thickness grip ${(m.r[0] * 1000).toFixed(1)} mm (true ~${(rTrue(.1) * 1000).toFixed(1)}), tip ${(m.r[1] * 1000).toFixed(1)} mm (true ~${(rTrue(.9) * 1000).toFixed(1)})`);
+check(m.r[0] > m.r[1] && m.nodes[0][1] < m.nodes[m.tip][1], 'grip thicker than the tip: node 0 is the grip, the tip the far end');
+const main = m.nodes.slice(0, m.tip + 1), sideAt = a => main.reduce((b, n) => Math.abs(n[1] - a) < Math.abs(b[1] - a) ? n : b)[0];
+const sag = Math.abs(sideAt(0) - (sideAt(-.4) + sideAt(.4)) / 2), trueSag = bow(.5) - (bow(.5 - .4 / SL) + bow(.5 + .4 / SL)) / 2;
+check(Math.abs(sag - trueSag) < .008, `bow ${(sag * 1000).toFixed(1)} mm (true ${(trueSag * 1000).toFixed(1)})`);
 let threw = false; try { buildStick(views.slice(0, 3)); } catch { threw = true; }
 check(threw, 'too few pictures: an error, not a model');
 console.log(fails ? `${fails} FAILED` : 'all ok');
