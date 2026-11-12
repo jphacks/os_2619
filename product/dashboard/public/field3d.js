@@ -12,6 +12,7 @@ import { makeWizard } from './wizard.js';
 import { makeWizardModel } from './wizardmodel.js';
 import { makeChaobenModel } from './chaobenmodel.js';
 import { stickGeometry, STICK_COLOR } from './stickmesh.js';
+import { parseDesign } from './stickscan.js';
 import { createBattleMotes } from './battle-motes.js';
 import { createShatter } from './ko-shatter.js';
 import { createChaobenStage, THEATER_GLSL } from './chaoben-stage.js';
@@ -94,6 +95,7 @@ void main() { vec4 w = modelMatrix * vec4(position, 1.); vP = w.xz; gl_Position 
 const FLOOR_FS = `
 uniform float uTime, uR; uniform vec2 uX; uniform vec2 uPoly[${MAXP}]; uniform int uN;
 uniform vec4 uP[2]; uniform vec3 uCA, uCB, uBodySun; uniform vec2 uSA, uSB; uniform float uRock, uHpOnly;
+uniform sampler2D uRuneInk; uniform vec4 uRuneImage; uniform vec3 uRunePose; uniform float uRuneScale, uRuneReady;
 varying vec2 vP;
 ${TOD_GLSL}
 ${SAND_GLSL}
@@ -102,6 +104,33 @@ ${THEATER_GLSL}
 float aline(float d, float px) { return 1. - smoothstep(.5 * px, 1.5 * px, d); } // ~1.5 px wide line at distance d (px units)
 float gridAt(vec2 p, float s) { vec2 q = p / s, g = abs(fract(q - .5) - .5) / fwidth(q); return 1. - min(min(g.x, g.y) / 1.2, 1.); }
 float ring(vec2 p, vec2 c, float r, float w) { float d = abs(length(p - c) - r); return 1. - smoothstep(w * .5, w * .5 + fwidth(d) * 1.5, d); }
+// The mahoujin's depth (runeCarve below: 0 the ground, 1 the bottom of a groove) at q, m in the design's frame. The print is
+// sampled at its measured millimetre scale (uRuneScale: mm per texel), with T0 toward -x.
+float runeDepth(vec2 q) {
+  vec2 uv = (uRuneImage.xy + vec2(-q.y, q.x) * 1000. / uRuneScale) / uRuneImage.zw;
+  if (any(lessThan(uv, vec2(0.))) || any(greaterThan(uv, vec2(1.)))) return 0.;
+  return texture2D(uRuneInk, uv).r;
+}
+// Dug into the ground like a crop circle: grooves RUNE_DEPTH deep with walls lit and shaded by the sun, their bottoms the grass
+// pressed flat (paler, laid in a swirl round the centre).
+const float RUNE_DEPTH = .05;
+vec3 engravedRune(vec2 p, vec3 ground) {
+  if (uRuneReady < .5) return ground;
+  float co = cos(uRunePose.z), si = sin(uRunePose.z);
+  mat2 turn = mat2(co, -si, si, co);
+  vec2 q = turn * (p - uRunePose.xy), sun2 = turn * uBodySun.xz;
+  float h = runeDepth(q), e = uRuneScale / 1000.;
+  vec2 g = vec2(runeDepth(q + vec2(e, 0.)) - runeDepth(q - vec2(e, 0.)), runeDepth(q + vec2(0., e)) - runeDepth(q - vec2(0., e))) / (2. * e);
+  if (h < .003 && dot(g, g) < 1e-4) return ground;
+  vec3 n = normalize(vec3(RUNE_DEPTH * g.x, 1., RUNE_DEPTH * g.y)), sun = normalize(vec3(sun2.x, uBodySun.y, sun2.y));
+  float lit = clamp(max(dot(n, sun), 0.) / max(sun.y, .25), .18, 1.7); // against the flat ground's light
+  float bed = smoothstep(.2, .75, h);
+  float a = atan(q.y, q.x) * 40. + length(q) * 55., aw = fwidth(a); // the laid grass: streaks round the centre, faded where they would shimmer
+  float streak = sin(a) * (1. - smoothstep(.8, 2.5, aw));
+  vec3 pressed = mix(ground, vec3(dot(ground, vec3(.3, .59, .11))) * vec3(1.3, 1.2, .78), .5) * (1.18 + .1 * streak);
+  vec3 c = mix(ground, pressed, bed) * lit;
+  return c * (1. - .3 * h * (1. - bed)); // the bottom of the walls in their own shadow
+}
 float sdPoly(vec2 p) { // signed distance to the outline, < 0 inside (any simple polygon, either winding)
   vec2 a = uPoly[uN - 1]; float d = 1e9, s = 1.;
   for (int i = 0; i < ${MAXP}; i++) {
@@ -131,6 +160,7 @@ void main() {
   c += inside * vec3(.07, .08, .11) * gridAt(p, 1.);
   if (uRock > .5) { // the canyon or the courtyard: the same ground as outside the floor, the lines below are painted on it
     c = uRock > 2.5 ? theaterColor(p) : uRock > 1.5 ? lawnColor(p) : sandColor(p);
+    c = engravedRune(p, c);
     // no boundary line on the ground (11/12): the field's outline is not drawn
     // no white centre line or centre circle (11/12)
     c *= 1. - .26 * (ring(p, uSA, .32, .06) + ring(p, uSB, .32, .06)); // a dark edge: a green ring must read on the green lawn too
@@ -154,6 +184,7 @@ void main() {
   }
   // no boundary line (11/12): the field's outline is not drawn, only the floor's lighter inside shows it
   // no centre line or centre circle (11/12)
+  c = engravedRune(p, c);
   // start rings
   c += uCA * ring(p, uSA, .32, .01) * .8;
   c += uCB * ring(p, uSB, .32, .01) * .8;
@@ -170,6 +201,33 @@ void main() {
   float alpha = 1. - smoothstep(uR + 1.4, uR + 5.7, r);
   gl_FragColor = vec4(c, alpha);
 }`;
+
+// The mahoujin's print drawn as grooves in the ground: its 1 mm lines vanish from the camera, so each RUNE_CELL × RUNE_CELL px of
+// the print becomes one texel (darkest wins), lines are widened by RUNE_WIDEN texels each side and the edges blurred into sloping
+// walls. Returns { w, h, depth } (0 the ground .. 255 a groove's bottom).
+const RUNE_CELL = 3, RUNE_WIDEN = 2;
+export function runeCarve(d) {
+  const w = Math.floor(d.w / RUNE_CELL), h = Math.floor(d.h / RUNE_CELL), n = w * h;
+  let a = new Uint8Array(n);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let m = 0;
+    for (let v = 0; v < RUNE_CELL; v++) for (let u = 0; u < RUNE_CELL; u++) { const k = d.ink[(y * RUNE_CELL + v) * d.w + x * RUNE_CELL + u]; if (k > 110) m = Math.max(m, k); } // faint construction lines are left out
+    a[y * w + x] = m;
+  }
+  const pass = (r, f) => { // one separable pass each way: f = Math.max (widen) or a box mean (blur)
+    for (const [len, lines, step, across] of [[w, h, 1, w], [h, w, w, 1]]) {
+      const b = new Uint8Array(n);
+      for (let l = 0; l < lines; l++) for (let i = 0; i < len; i++) {
+        let m = 0, s = 0, c = 0;
+        for (let k = Math.max(0, i - r); k <= Math.min(len - 1, i + r); k++) { const v = a[l * across + k * step]; m = Math.max(m, v); s += v; c++; }
+        b[l * across + i * step] = f === 'max' ? m : Math.round(s / c);
+      }
+      a = b;
+    }
+  };
+  pass(RUNE_WIDEN, 'max'); pass(1, 'mean'); pass(1, 'mean');
+  return { w, h, depth: a };
+}
 
 function makeFloor(uniforms) { // unit quad, scaled to the field on rebuild
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShaderMaterial({
@@ -644,6 +702,8 @@ export function createField(scene, opts = {}) {
     uSA: { value: new THREE.Vector2() }, uSB: { value: new THREE.Vector2() },
     uP: { value: [new THREE.Vector4(), new THREE.Vector4()] },
     uRock: { value: 0 }, uHpOnly: { value: 0 }, uBeatT: { value: 0 }, uFace: { value: null } /* チャオベン劇場's beat clock and face picture (chaoben-stage.js), shared once it is built */, uBodySun: { value: V(0, 1, 1).normalize() },
+    uRuneInk: { value: null }, uRuneImage: { value: new THREE.Vector4(0, 0, 1, 1) },
+    uRunePose: { value: new THREE.Vector3() }, uRuneScale: { value: W.RUNE_SCALE }, uRuneReady: { value: 0 },
     tN: { value: null }, tG: { value: null }, tSh: { value: null }, uSun: { value: V(0, 1, 0) }, uExt: { value: 64 }, // the canyon's, set when it is built
     cN: { value: null }, cSh: { value: null }, cG: { value: null }, cSun: { value: V(0, 1, 0) }, cExt: { value: 64 }, // the courtyard's
     ...todUniforms(), // the clock's sky and light (sky.js): one set, shared with whichever look is shown
@@ -661,6 +721,19 @@ export function createField(scene, opts = {}) {
     return built[name];
   };
   const floor = makeFloor(uniforms);
+  let runeInk = null, disposed = false;
+  if (typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) fetch('mahoujin-design.bin.gz')
+    .then(r => r.ok ? new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer() : Promise.reject(new Error(`HTTP ${r.status}`)))
+    .then(b => {
+      if (disposed) return;
+      const d = parseDesign(new Uint8Array(b)), t = runeCarve(d);
+      runeInk = new THREE.DataTexture(t.depth, t.w, t.h, THREE.RedFormat, THREE.UnsignedByteType);
+      runeInk.magFilter = THREE.LinearFilter; runeInk.minFilter = THREE.LinearMipmapLinearFilter;
+      runeInk.generateMipmaps = true; runeInk.unpackAlignment = 1; runeInk.needsUpdate = true;
+      uniforms.uRuneInk.value = runeInk;
+      uniforms.uRuneImage.value.set(d.cx / RUNE_CELL, d.cy / RUNE_CELL, t.w, t.h); uniforms.uRuneScale.value = W.RUNE_SCALE * RUNE_CELL;
+      uniforms.uRuneReady.value = 1;
+    }).catch(e => console.warn('mahoujin floor', e));
   const debug = new THREE.Group(); debug.visible = false;
   debug.add(new THREE.AxesHelper(.6));
   group.add(floor, debug);
@@ -671,6 +744,20 @@ export function createField(scene, opts = {}) {
     P.forEach((p, i) => uniforms.uPoly.value[i].set(p[0], p[1])); uniforms.uN.value = P.length;
     uniforms.uR.value = e.R; uniforms.uX.value.set(e.minX, e.maxX);
     uniforms.uSA.value.set(W.START.A.pos[0], W.START.A.pos[2]); uniforms.uSB.value.set(W.START.B.pos[0], W.START.B.pos[2]);
+    // Keep the artwork at its printed scale; fit only its floor position and rotation to measured RuneTags.
+    const ids = W.CORNER_IDS.filter(id => W.isRune(id) && W.TAGS[id]?.floor);
+    if (ids.length) {
+      let ex = 0, ez = 0, ox = 0, oz = 0;
+      for (const id of ids) { const e = W.runeTagPos(id), o = W.TAGS[id].pos; ex += e[0]; ez += e[2]; ox += o[0]; oz += o[2]; }
+      ex /= ids.length; ez /= ids.length; ox /= ids.length; oz /= ids.length;
+      let dot = 0, cross = 0;
+      for (const id of ids) {
+        const e = W.runeTagPos(id), o = W.TAGS[id].pos, x = e[0] - ex, z = e[2] - ez, a = o[0] - ox, b = o[2] - oz;
+        dot += x * a + z * b; cross += x * b - z * a;
+      }
+      const angle = Math.atan2(cross, dot), c = Math.cos(angle), s = Math.sin(angle);
+      uniforms.uRunePose.value.set(ox - c * ex + s * ez, oz - s * ex - c * ez, angle);
+    } else uniforms.uRunePose.value.set(0, 0, 0);
     floor.scale.set(2 * (e.R + 6), 2 * (e.R + 6), 1);
     fieldR = e.R; for (const b of Object.values(built)) b.fit(e.R);
     if (arena) { group.remove(arena); disposeTree(arena); debug.remove(debugArena); disposeTree(debugArena); }
@@ -782,7 +869,7 @@ export function createField(scene, opts = {}) {
       showTags = !rock || debug; if (tags) tags.visible = showTags;
       for (const l of letters) l.material.opacity = rock ? .95 : .55; // the gravel is busier than the plain floor
     },
-    dispose() { scene.remove(group); disposeTree(group); for (const b of Object.values(built)) b.dispose(); background.dispose(); },
+    dispose() { disposed = true; scene.remove(group); disposeTree(group); runeInk?.dispose(); for (const b of Object.values(built)) b.dispose(); background.dispose(); },
   };
 }
 
