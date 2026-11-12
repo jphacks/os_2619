@@ -39,6 +39,7 @@ const DEFAULTS = {
   zoom: { fixed: 1, auto: 1, orbit: 1, chaseA: 1, chaseB: 1, top: 1, side: 1 }, // game screen: zoom per camera mode (free: the mouse wheel)
   chara: { A: 'wizard', B: 'wizard' }, // who each player is drawn as (field3d.js CHARAS): the wizard, or the special character チャオベン
   mimic: true, // the avatars copy the poses MediaPipe finds in phone C's picture (screen 3, and the small 3D window of screen 4)
+  crt: true, // screens 3 and 4 look like an old CRT screen: fewer lines, scanlines, a little bleed and glow (stage.js), 30 fps
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen }, zoom: { ...DEFAULTS.zoom, ...saved.zoom }, chara: { ...DEFAULTS.chara, ...saved.chara } };
@@ -180,7 +181,7 @@ gameCtrl.innerHTML = `
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
   <div class="row" id="zoomRow"><label title="今のカメラのズーム。カメラごとに覚える。1 が元の大きさ">ズーム <input id="zoom" type="range" min="0.5" max="3" step="0.05" style="width:130px;vertical-align:middle"> <span id="zoomOut" class="num"></span> 倍</label><button id="zoomReset">1 倍に戻す</button><span class="muted" id="zoomFor" style="font-size:12px"></span></div>
   <h3>表示</h3>
-  <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="debug">デバッグ</button></div>
+  <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="crt" title="試合画面と最終映像を昔のブラウン管テレビ風に：解像度を下げ、走査線と少しのにじみ・光り、30 fps">ブラウン管風</button><button data-tog="debug">デバッグ</button></div>
   <div class="row"><span class="muted" style="font-size:12px">背景</span><span class="seg" id="backdrops"><button data-backdrop="court">中庭</button><button data-backdrop="rock">岩場</button><button data-backdrop="plain">無地</button></span></div>
   <div class="row"><label title="中庭と岩場の空と光の時刻。動かすと影も付け直す"><span class="muted" style="font-size:12px">時刻</span> <input id="tod" type="range" min="0" max="24" step="0.25" style="width:130px;vertical-align:middle"> <span id="todOut" class="num"></span></label><span class="seg" id="todPresets">${PRESETS.map(([n, h]) => `<button data-tod="${h}">${n}</button>`).join('')}</span></div>
   <div class="row"><button id="todAuto" title="空の時刻がひとりでに進む。プリセットを押すと、そこから進む">時刻を自動で進める</button><span class="seg" id="todSpeeds">${TOD_SPEEDS.map(([n, v]) => `<button data-todspeed="${v}" title="1分で${v}時間">${n}</button>`).join('')}</span></div>
@@ -479,6 +480,8 @@ function applyMimic(on) {
 }
 
 // ---- main loop ----
+const CRT_FPS = 30;
+let stageDt = 0; // time since the stage last drew
 let last = performance.now() / 1000, fps = 60, lastSlow = 0, est = PA.estimate(nowS()), dummyDrawnAt = -1e9;
 function frame(ts) {
   requestAnimationFrame(frame);
@@ -507,8 +510,11 @@ function frame(ts) {
   vision.want(mimicOn || layersOn, layersOn);
   if (mimicOn || layersOn) vision.setHints(visionHints());
   applyMimic(mimicOn);
-  if (screen === 'game' || screen === 'final') { stage.render(dt, game, est); updateHud(); }
-  else stage.fx.step(dt); // effects keep their time even when nobody looks
+  stageDt += dt;
+  if (screen === 'game' || screen === 'final') {
+    if (!cfg.crt || stageDt >= 1 / CRT_FPS - .004) { stage.render(stageDt, game, est); stageDt = 0; } // the CRT look draws 30 frames a second
+    updateHud();
+  } else { stage.fx.step(stageDt); stageDt = 0; } // effects keep their time even when nobody looks
   if (screen === 'final') finalControls.updateStatus();
   if (screen === 'space') space.frame(nowS(), est);
   if (screen === 'connect') connect.frame();
