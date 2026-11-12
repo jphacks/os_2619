@@ -223,6 +223,14 @@ wss.on('connection', (ws, req) => {
       if (ms > 0) for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, { type: 'flash', ms });
       return;
     }
+    // the phone's Stick menu: { type: 'stickList' } → every saved stick with its model (newest first) and the one this slot uses;
+    // { type: 'pickStick', id } puts that stick on this phone's slot (as 棒設定 does) and answers with the list again
+    if ((k.type === 'stickList' || k.type === 'pickStick') && role === 'phone' && p && p.ws === ws) {
+      if (k.type === 'pickStick' && typeof k.id === 'string' && byId(k.id) && db.assign[p.slot] !== k.id) {
+        db.assign[p.slot] = k.id; saveDb(); toDashboards(sticksMsg()); sendModel(p.slot); log(`sticks: phone ${p.slot} picked ${k.id}`);
+      }
+      return send(ws, { type: 'stickList', current: db.assign[p.slot], sticks: db.sticks.filter(s => okStick(s.model)).reverse().map(s => { const w = withStats(s); return { id: s.id, name: s.name, element: s.element, stats: w.stats, model: s.model }; }) });
+    }
     if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); if (rec && (k.type === 'imu' || k.type === 'ar')) { rec.out.write(JSON.stringify({ ...k, rx: Date.now() / 1000 }) + '\n'); rec.n++; } }
   });
   ws.on('close', (code, reason) => {
