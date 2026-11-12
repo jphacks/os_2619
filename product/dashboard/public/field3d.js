@@ -794,10 +794,7 @@ export function createMinimap(canvas) {
     b.setLineDash([6 * u, 6 * u]); b.strokeStyle = 'rgba(220,230,255,.35)'; b.lineWidth = 1.5 * u;
     b.beginPath(); b.moveTo(...P(0, e.minZ)); b.lineTo(...P(0, e.maxZ)); b.stroke(); b.setLineDash([]);
     b.restore();
-    for (const s of ['A', 'B']) { // each half in its team colour
-      b.save(); b.beginPath(); b.rect(s === 'A' ? 0 : P(0, 0)[0], 0, s === 'A' ? P(0, 0)[0] : w, h); b.clip();
-      outline(); b.strokeStyle = css(TEAM[s]); b.lineWidth = 1.5 * u; b.lineJoin = 'round'; b.stroke(); b.restore();
-    }
+    outline(); b.strokeStyle = 'rgba(220,230,255,.35)'; b.lineWidth = 1.5 * u; b.lineJoin = 'round'; b.stroke(); // the field's edge, quiet (no red / blue halves: taken out on request)
     for (const s of ['A', 'B']) { b.strokeStyle = css(TEAM[s]); b.globalAlpha = .55; b.lineWidth = 1 * u; b.beginPath(); b.arc(...P(W.START[s].pos[0], W.START[s].pos[2]), .32 * k, 0, 7); b.stroke(); b.globalAlpha = 1; }
     // tags: floor sheets as small turned squares with a tick on the top edge (tag +y), standing ones as a bar along
     // the tag's x axis; id outside, away from the centre

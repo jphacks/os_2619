@@ -275,7 +275,6 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
         return (texture2D(tFrame, p - vec2(0., lh * .25)).rgb + texture2D(tFrame, p + vec2(0., lh * .25)).rgb) * .5; }
       void main() {
         vec3 l0 = line(0.), lm = line(-.7), lp = line(.7), c = l0 * .3 + (lm + lp) * .2 + (line(-1.6) + line(1.6)) * .15; // the beam bleeds along its line
-        c.r = mix(c.r, lp.r, .35); c.b = mix(c.b, lm.b, .35); // the three guns a little out of line
         vec3 g = vec3(0.); float r = 4. / uLines;
         for (int i = 0; i < 8; i++) { float a = float(i) * .7854; g += max(texture2D(tFrame, vUv + vec2(cos(a) * r / uAspect, sin(a) * r)).rgb - .5, 0.); } // only what is bright glows
         gl_FragColor = vec4(c + g * (1.1 / 8.), 1.);
