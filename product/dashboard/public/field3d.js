@@ -388,7 +388,7 @@ function makeAvatar(slot) {
   const hpCanvas = Object.assign(document.createElement('canvas'), { width: 320, height: 104 }), hpCtx = hpCanvas.getContext('2d');
   const hpTex = new THREE.CanvasTexture(hpCanvas); hpTex.colorSpace = THREE.SRGBColorSpace;
   const hpSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: hpTex, depthWrite: false, depthTest: false })); hpSprite.renderOrder = 10;
-  hpSprite.scale.set(1.4, 1.4 * 104 / 320, 1); hpSprite.center.set(.5, -.15); hud.add(hpSprite); // anchored below: stays above the head on screen from any angle
+  hpSprite.scale.set(1.4, 1.4 * 104 / 320, 1); hpSprite.center.set(.5, -.15); hud.add(hpSprite); hpSprite.visible = false; // the HP bar over the head is not shown (the HUD has HP); kept so it can come back // anchored below: stays above the head on screen from any angle
   const facing = V(1, 0, 0); limitSprite(hpSprite, { facing, maxFrac: .18 });
   let hpKey = '';
   fontsReady(() => { hpKey = ''; }, 'OFFLINE 100');
@@ -438,7 +438,7 @@ function makeAvatar(slot) {
       glow.color.copy(online ? onColor : offColor).multiplyScalar(1.4);
       wire.color.copy(online ? onColor : offColor);
     }
-    drawHp(100 * (p.hp ?? 100) / (p.hpMax || 100), online, p.charging ? (p.charge ?? 0) : 0, p.hp ?? 100);
+    if (hpSprite.visible) drawHp(100 * (p.hp ?? 100) / (p.hpMax || 100), online, p.charging ? (p.charge ?? 0) : 0, p.hp ?? 100);
   }
 
   // The pose from phone C's picture (p.skel = { joints, vis }, world joints from avatarpose.js) gives the body its shape only:
