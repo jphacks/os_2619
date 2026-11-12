@@ -113,6 +113,26 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         }
     }
 
+    // the HP screen: the top half one big HP bar (green for what is left, red from the right for what was lost), the bottom half black, at full
+    // brightness while it is up. Opened by the HP button or when the dashboard starts a match; the red hit blink stays over it
+    private val hpBar by lazy { HpBar(this) }
+    private val hpScreen by lazy {
+        FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK); visibility = View.GONE; isClickable = true // takes the touches: the camera's buttons are under it
+            addView(hpBar, FrameLayout.LayoutParams(-1, -1))
+            addView(Button(context).apply { text = "Close"; setOnClickListener { closeHp() } }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = 48 })
+        }
+    }
+    private fun openHp() {
+        if (hpScreen.visibility == View.VISIBLE) return
+        hpScreen.visibility = View.VISIBLE
+        window.attributes = window.attributes.apply { screenBrightness = 1f } // as bright as it goes
+    }
+    private fun closeHp() {
+        hpScreen.visibility = View.GONE
+        window.attributes = window.attributes.apply { screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
+    }
+
     private val convertW = Worker("convert")
     private val tagW = Worker("tags")
     private var tagDet: TagDetector? = null
@@ -138,6 +158,8 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         link.onSound = { gameSound.play(it) }
         link.onChargeFail = { chargeSound.fail() }
         hitSound; chargeSound; gameSound // load the sounds now, so the first hit / charge is not silent
+        link.onHp = { hp, mx -> runOnUiThread { hpBar.share = (hp / maxOf(1.0, mx)).coerceIn(0.0, 1.0).toFloat(); hpBar.invalidate() } }
+        link.onPhase = { p -> if (p == "countdown" || p == "fight") runOnUiThread { openHp() } } // the dashboard started a match
         link.onFlash = { ms ->
             torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + ms) // another hit can only make it last longer
             if (ms > 0) { hitSound.play(); vibe.hit() }
@@ -174,13 +196,15 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             btn("Calibrate") { calibrate() }
             btn("LAN") { lanDialog() }
             btn("Scan") { scanButton(it) }
+            btn("HP") { openHp() }
         }
         setContentView(FrameLayout(this).apply {
             // ARCore needs a GL context to run; the picture itself is drawn by Overlay from the CPU image
             addView(gl, FrameLayout.LayoutParams(1, 1))
             addView(this@MainActivity.overlay, FrameLayout.LayoutParams(-1, -1))
             addView(bar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-            addView(hitRed, FrameLayout.LayoutParams(-1, -1)) // last: over everything, buttons too
+            addView(hpScreen, FrameLayout.LayoutParams(-1, -1))
+            addView(hitRed, FrameLayout.LayoutParams(-1, -1)) // last: over everything, buttons and the HP screen too
         })
 
         val perms = mutableListOf(Manifest.permission.CAMERA)
@@ -489,5 +513,18 @@ class Overlay(private val a: MainActivity) : View(a) {
         val top = rootWindowInsets?.systemWindowInsetTop?.toFloat() ?: 80f
         a.statusLines().forEachIndexed { i, s -> c.drawText(s, 20f, top + 40f + i * 42f, text) }
         postInvalidateDelayed(100) // keep status text fresh even without frames
+    }
+}
+
+/** The HP screen's bar: the top half, pure green for the share of HP left (`share`, 0..1) and pure red from the right for what was lost; the bottom half black. */
+class HpBar(a: Activity) : View(a) {
+    var share = 1f
+    private val green = Paint().apply { color = 0xFF00FF00.toInt() }
+    private val red = Paint().apply { color = 0xFFFF0000.toInt() }
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat(); val h = height / 2f; val g = w * share
+        c.drawColor(Color.BLACK)
+        c.drawRect(0f, 0f, g, h, green)
+        c.drawRect(g, 0f, w, h, red)
     }
 }

@@ -161,7 +161,10 @@ const koShow = createKoShow(hud, {
     for (const [k, dy] of [[1, 0], [.6, .7]]) stage.fx.hit(el, at.clone().setY(at.y + dy), k, { tier: 'l', target: at.clone() });
     stage.drone.event('hit', { target: loser.slot, pos: at, power: 1 }); stage.state.shake = 2.2; stage.field.cheer();
   },
-  sound(kind) { const w = game.winner; if (kind === 'ko' || kind === 'burst') sfx?.hit(w?.element ?? 'thunder', 0, 1, 'l'); },
+  sound(kind) {
+    const w = game.winner; if (kind === 'ko' || kind === 'burst') sfx?.hit(w?.element ?? 'thunder', 0, 1, 'l');
+    if (kind === 'result' && w) { sfx?.play('win'); if (!sfx?.muted) hub.send?.({ type: 'sfx', slot: w.slot, voices: [{ file: 'win', gain: 1, rate: 1 }] }); } // the fanfare, here and on the winner's phone (none on a draw)
+  },
 });
 let koPhase = null;
 function watchEnd() { // the show starts when the game says the match is over, and is put away when a new one (or setup) begins
@@ -180,6 +183,7 @@ function flash(el) {
 
 let screen = null, sticksUi = null;
 const sentPhase = { ph: null, at: 0 }; // the game phase told to the server (phones grey out 枝 in a match)
+const sentHp = { A: { hp: null, max: null, at: -9 }, B: { hp: null, max: null, at: -9 } }; // what the phones were last told (their HP screen)
 function show(name) {
   if (!['connect', 'space', 'game', 'final', 'sticks'].includes(name)) name = 'connect';
   screen = name; cfg.screen = name; save();
@@ -230,6 +234,8 @@ ${['s', 'm', 'l'].map(t => `<label title="${TIER_JA[t]}の弾の速さ。1 が�
     <label>小のダメージ <input data-rule="dmg.s" type="number" min="0" max="100" step="1"></label>
     <label>中のダメージ <input data-rule="dmg.m" type="number" min="0" max="100" step="1"></label>
     <label>大のダメージ <input data-rule="dmg.l" type="number" min="0" max="100" step="1"></label>
+    <label title="棒を水平からこの角度まで上下に傾けても、ガードになる">ガードの傾きの許容 <input data-rule="guardLevel" type="number" min="5" max="85" step="1"> °</label>
+    <label title="棒が体の左右の向きからこの角度まで前後を向いても、ガードになる">ガードの向きの許容 <input data-rule="guardSide" type="number" min="5" max="85" step="1"> °</label>
     <label title="ガードで跳ね返した小が当たったときのダメージ。小のダメージ × この倍率">反射のダメージ倍率 <input data-rule="reflectMul" type="number" min="0" max="10" step="0.1"> 倍</label>
     <label>小の連打の間隔 <input data-rule="rapid" type="number" min="0" max="3" step="0.05"> 秒</label>
     <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">小の玉の大きさ <input data-rule="size.s" type="number" min="0.2" max="4" step="0.1"> 倍</label>
@@ -496,7 +502,7 @@ function updateHud() {
     // the try-out button fills it as well, as far as a real charge of that length would (game.js effects())
     const { t1, t2 } = cfg.rules, pv = p.preview ? performance.now() / 1000 - p.preview : null, level = pv !== null ? Math.min(1, pv / t2) : p.charging ? p.charge : 0;
     h.gauge.set(level, pv !== null ? (pv < t1 ? 's' : pv < t2 ? 'm' : 'l') : p.charging ? p.tier : null);
-    setText(h.el.querySelector('.name small'), p.element ?? ''); // the element only, in English (fire / thunder / water / wind); the stick's name and stars are not shown
+    // the name line is only the slot letter (A / B): no element, no stick name or stars (11/12)
   }
   const showTimer = m.phase === 'fight' || m.phase === 'result';
   setText(hud.querySelector('.timer'), showTimer ? String(Math.ceil(m.left)) : '');
@@ -616,6 +622,10 @@ function frame(ts) {
   vsrc.dummy?.render(t, dummyPicture);
   game.step(dt, raw, est, { sensorOnly: screen === 'final' });
   if (game.match.phase !== sentPhase.ph || t - sentPhase.at > 2) { sentPhase.ph = game.match.phase; sentPhase.at = t; hub.send?.({ type: 'match', phase: sentPhase.ph }); }
+  for (const p of Object.values(game.players)) { // each phone's big HP bar (SensorLink's HP screen): on every change, and once a second
+    const h = sentHp[p.slot], hp = Math.max(0, Math.round(p.hp)), max = Math.max(1, Math.round(p.hpMax || 100));
+    if (h.hp !== hp || h.max !== max || t - h.at > 1) { h.hp = hp; h.max = max; h.at = t; hub.send?.({ type: 'hp', slot: p.slot, hp, max }); }
+  }
   if (screen === 'final') finalControls.step(t);
   // MediaPipe runs for the avatars (pose only) and/or the final screen's layers (also the masks and the stick search)
   const live = !!(video.videoWidth || video.__dummy);

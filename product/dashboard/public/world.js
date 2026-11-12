@@ -21,9 +21,17 @@ export const ARENA = { half: 4 };   // 8 m x 8 m
 export const CHEST_H = 1.3;          // chest phone / chest tag height, m
 export const START = { A: { pos: [-1.2, 0, 0], yaw: 0 }, B: { pos: [1.2, 0, 0], yaw: Math.PI } }; // yaw 0 = facing +x
 export const PHONE_TAG_SIZE = 0.1;   // old app only: the one size typed into the phone; tags with `sz` (new app) are already metric
-// hand: where the stick hand rests (body frame, from the chest), the stick held forward and a little down. shoulder: the stick arm's shoulder.
-// The hand is not fixed there: handAt() swings the arm from the shoulder with the stick, so a swing moves the whole arm, not just the stick.
-export const STICK = { len: 1.0, axis: [0, 1, 0], up: [0, 0, 1], hand: { fwd: 0.3, right: 0.2, up: -0.3 }, shoulder: { fwd: -0.1, right: 0.21, up: 0.07 }, lead: 0.6 };
+// shoulder: the stick arm's shoulder (body frame, from the chest); upper / fore: its upper arm and shoulder-less forearm to the fist, m.
+// armAt() poses that arm from the stick's direction, so a swing moves the whole arm, not just the stick. hand: no longer used by the game
+// (kept for old callers): about where armAt puts the fist with the stick held forward and down.
+export const STICK = { len: 1.0, axis: [0, 1, 0], up: [0, 0, 1], hand: { fwd: 0.3, right: 0.2, up: -0.3 }, shoulder: { fwd: -0.1, right: 0.21, up: 0.07 }, upper: 0.3, fore: 0.27 };
+// The stick arm's angles (degrees). h: the stick's heading in the body's level plane, 0 = the body's right, 90 = forward, 180 = left;
+// v: its angle from straight down, 0 = down, 90 = level, 180 = up.
+//   level: up to h = sideH the upper arm follows the stick, the elbow straight; past it the upper arm eases back to foldH while the forearm
+//          keeps following, so by h = 180 the elbow is out to the right and the fist in front of the body.
+//   up / down: up to v = liftV the upper arm follows, the elbow straight; past it the upper arm rises at liftRate and the forearm follows the stick.
+//   behind the body the arm stops at backH; a stick near upright has no heading to read, so the arm leans to the front (vertH: how far from upright).
+export const ARM = { sideH: 80, foldH: 55, liftV: 45, liftRate: .5, backH: -60, vertH: .3 };
 
 // Tag layouts. Pick one with ?layout= (browser) or LAYOUT= (node); default 'map4'.
 // - map4:  four sheets (ids 0-3, any size listed here) lying anywhere on the floor, roughly the corners of the play area.
@@ -227,16 +235,36 @@ export const CHARA_SCALE = { wizard: 1 / 3, chaoben: 1 / 2 };
 export const STICK_SCALE = CHARA_SCALE.chaoben;
 
 /**
- * The stick hand (world) for body pose `body` and stick direction `dir` (world, unit): the arm hangs from the shoulder at its resting reach,
- * pointing between the stick's direction and the resting hand's (STICK.lead: how much the stick leads). Stick forward: the hand a little below
- * the shoulder, in front; stick up: forward and up; stick down: down by the hip. A swing turns the arm about the shoulder.
+ * Each character's stick arm (body frame, m, at a person's size: game.js shrinks it with the rest): the right shoulder from the chest's sensor
+ * point, the upper arm, and the forearm to the fist's centre. Measured off the figures standing (chaobenmodel.js / wizardmodel.js pose.stickArm,
+ * a 1.3 m chest): the figures turn their own arm bones to armAt's angles, so with these the game's stick base is the drawn fist.
+ * person: no figure (the old stand-in arm; the dummy room and the phones' estimate use it).
  */
-export function handAt(body, dir) {
-  const { hand: h, shoulder: s, lead } = STICK, rest = [h.fwd - s.fwd, h.up - s.up, h.right - s.right], reach = Math.hypot(...rest);
-  const r = app3(body.R, rest).map(v => v / reach), a = r.map((v, i) => lead * dir[i] + (1 - lead) * v), n = Math.hypot(...a);
-  const sh = apply(body, [s.fwd, s.up, s.right]);
-  return n < 1e-6 ? apply(body, [h.fwd, h.up, h.right]) : sh.map((v, i) => v + a[i] / n * reach);
+export const ARM_OF = {
+  person: { shoulder: STICK.shoulder, upper: STICK.upper, fore: STICK.fore },
+  wizard: { shoulder: { fwd: -0.034, up: -0.293, right: 0.187 }, upper: 0.194, fore: 0.300 },
+  chaoben: { shoulder: { fwd: -0.037, up: 0.017, right: 0.203 }, upper: 0.201, fore: 0.349 }, // fore: to the fist's hole (the Grip marker)
+};
+/**
+ * The stick arm (world) for body pose `body`, stick direction `dir` (world, unit) and a character's arm (ARM_OF), as a person holds it (ARM):
+ * { shoulder, elbow, hand, upper, fore }: points, and the upper arm's / forearm's directions. The hand is where the fist holds the stick (the game's stick base).
+ */
+export function armAt(body, dir, arm = ARM_OF.person) {
+  const D = Math.PI / 180, d = app3(tr3(body.R), dir), flat = Math.hypot(d[0], d[2]); // body frame: x forward, y up, z right
+  const v = Math.acos(Math.max(-1, Math.min(1, -d[1]))) / D;
+  let h = Math.atan2(d[0], d[2]) / D; // 0 right, 90 forward, 180 / -180 left, -90 back
+  if (h < ARM.backH) h = h < (ARM.backH - 180) / 2 ? 180 : ARM.backH; // behind: back-left reads as left, back-right stops at backH
+  const k = Math.min(1, flat / ARM.vertH), sk = k * k * (3 - 2 * k); h = 90 + (h - 90) * sk; // near upright: toward the front
+  const fold = Math.max(0, Math.min(1, (h - ARM.sideH) / (180 - ARM.sideH)));
+  const hu = h <= ARM.sideH ? h : ARM.sideH + (ARM.foldH - ARM.sideH) * fold; // the upper arm's heading
+  const vu = v <= ARM.liftV ? v : ARM.liftV + (v - ARM.liftV) * ARM.liftRate; // its angle from down
+  const at = (hh, vv) => { const s = Math.sin(vv * D); return [s * Math.sin(hh * D), -Math.cos(vv * D), s * Math.cos(hh * D)]; };
+  const { shoulder: s, upper, fore } = arm ?? ARM_OF.person, a = at(hu, vu), b = at(h, v);
+  const sh = [s.fwd, s.up, s.right], el = sh.map((x, i) => x + a[i] * upper), hd = el.map((x, i) => x + b[i] * fore);
+  return { shoulder: apply(body, sh), elbow: apply(body, el), hand: apply(body, hd), upper: app3(body.R, a), fore: app3(body.R, b) };
 }
+/** The stick hand (world): armAt's fist. */
+export const handAt = (body, dir, arm) => armAt(body, dir, arm).hand;
 
 /** Body frame of a standing player: x forward, y up, z right. */
 export function bodyPose(pos, yaw, h = CHEST_H) {

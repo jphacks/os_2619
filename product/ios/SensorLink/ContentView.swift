@@ -35,6 +35,7 @@ struct ContentView: View {
                     Button("Calibrate") { model.calibrate() }
                     Button("LAN") { showLan = true }
                     Button(model.scanning ? "Finish" : "Scan") { showScan = true }
+                    Button("HP") { model.openHp() }
                 }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity)
@@ -42,7 +43,8 @@ struct ContentView: View {
                 .background(Color.black.opacity(0.6))
             }
             .padding(.horizontal, 8)
-            Color(red: 1, green: 0, blue: 0).opacity(model.hitRed).ignoresSafeArea().allowsHitTesting(false) // a hit: pure #FF0000 blinking, over everything, buttons too
+            if model.hpOpen { HpScreen().environmentObject(model) }
+            Color(red: 1, green: 0, blue: 0).opacity(model.hitRed).ignoresSafeArea().allowsHitTesting(false) // a hit: pure #FF0000 blinking, over everything, buttons too (the HP screen as well)
         }
         .sheet(isPresented: $showImu) { ImuSheet().environmentObject(model) }
         .sheet(isPresented: $showLan) { LanSheet().environmentObject(model) }
@@ -192,5 +194,30 @@ struct LanSheet: View {
             .navigationBarItems(trailing: Button("Close") { dismiss() })
         }
         .onAppear { host = model.host; port = String(model.port) }
+    }
+}
+
+/// The HP screen: the top half one big HP bar, pure green for what is left and pure red from the right for what was lost (all red at 0);
+/// the bottom half black. The screen is at full brightness while it is up (Model.openHp). A small Close at the bottom.
+struct HpScreen: View {
+    @EnvironmentObject var model: Model
+    var body: some View {
+        GeometryReader { g in
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    Color(red: 0, green: 1, blue: 0).frame(width: g.size.width * model.hpLeft)
+                    Color(red: 1, green: 0, blue: 0)
+                }
+                .frame(height: g.size.height / 2)
+                .animation(.easeOut(duration: 0.25), value: model.hpLeft)
+                ZStack(alignment: .bottom) {
+                    Color.black
+                    Button("Close") { model.closeHp() }
+                        .foregroundColor(.gray)
+                        .padding(.bottom, 24)
+                }
+            }
+        }
+        .ignoresSafeArea()
     }
 }

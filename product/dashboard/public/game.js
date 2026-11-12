@@ -6,7 +6,7 @@
 //   Charge (circle the stick) → charging; Swing releases it: under t1 s 小, t1..t2 s 中, t2 s and more 大 (special move)
 //   the player may walk while charging; a charging player cannot guard
 //   every tier is a projectile along the aim: dodging is just moving out of its way (no invulnerable dodge)
-//   guard (10/18): the stick held still, lying sideways (within 30° of horizontal and 30° of the body's left-right line), for guardHold s (not while charging, not right after a swing), or the guard button: a 小 that
+//   guard (10/18): the stick held still, lying sideways (within RULES.guardLevel ° of horizontal and guardSide ° of the body's left-right line), for guardHold s (not while charging, not right after a swing), or the guard button: a 小 that
 //   reaches the guard bounces back at its shooter; 中 and 大 go through it (full damage)
 //   aim 'motion' (default): where the stick tip was travelling just before it stopped (GAME_DESIGN.md); 'stick': where the
 //   stick points; 'eye': from the eyes through the tip. Buttons / keys (no swing) fall back to 'stick'.
@@ -29,7 +29,7 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷', water: '水', wind: '�
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: .7, t2: 2, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: { s: 1, m: 1, l: 1 } }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × per tier (an old single number counts for all three)
+export const RULES = { t1: .7, t2: 2, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, guardLevel: 40, guardSide: 40, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: { s: 1, m: 1, l: 1 } }; // guardLevel / guardSide: ° a guarding stick may tilt from horizontal / point away from the body's left-right line (11/12: 30 → 40, looser); reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × per tier (an old single number counts for all three)
 /** The ball-speed rule as { s, m, l }: an older saved single number (one speed for every tier) counts for all three. */
 export const speedRule = v => typeof v === 'object' && v ? { s: +v.s || 1, m: +v.m || 1, l: +v.l || 1 } : { s: +v || 1, m: +v || 1, l: +v || 1 };
 // how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
@@ -90,6 +90,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       p.body = W.bodyPose(dummy.chest, dummy.yaw, dummy.chest[1]);
       p.chest.fromArray(dummy.chest); p.base.fromArray(dummy.base);
       p.tip.fromArray(dummy.tip); p.dir.fromArray(dummy.dir);
+      ownHand(p, p.base.distanceTo(p.tip));
       p.src = 'dummy'; p.stickSrc = 'ダミー映像と同じ座標';
       return shrink(p);
     }
@@ -110,8 +111,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       p.up = v3(W.app3(R, inBody(rotQ(p.imu.q, W.STICK.up))));
       p.stickSrc = 'IMU';
     } else { p.dir.copy(v3(W.app3(p.body.R, [1, 0, 0]))); p.stickSrc = 'IMU なし（前向き）'; }
-    p.base.copy(v3(W.handAt(p.body, p.dir.toArray()))); // the hand swings with the stick, the arm turning at the shoulder
-    if (T && cfg.useTruth) { p.base.copy(v3(T.base)); p.dir.copy(v3(T.dir)); }
+    p.base.copy(v3(W.handAt(p.body, p.dir.toArray(), armOf(p)))); // the hand swings with the stick, the arm turning at the shoulder: this character's arm (the drawn fist)
+    if (T && cfg.useTruth) { p.base.copy(v3(T.base)); p.dir.copy(v3(T.dir)); ownHand(p); }
     p.tip.copy(p.base).addScaledVector(p.dir, cfg.stickLen?.[p.slot] ?? W.STICK.len);
     dodgeOffset(p);
     shrink(p);
@@ -132,6 +133,13 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   /** The player's character is smaller than a person (W.CHARA_SCALE, cfg.chara): the chest and the hand are drawn in toward the floor
    *  under the chest by its scale, the stick shortened to W.STICK_SCALE, so hits, shots and the drawn figure all agree. p.body stays the person's (full size): field3d.js poses the figure
    *  from it and shrinks the drawing by p.scale about the same point. The stick keeps its direction. */
+  const armOf = p => W.ARM_OF[cfg.chara?.[p.slot]] ?? W.ARM_OF.person;
+  /** With a character chosen, the dummy room's / a script's stick base is replaced by that character's fist (its own arm, as drawn); len: keep the tip that far out. */
+  function ownHand(p, len = null) {
+    if (!W.ARM_OF[cfg.chara?.[p.slot]]) return;
+    p.base.copy(v3(W.handAt(p.body, p.dir.toArray(), armOf(p))));
+    if (len != null) p.tip.copy(p.base).addScaledVector(p.dir, len);
+  }
   function shrink(p) {
     const k = p.scale = W.CHARA_SCALE[cfg.chara?.[p.slot]] ?? 1;
     if (k === 1) return;
@@ -158,10 +166,10 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   // guardHold s; not while charging, not right after a swing (the stop is the swing's shot). Not frame to frame: sensor packets and frames tick at different rates, so a still stick's dir moves
   // in 1-2° steps that read as tens of °/s over one frame (a held stick failed to guard). 7° / 0.3 s: above a still
   // stick's jitter, below a ±17° 1.5 Hz wobble even at its turning point (9.7°)
-  const GUARD_STILL = 7 * Math.PI / 180, GUARD_LEVEL = Math.PI / 6, GUARD_SIDE = Math.PI / 6, AFTER_SWING = .8;
-  // 11/12: sideways = within GUARD_LEVEL (30°) of horizontal, and on the level within GUARD_SIDE (30°) of the body's left-right line (pointing more to the front or back is not sideways)
+  const GUARD_STILL = 7 * Math.PI / 180, AFTER_SWING = .8, D = Math.PI / 180;
+  // 11/12: sideways = within rules().guardLevel (40°) of horizontal, and on the level within rules().guardSide (40°) of the body's left-right line (pointing more to the front or back is not sideways)
   const sideways = p => { const f = W.app3(p.body.R, [1, 0, 0]), fh = Math.hypot(f[0], f[2]) || 1, dh = Math.hypot(p.dir.x, p.dir.z) || 1;
-    return Math.abs(p.dir.y) < Math.sin(GUARD_LEVEL) && Math.abs((p.dir.x * f[0] + p.dir.z * f[2]) / (fh * dh)) < Math.sin(GUARD_SIDE); };
+    return Math.abs(p.dir.y) < Math.sin((rules().guardLevel ?? RULES.guardLevel) * D) && Math.abs((p.dir.x * f[0] + p.dir.z * f[2]) / (fh * dh)) < Math.sin((rules().guardSide ?? RULES.guardSide) * D); };
   function stepGuard() {
     for (const p of Object.values(players)) {
       const t = now(), win = rules().guardHold, h = p.guardHist ??= [];

@@ -3,6 +3,7 @@
 // the targets, with no parent chain (the bones hang flat under the group). So an arm can stretch to keep the hand on the sensors' stick, and the skirt can squash.
 // Only looks: the game knows nothing of it.
 import * as THREE from 'three';
+import { solveArm } from './armik.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const SIZE = 2.65;              // the model's scale per metre of the rig's leg: its 1 m (soles to hat tip) stands about as tall as the human rig did, the shoulders near the sensors' hand
@@ -11,7 +12,6 @@ const LOW = { hip: .15, neck: .4, lean: .05, back: -.02, frontFoot: .12, backFoo
 const GRIP = .04, HANDS_APART = .075; // the fist's centre past the wrist; between the two fists on the stick (model's units)
 const PART = { skin: 0xf0bfa0, boot: 0x6e3a1e, face: 0x0d0a09 }; // what is not the player's colour, as in the artist's picture
 const EYE = { x: .038, y: .655, off: .0045, yaw: .5, w: .0135, h: .0225, d: .006, color: 0xfff1c0 }; // on the face (the model's own eyes are texture only). off: the middle stands this far off the face, whose two sides differ by 1 cm: one eye would sink into it
-const POLE = { R: V(-.25, -1, .55).normalize(), L: V(-.25, -1, -.55).normalize() }; // the elbows point down and out
 
 const clamp01 = v => Math.max(0, Math.min(1, v));
 const smooth = v => { const t = clamp01(v); return t * t * (3 - 2 * t); };
@@ -77,13 +77,13 @@ export function makeWizardModel(root, cloth, scene) {
     const up1 = upper.dir.clone().addScaledVector(back, 0).normalize(), upP = back.clone().addScaledVector(up1, -back.dot(up1)).normalize();
     const fo1 = fore.dir.clone(), foP = back.clone().addScaledVector(fo1, -back.dot(fo1)).normalize();
     const handAxis = V(1, 0, 0).addScaledVector(fo1, -fo1.x).normalize(); // the fist's hole, at rest along the model's front-back (the thumb forward)
-    return { s, side, upper, fore, up1, upP, fo1, foP, handAxis, shoulder: V(), elbow: V(), wrist: V(), hand: V(), dir: V(), poleU: V(), poleF: V(), rest: V() };
+    return { s, side, upper, fore, up1, upP, fo1, foP, handAxis, root: V(), shoulder: V(), elbow: V(), wrist: V(), hand: V(), dir: V(), pole: V(), poleU: V(), poleF: V(), rest: V(), ik: {} };
   });
   const LEGS = [['L', 0], ['R', 1]].map(([s, i]) => ({ s, i, thigh: seg(s + '_Thigh', s + '_Calf'), calf: seg(s + '_Calf', s + '_Foot'), hipAt: V(), knee: V(), foot: V() }));
   const THIGH_OFF = { L: al(V().subVectors(J.L_Thigh, J.Hip)), R: al(V().subVectors(J.R_Thigh, J.Hip)) };
 
   const hip = V(), neck = V(), spine = V(), t = V(), tmp = V(), tmp2 = V(), head = V(), pole = V(), side = V();
-  const pose = wiz.userData.pose = { low: 0, k: 1, floor: 0, knees: LEGS.map(l => l.knee), feet: LEGS.map(l => l.foot), hands: ARMS.map(a => a.hand), head, eyes: eyes.map(e => V().setFromMatrixPosition(e.rest)) };
+  const pose = wiz.userData.pose = { stickArm: { shoulder: V(), upper: 0, fore: 0 }, low: 0, k: 1, floor: 0, knees: LEGS.map(l => l.knee), feet: LEGS.map(l => l.foot), hands: ARMS.map(a => a.hand), head, eyes: eyes.map(e => V().setFromMatrixPosition(e.rest)) };
 
   /** bone's transform: rest point p -> at + R St (s Q) (p - joint); dir / f: stretch by f along dir (root axes, before R). */
   function setBone(name, at, q, s, dir = null, f = 1) {
@@ -103,11 +103,13 @@ export function makeWizardModel(root, cloth, scene) {
     return _a;
   }
 
+  const _fw = V(), _uw = V(), _ow = V(); let lastT = null;
   return function update(r) {
+    const dt = lastT == null ? 0 : Math.min(.1, Math.max(0, (r.time ?? 0) - lastT)); lastT = r.time ?? 0; // for the elbow's easing (armik.js)
     const legs = r.legs, s = r.leg * SIZE, footY = Math.min(legs[0].foot.y, legs[1].foot.y), floor = footY - .04;
     const low = Math.max(smooth((.92 - (r.hip.y - footY) / r.leg) / .47), smooth(r.down ?? 0)); // how far down the rig's hips have come: 0 standing, 1 kneeling; r.down: the same kneel for the loser
     const breath = .004 * s * Math.sin((r.time ?? 0) * 2.1);
-    pose.low = low; pose.k = s; pose.floor = floor;
+    pose.low = low; pose.k = s; pose.floor = floor; pose.handsApart = HANDS_APART * s; // field3d.js: how far behind the stick hand the other one holds it
     const hipH = J.Hip.y + (LOW.hip - J.Hip.y) * low, neckH = J.Neck.y + (LOW.neck - J.Neck.y) * low;
     hip.set(BODY_X + LOW.back * low * s, floor + hipH * s, 0);
     neck.set(BODY_X + LOW.lean * low * s, floor + neckH * s + breath, 0);
@@ -140,25 +142,28 @@ export function makeWizardModel(root, cloth, scene) {
     const st = r.stick, g = st ? st.grip : 0;
     for (const a of ARMS) {
       const rigS = a.s === 'R' ? r.sR : r.sL, rigH = a.s === 'R' ? r.hR : r.hL, onStick = st && st.hand === a.s;
-      setBone(a.s + '_Clavicle', tmp.copy(al(V().subVectors(J[a.s + '_Clavicle'], J.Neck))).multiplyScalar(s).applyQuaternion(R).add(neck), R, s);
+      a.root.copy(al(V().subVectors(J[a.s + '_Clavicle'], J.Neck))).multiplyScalar(s).applyQuaternion(R).add(neck); // the clavicle's root
       a.shoulder.copy(al(V().subVectors(J[a.s + '_Upperarm'], J.Neck))).multiplyScalar(s).applyQuaternion(R).add(neck);
       a.rest.copy(a.shoulder).add(tmp.subVectors(rigH, rigS).multiplyScalar(s / 1.95)); // where the free hand would be: the rig's reach, at this body's size
       a.rest.z += a.side * .06 * low * s; a.rest.y = Math.max(a.rest.y, floor + (.2 + .1 * low) * s); // over the skirt, which spreads when kneeling
       if (onStick) a.hand.copy(st.base);
       else if (st && g > 0) a.hand.copy(a.rest).lerp(tmp.copy(st.base).addScaledVector(st.dir, -HANDS_APART * s), g);
       else a.hand.copy(a.rest);
-      const w = onStick ? 1 : g;
-      // the fist grips across the stick: the wrist on the side the arm comes from
-      a.dir.subVectors(a.hand, a.shoulder); if (st) a.dir.addScaledVector(st.dir, -a.dir.dot(st.dir) * w);
-      if (a.dir.lengthSq() < 1e-6) a.dir.set(1, 0, 0); a.dir.normalize();
-      a.wrist.copy(a.hand).addScaledVector(a.dir, -GRIP * s);
-      const lu = a.upper.len * s, lf = a.fore.len * s;
-      jointFor(a.elbow, a.shoulder, a.wrist, lu, lf, POLE[a.s]);
+      const w = onStick ? 1 : g, lu = a.upper.len * s, lf = a.fore.len * s, lfg = lf + GRIP * s;
+      if (a.s === 'R') { pose.stickArm.shoulder.copy(a.shoulder); pose.stickArm.upper = lu; pose.stickArm.fore = lfg; } // at rest: what world.js ARM_OF.<chara> is measured from
+      // the arm from its shoulder to the fist (armik.js: two bones, the elbow's side, the clavicle and shoulder as VRArmIK places them)
+      _fw.set(1, 0, 0).applyQuaternion(R); _uw.set(0, 1, 0).applyQuaternion(R); _ow.set(0, 0, a.side).applyQuaternion(R);
+      const sol = solveArm({ root: a.root, shoulder: a.shoulder, fwd: _fw, up: _uw, out: _ow, upper: lu, fore: lfg, target: a.hand, state: a.ik, dt });
+      setBone(a.s + '_Clavicle', a.root, Rs.copy(sol.clavicle).multiply(R), s);
+      a.shoulder.copy(sol.shoulder); a.elbow.copy(sol.elbow);
+      a.dir.subVectors(a.hand, a.elbow); const Lfg = a.dir.length(); a.dir.divideScalar(Math.max(Lfg, 1e-5)); // the forearm, on to the fist
+      a.wrist.copy(a.elbow).addScaledVector(a.dir, Lfg * lf / lfg);
+      a.pole.copy(a.elbow).sub(tmp.copy(a.shoulder).lerp(a.hand, .5)); if (a.pole.lengthSq() < 1e-8) a.pole.copy(_uw).negate(); a.pole.normalize(); // where the elbow sticks out
       const du = _f1.subVectors(a.elbow, a.shoulder), Lu = du.length(); du.divideScalar(Math.max(Lu, 1e-5));
-      a.poleU.copy(POLE[a.s]).addScaledVector(du, -POLE[a.s].dot(du)).normalize();
+      a.poleU.copy(a.pole).addScaledVector(du, -a.pole.dot(du)).normalize();
       setBone(a.s + '_Upperarm', a.shoulder, turn(Rs, a.up1, a.upP, du, a.poleU), s, a.up1, Lu / lu);
       const df = _f2.subVectors(a.wrist, a.elbow), Lf = df.length(); df.divideScalar(Math.max(Lf, 1e-5));
-      a.poleF.copy(POLE[a.s]).addScaledVector(df, -POLE[a.s].dot(df)).normalize();
+      a.poleF.copy(a.pole).addScaledVector(df, -a.pole.dot(df)).normalize();
       turn(Rs, a.fo1, a.foP, df, a.poleF);
       setBone(a.s + '_Forearm', a.elbow, Rs, s, a.fo1, Lf / lf);
       Rhand.copy(Rs); // free: on along the forearm
