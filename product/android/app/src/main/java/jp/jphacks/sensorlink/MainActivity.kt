@@ -95,6 +95,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     @Volatile var arText = "AR: starting"
     // a hit: the torch stays on until this time (elapsedRealtime, ms). ARCore owns the camera, so the GL thread switches it through the session config.
     @Volatile private var torchUntilMs = 0L
+    private val TORCH_MIN_MS = 400
     private var torchOn = false // GL thread
     private val vibe by lazy { Vibe(this) }
     private val hitSound by lazy { HitSound(this) }
@@ -169,7 +170,9 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         link.onHp = { info -> runOnUiThread { hpBar.info = info } }
         link.onPhase = { p -> runOnUiThread { syncHpClose(); if (p == "countdown" || p == "fight") openHp() else if (p == "setup") closeHp() } } // a match starts / is over
         link.onFlash = { ms ->
-            torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + ms) // another hit can only make it last longer
+            // at least TORCH_MIN_MS: switching the torch reconfigures ARCore's camera, which takes a moment, so a 小's 120 ms was often
+            // switched off again before it ever lit (iOS the same minimum)
+            torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + maxOf(ms, TORCH_MIN_MS)) // another hit can only make it last longer
             if (ms > 0) { hitSound.play(); vibe.hit() }
             runOnUiThread {
                 val now = SystemClock.elapsedRealtime()

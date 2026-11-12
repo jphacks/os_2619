@@ -148,7 +148,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     private func flash(ms: Int) {
         torchQ.async { [weak self] in
             guard let self = self, let dev = AVCaptureDevice.default(for: .video), dev.hasTorch else { return }
-            let off = DispatchTime.now() + .milliseconds(ms)
+            let off = DispatchTime.now() + .milliseconds(max(ms, 400)) // at least 0.4 s: a 小's 120 ms was too short to see (Android the same)
             guard off > self.torchOff else { return }
             self.torchOff = off
             guard (try? dev.lockForConfiguration()) != nil else { return }
