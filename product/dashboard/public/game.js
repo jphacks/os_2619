@@ -75,8 +75,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const MOVE_GRACE = .5; // s added to chargeHold while the player steps or turns. Measured: while circling, Charge events stop for at most 1 s; a longer wait keeps a stopped charge (and the vibration) alive while just walking
   const CHARGE_LIVE = .4; // s after a Charge event the circling counts as still going (actions.js sends one every ~.15 s while it does)
   const speedOf = (T, p) => T.speed * (rules().speed ?? 1) * st(p, 'speed'); // m/s, the dashboard's ball-speed slider and the stick applied
-  const t2Of = p => rules().t2 / st(p, 'charge');
-  const tierOf = (t, p) => t < rules().t1 / st(p, 'charge') ? 's' : t < t2Of(p) ? 'm' : 'l';
+  const t2Of = () => rules().t2; // the charge times are fixed: the stick's 溜め stat does not change them (11/12)
+  const tierOf = t => t < rules().t1 ? 's' : t < t2Of() ? 'm' : 'l';
   const IMU_SIDE = cross(W.STICK.axis, W.STICK.up);
 
   function place(p, est, sensorOnly = false) {

@@ -517,9 +517,9 @@ scenario('速さ 2倍の棒なら、小の連打の間隔が半分（0.125秒）
   for (let i = 0; i < 4; i++) { N.swing('A'); N.run(.15); }
   eq(S.A.shots, 4, '速さ2倍で0.15秒おき4回の発射数'); eq(N.A.shots, 2, '棒なしの発射数');
 });
-scenario('溜め 2倍の棒なら、3秒で大になる', () => {
+scenario('溜め時間は棒の溜めの能力によらず決まっている（溜め 2倍の棒でも 3 秒では中）', () => {
   const S = setup(); S.g.setSticks({ A: stick('fire', { charge: 2 }) }); S.fight(); S.chargeShot('A', 3);
-  eq(S.B.hp, 40, 'B の HP（大1発）');
+  eq(S.B.hp, 80, 'B の HP（中1発）');
 });
 scenario('試合中に棒を替えてもすぐ反映され、HPは残りの割合を保つ', () => {
   const S = setup(); S.fight(); S.A.hp = 50; S.g.setSticks({ A: stick('water', { hp: 1.5 }) }); S.run(.1);
