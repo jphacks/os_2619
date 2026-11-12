@@ -37,6 +37,10 @@
 
 溜めのループは `audio.js` の `LOOPS` で 0.25〜4.75 秒を使い、終わりの 0.4 秒を頭に重ねてつなぎ目を消しています。段ごとの音程は今までどおり `CHARGE_PITCH` で上げます。
 
+## 被弾の音（damage.wav）
+
+ダメージを受けたとき、スマホ A・B がライトと一緒に鳴らす音です（効果抜群のような「バ、バンッ」）。外部の素材は使わず `effect-assets/procedural/make-damage.mjs` で合成しています（`node effect-assets/procedural/make-damage.mjs` で、ここと Android の `res/raw/damage.wav` を同時に作り直します）。ダッシュボードの設定の「音」にある「被弾（スマホの音）」で試聴できます。
+
 ## 素材とライセンス
 
 公開リポジトリのゲームに入れてよい素材だけを使いました。

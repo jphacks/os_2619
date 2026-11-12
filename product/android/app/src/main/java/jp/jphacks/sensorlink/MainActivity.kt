@@ -97,6 +97,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     @Volatile private var torchUntilMs = 0L
     private var torchOn = false // GL thread
     private val vibe by lazy { Vibe(this) }
+    private val hitSound by lazy { HitSound(this) }
     // a hit: the whole screen red for as long as the torch, then fading out (never takes touches: not clickable)
     private val hitRed by lazy { View(this).apply { setBackgroundColor(Color.RED); alpha = 0f } }
     private val HIT_ALPHA = .65f
@@ -120,8 +121,10 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         val id = prefs.getString("id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("id", it).apply() }
         link = Link(id, Build.MODEL)
         link.onVibrate = { vibe.handle(it) }
+        hitSound // load the sound now, so the first hit is not silent
         link.onFlash = { ms ->
             torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + ms) // another hit can only make it last longer
+            if (ms > 0) hitSound.play()
             runOnUiThread { hitRed.animate().cancel(); hitRed.alpha = HIT_ALPHA; hitRed.animate().alpha(0f).setStartDelay(ms.toLong()).setDuration(300) }
         }
         scan = Scan(link)
@@ -208,7 +211,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
 
     override fun onDestroy() {
         super.onDestroy()
-        link.close(); imu.disconnect(); vibe.handle("off")
+        link.close(); imu.disconnect(); vibe.handle("off"); hitSound.release()
         listOf(convertW, tagW).forEach { it.shutdown() }
         session?.close()
     }
