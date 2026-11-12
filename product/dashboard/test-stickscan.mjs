@@ -135,7 +135,7 @@ check(m.r[0] > m.r[1] && m.nodes[0][1] < m.nodes[m.tip][1], 'grip thicker than t
 const main = m.nodes.slice(0, m.tip + 1), sideAt = a => main.reduce((b, n) => Math.abs(n[1] - a) < Math.abs(b[1] - a) ? n : b)[0];
 const sag = Math.abs(sideAt(0) - (sideAt(-.4) + sideAt(.4)) / 2), trueSag = bow(.5) - (bow(.5 - .4 / SL) + bow(.5 + .4 / SL)) / 2;
 check(Math.abs(sag - trueSag) < .008, `bow ${(sag * 1000).toFixed(1)} mm (true ${(trueSag * 1000).toFixed(1)})`);
-check(elementFromShape(m) === 'wind', `one branch and a smooth bow become wind (${elementFromShape(m)})`);
+check(elementFromShape(m) === 'thunder', `a large branch (${BL * 100} cm) makes it thunder, bow or not (${elementFromShape(m)})`);
 let threw = false; try { buildStick(views.slice(0, 3)); } catch { threw = true; }
 check(threw, 'too few pictures: an error, not a model');
 console.log(fails ? `${fails} FAILED` : 'all ok');
