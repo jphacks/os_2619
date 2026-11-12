@@ -26,6 +26,7 @@ import { createTutorial } from './tutorial.js';
 import { createGauge } from './hudgauge.js';
 import { PRESETS, DEFAULT_HOUR, clock } from './sky.js';
 import { createKoShow } from './ko-show.js';
+import { createSwingSense, SWING_DEFAULT, SWING_GAIN, ATTACK_SPEED } from './swing-sense.js';
 const TOD_SPEEDS = [['ゆっくり', 2], ['ふつう', 6], ['はやい', 24]]; // hours per minute: ふつう = a 60 s match from sunset into the night
 
 const $ = s => document.querySelector(s);
@@ -36,14 +37,15 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
   minimap: true, debug: false, pip: false, mirrorX: false, mirrorY: false, swordFlip: false, fovC: 40, viewVer: 2, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
-  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 7, fxStyle: 'smash', backdrop: 'court', timeOfDay: DEFAULT_HOUR,
+  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 8, fxStyle: 'smash', backdrop: 'court', timeOfDay: DEFAULT_HOUR,
   zoom: { fixed: 1, auto: 1, orbit: 1, chaseA: 1, chaseB: 1, top: 1, side: 1 }, // game screen: zoom per camera mode (free: the mouse wheel)
   chara: { A: 'wizard', B: 'wizard' }, // who each player is drawn as (field3d.js CHARAS): the wizard, or the special character チャオベン
   mimic: true, // the avatars copy the poses MediaPipe finds in phone C's picture (screen 3, and the small 3D window of screen 4)
+  swing: SWING_DEFAULT, // the sword swing heard on the player's phone (swing-sense.js): on, and the 小 / 中 / 大 lines in °/s
   crt: true, // screens 3 and 4 look like an old CRT screen: fewer lines, scanlines, a little bleed and glow (stage.js), 30 fps
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
-const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen }, zoom: { ...DEFAULTS.zoom, ...saved.zoom }, chara: { ...DEFAULTS.chara, ...saved.chara } };
+const cfg = { ...DEFAULTS, ...saved, swing: { ...SWING_DEFAULT, ...saved.swing }, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen }, zoom: { ...DEFAULTS.zoom, ...saved.zoom }, chara: { ...DEFAULTS.chara, ...saved.chara } };
 if ((saved.viewVer ?? 0) < 2) { cfg.mirrorX = cfg.mirrorY = cfg.swordFlip = false; cfg.viewVer = 2; } // the left-right / up-down guesses are off until a measured need: the alignment is solved from the tags now
 cfg.visOn = false; // picture recognition (MediaPipe) is off at every start: nothing is loaded or run until it is switched on in the final bar
 if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
@@ -52,9 +54,9 @@ if ((saved.rulesVer ?? 0) < 2) cfg.aim = 'motion'; // ...and the aim from the ti
 if ((saved.rulesVer ?? 0) < 4) cfg.fxStyle = 'smash'; // the program-drawn set is the one used in the show (10/18)
 if ((saved.rulesVer ?? 0) < 5) cfg.drone = 'fixed'; // the game screen starts on phone C's view, the same as screen 4 (10/18)
 if ((saved.rulesVer ?? 0) < 6) cfg.backdrop = 'court'; // the game screen stands in the school courtyard (11/3)
-cfg.rulesVer = 7;
+cfg.rulesVer = 8;
 cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg }, size: { ...RULES.size, ...saved.rules?.size }, speed: speedRule(saved.rules?.speed ?? RULES.speed) };
-if ((saved.rulesVer ?? 0) < 7) { cfg.rules.t1 = RULES.t1; cfg.rules.t2 = RULES.t2; } // the charge takes half as long (11/4): a saved 2 / 5 s must not hide it
+if ((saved.rulesVer ?? 0) < 8) { cfg.rules.t1 = RULES.t1; cfg.rules.t2 = RULES.t2; } // the charge takes half as long (11/4), then 2/3 of 1 / 3 s (11/12): a saved older time must not hide it
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
 const axis = { A: W.STICK.axis, B: W.STICK.axis }; // the IMU's +Y points to the stick tip, on both sticks
 
@@ -69,16 +71,33 @@ const vsrc = createVideoSource(video, { onChange: () => { stage?.resize(); } });
 
 let sfx = null; // sound: loaded lazily so a failing module never stops the picture
 import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const v = JSON.parse(localStorage.getItem('pd-vol')); if (v) for (const [k, x] of Object.entries(v)) sfx.setVolume(k, x); } catch {} }).catch(e => console.warn('audio', e));
-/** A game sound that concerns these players (their shot, guard, failed charge, a hit they took or landed) plays on their
- *  phones as well: the same files cut / pitched / faded as here (audio.js describe), sent through the server ({ type: 'sfx' }).
- *  The phone plays at gain × PHONE_REF: the loudest sound (大's hit, MIX.special +3 dB) at full scale. */
+/** A game sound that concerns these players (their guard, failed charge, a hit they took) plays on their phones as well: the
+ *  same files cut / pitched / faded as here (audio.js describe), sent through the server ({ type: 'sfx' }).
+ *  The phone plays at gain × PHONE_REF: the loudest sound (大's hit, MIX.special +3 dB) at full scale.
+ *  The shooter's phone has its own sounds (11/12), apart from what the one hit hears: myShot = 小 fired (my_shot), myLaunch =
+ *  中 / 大 fired (my_launch, 大 lower), landed = a 中 / 大 of theirs hit: the same as the one hit hears (the hit + damage). */
 const PHONE_REF = Math.pow(10, -3 / 20), PHONE_FILE = { guardUp: 'guard', guardReflect: 'guard_reflect' };
+const PHONE_OWN = { myShot: () => [{ file: 'my_shot', gain: .8, rate: 1 }], myLaunch: tier => [{ file: 'my_launch', gain: tier === 'l' ? 1 : .8, rate: tier === 'l' ? .8 : 1 }] };
 function phoneSound(slots, kind, ...args) {
   if (!sfx || sfx.muted) return;
+  if (PHONE_OWN[kind]) { for (const slot of new Set(slots)) hub.send?.({ type: 'sfx', slot, voices: PHONE_OWN[kind](...args) }); return; }
+  const landed = kind === 'landed'; if (landed) kind = 'hit';
   const voices = kind === 'chargeFail' ? [] : sfx.describe(kind, ...args).map(v => ({ file: PHONE_FILE[v.name] ?? v.name, gain: Math.min(1, +(v.gain * PHONE_REF).toFixed(3)),
-    rate: +v.rate.toFixed(3), offset: v.offset, dur: v.dur, rel: v.rel, fade: v.fade }));
+    rate: +v.rate.toFixed(3), offset: v.offset, dur: v.dur, rel: v.rel, fade: v.fade })).slice(0, landed ? 3 : 4);
+  if (landed) voices.push({ file: 'damage', gain: 1, rate: 1 }); // the one hit hears it from HitSound (flash)
   if (kind !== 'chargeFail' && !voices.length) return;
   for (const slot of new Set(slots)) hub.send?.({ type: 'sfx', slot, ...(kind === 'chargeFail' ? { kind } : { voices }) });
+}
+
+// every fast turn of a stick plays a sword swing on that player's phone, louder for a bigger swing (swing-sense.js): the player hears that the
+// system saw the movement. Sent straight from the stick's packets, in any phase.
+const swingSense = createSwingSense(() => cfg.swing), SWING_RATE = { s: 1.1, m: 1, l: .92 }; // a bigger swing a little lower, as a heavier blade
+const swingFx = { A: null, B: null }; // the last swing per player, for the meter
+const sendSwing = (slot, tier) => hub.send?.({ type: 'sfx', slot, voices: [{ file: 'swing', gain: SWING_GAIN[tier], rate: SWING_RATE[tier], offset: 0, dur: 0, rel: .25, fade: null }] });
+function swingSound(k) {
+  const e = swingSense.ingest(k); if (!e) return;
+  swingFx[e.slot] = { ...e, at: performance.now() };
+  sendSwing(e.slot, e.tier);
 }
 
 // recognition on the final screen (vision.js) and its layers under the effects (visionfx.js); nothing runs unless it is switched on (cfg.visOn) and a layer is on
@@ -108,6 +127,7 @@ hub.on(k => {
   }
   connect.ingest(k); game.ingest(k);
   if (k.type === 'truth' && !playable.owns(k.slot)) vsrc.dummy?.setTruth(k.slot, k); // fake-world.mjs: the dummy room shows the simulated players
+  if (k.type === 'imu') swingSound(k);
   if (k.type === 'imu' || k.type === 'ar' || k.type === 'calib')
     for (const ev of detectors.ingest(k, axis[k.slot])) { if (!ev.keep) connect.logAction(ev); if (!playable.owns(ev.slot)) game.onSensed(ev); }
 });
@@ -184,8 +204,14 @@ gameCtrl.innerHTML = `
   <div class="players2">${['A', 'B'].map(s => `
     <div class="pc" data-s="${s}"><div class="row" style="justify-content:space-between"><b class="el" style="color:var(--${s})"></b><span class="num hpv"></span></div>
       <div class="facts"></div>
-      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="2.5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
+      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="2 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
   </div>
+  <h3>振りの音（スマホ）</h3>
+  <div class="row"><button id="swingOn" title="棒を速く振ると、そのプレイヤーのスマホから刀を振る音が鳴る。振りが大きいほど大きな音">刀の振り音を鳴らす</button><button id="swingTry" title="この PC で中の大きさを鳴らす">試聴（PC）</button></div>
+  <div class="row" style="gap:4px;align-items:center"><span class="muted" style="font-size:12px">スマホで鳴らす</span>${['A', 'B'].map(s => `<b style="color:var(--${s});margin-left:6px">${s}</b>${['s', 'm', 'l'].map(t => `<button data-swingtest="${t}" data-s="${s}" title="${s} のスマホで${TIER_JA[t]}の振り音を鳴らす（つながっていれば）">${TIER_JA[t]}</button>`).join('')}`).join('')}</div>
+  <div class="swingm">${['A', 'B'].map(s => `<div class="row"><b style="color:var(--${s});width:1.2em">${s}</b><canvas data-swingm="${s}" width="300" height="44"></canvas></div>`).join('')}</div>
+  <div class="rules">${['s', 'm', 'l'].map(t => `<label title="棒の回転の速さがこれを超えると${TIER_JA[t]}の音">${TIER_JA[t]}の音になる速さ <input data-swing="${t}" type="range" min="100" max="1500" step="10" style="width:110px;vertical-align:middle"> <span data-swingout="${t}" class="num"></span> °/s</label>`).join('')}</div>
+  <p class="muted" style="font-size:12px;margin:4px 0">メーターは棒の回転の速さ（°/s）。白い棒が今の速さ、縦線が 小・中・大 の音の境目、赤い線が攻撃の境目（${ATTACK_SPEED}°/s より速く 60° 以上振って、ピタッと止めると弾が出る）</p>
   <h3>キャラクター</h3>
   <div id="charas">${['A', 'B'].map(s => `<div class="row" style="align-items:center;gap:6px"><b style="color:var(--${s});width:1.2em">${s}</b><div class="seg">${Object.entries(CHARAS).map(([k, v]) => `<button data-chara="${k}" data-s="${s}">${v}</button>`).join('')}</div></div>`).join('')}</div>
   <h3>プレイヤーの動き（ダミー映像）</h3>
@@ -232,6 +258,39 @@ function matchFullscreen(phase) {
 addEventListener('fullscreenchange', () => setTimeout(stage.resize, 100)); // the stage follows the box in and out of fullscreen
 gameCtrl.querySelector('[data-cmd=pause]').onclick = () => game.command({ cmd: 'pause' });
 gameCtrl.querySelector('[data-cmd=reset]').onclick = () => game.command({ cmd: 'reset' });
+$('#swingOn').onclick = () => { cfg.swing.on = !cfg.swing.on; save(); };
+$('#swingTry').onclick = () => { sfx?.unlock?.(); sfx?.play('swing', { gain: SWING_GAIN.m }); };
+for (const b of gameCtrl.querySelectorAll('[data-swingtest]')) b.onclick = () => sendSwing(b.dataset.s, b.dataset.swingtest); // the phone's own sound, without swinging
+for (const i of gameCtrl.querySelectorAll('[data-swing]')) {
+  i.value = cfg.swing[i.dataset.swing];
+  i.oninput = () => { // the lines stay in order: 小 ≤ 中 ≤ 大
+    const t = i.dataset.swing, v = +i.value, c = cfg.swing; c[t] = v;
+    if (t === 's') { c.m = Math.max(c.m, v); c.l = Math.max(c.l, c.m); } else if (t === 'm') { c.s = Math.min(c.s, v); c.l = Math.max(c.l, v); } else { c.m = Math.min(c.m, v); c.s = Math.min(c.s, c.m); }
+    for (const j of gameCtrl.querySelectorAll('[data-swing]')) j.value = c[j.dataset.swing];
+    save();
+  };
+}
+const SWING_MAX = 1500, swingShown = { A: 0, B: 0 };
+function drawSwingMeters() { // the stick's turning speed against the lines; a swing just heard shows its size for a moment
+  const c = cfg.swing;
+  for (const o of gameCtrl.querySelectorAll('[data-swingout]')) setText(o, String(c[o.dataset.swingout]));
+  $('#swingOn').classList.toggle('on', !!c.on);
+  for (const cv of gameCtrl.querySelectorAll('[data-swingm]')) {
+    const s = cv.dataset.swingm, g = cv.getContext('2d'), W = cv.width, H = cv.height, x = v => Math.min(1, v / SWING_MAX) * (W - 2) + 1;
+    swingShown[s] = Math.max(swingSense.speed(s), swingShown[s] * .85); // falls back smoothly, so a fast flick is still seen
+    g.clearRect(0, 0, W, H);
+    const y0 = 13, bh = 16; // the bar; the attack line's label above it, the sound lines' below
+    g.fillStyle = 'rgba(255,255,255,.08)'; g.fillRect(0, y0, W, bh);
+    const band = [[0, c.s, 'rgba(255,255,255,.04)'], [c.s, c.m, 'rgba(120,200,255,.18)'], [c.m, c.l, 'rgba(120,200,255,.32)'], [c.l, SWING_MAX, 'rgba(120,200,255,.5)']];
+    for (const [a, b, col] of band) { g.fillStyle = col; g.fillRect(x(a), y0, x(b) - x(a), bh); }
+    g.fillStyle = '#fff'; g.fillRect(1, y0 + 4, x(swingShown[s]) - 1, bh - 8);
+    g.font = '10px system-ui'; g.textBaseline = 'top';
+    for (const [v, label] of [[c.s, '小'], [c.m, '中'], [c.l, '大']]) { g.fillStyle = '#cfe8ff'; g.fillRect(x(v) - .5, y0 - 2, 1.5, bh + 4); g.fillText(label, Math.min(W - 12, x(v) + 2), y0 + bh + 2); }
+    g.fillStyle = '#ff5a5a'; g.fillRect(x(ATTACK_SPEED) - .5, y0 - 2, 1.5, bh + 4); g.fillText('攻撃', Math.min(W - 24, x(ATTACK_SPEED) + 2), 0);
+    const f = swingFx[s];
+    if (f && performance.now() - f.at < 900) { g.fillStyle = '#ffe600'; g.fillRect(x(f.peak) - 1, y0 - 2, 3, bh + 4); g.font = 'bold 11px system-ui'; g.textAlign = 'right'; g.fillText(`${TIER_JA[f.tier]} ${Math.round(f.peak)}°/s`, W - 1, 0); g.textAlign = 'left'; }
+  }
+}
 const secIn = $('#secIn'); secIn.value = cfg.matchSec;
 secIn.onchange = () => { cfg.matchSec = Math.max(10, +secIn.value || 60); save(); game.command({ cmd: 'matchSec', value: cfg.matchSec }); };
 // rules: written straight into cfg.rules, which game.js reads every time
@@ -341,7 +400,7 @@ drawer.innerHTML = `
   <section><h3>音</h3>
     ${['master:全体', 'bgm:BGM', 'sfx:効果音', 'amb:環境音'].map(x => { const [k, n] = x.split(':'); return `<label class="f"><span>${n}</span><input type="range" min="0" max="1" step="0.01" data-vol="${k}"><output data-volout="${k}"></output></label>`; }).join('')}
     <div class="row"><button id="mute">消音</button><button id="bgmPreview" title="M キーでも押せる。試合の BGM を、試合とは関係なく流す。試合が始まると自動で止まり、試合の BGM が頭から流れる">試合 BGM を流す<kbd>M</kbd></button><span class="note" id="audioInfo"></span></div>
-    <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大'], ['shotWater', '水の発射'], ['hitWater', '水の命中'], ['specialWater', '水の大'], ['shotWind', '風の発射'], ['hitWind', '風の命中'], ['specialWind', '風の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}<button id="damageSound" title="ダメージを受けたときに、スマホ A・B がライトと一緒に鳴らす音">被弾（スマホの音）</button></div></section>
+    <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大'], ['shotWater', '水の発射'], ['hitWater', '水の命中'], ['specialWater', '水の大'], ['shotWind', '風の発射'], ['hitWind', '風の命中'], ['specialWind', '風の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}<button id="damageSound" title="ダメージを受けたときに、スマホ A・B がライトと一緒に鳴らす音">被弾（スマホの音）</button><button data-own="my_shot" title="小を撃った人のスマホが鳴らす音">小の発射（撃った人のスマホ）</button><button data-own="my_launch" title="中・大を撃った人のスマホが鳴らす音（大は低く）">溜め技の発射（撃った人のスマホ）</button></div></section>
   <section><h3>キー操作</h3><table class="keys">
     <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ試合開始（撃った瞬間に相手を狙う）・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
     <tr><td>Space / Enter</td><td>A / B が小の攻撃（溜めなし）</td></tr><tr><td>Q / P 長押し</td><td>A / B が溜める（離した時の溜め時間で小・中・大）</td></tr>
@@ -372,6 +431,7 @@ for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
 };
 
 $('#damageSound').onclick = () => { if (!sfx) return; sfx.unlock?.(); sfx.play('damage'); };
+for (const b of drawer.querySelectorAll('[data-own]')) b.onclick = () => { if (!sfx) return; sfx.unlock?.(); sfx.play(b.dataset.own); };
 
 // ---- keys ----
 const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 2: { cmd: 'phase', phase: 'demo' }, 3: { cmd: 'phase', phase: 'fight' }, 4: { cmd: 'pause' }, r: { cmd: 'reset' },
@@ -421,6 +481,7 @@ function damagePops() {
   }
 }
 function updateHud() {
+  if (screen === 'game') drawSwingMeters();
   damagePops();
   const m = game.match;
   for (const p of Object.values(game.players)) {
