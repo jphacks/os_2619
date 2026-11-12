@@ -121,6 +121,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK); visibility = View.GONE
             isClickable = true; setOnClickListener { closeHp() } // consume touches even when closing is disabled during the match
+            setOnLongClickListener { calibrate(); true } // a long press calibrates, mid-match too (iOS the same)
             addView(hpBar, FrameLayout.LayoutParams(-1, 0, Gravity.TOP)) // the top half: sized once the screen's height is known
             addView(hpClose, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = (48 * resources.displayMetrics.density).toInt() })
         }
@@ -547,7 +548,6 @@ class HpBar(a: Activity) : View(a) {
         set(v) { field = v; invalidate() }
     private val avatars = mapOf("chaoben" to R.drawable.avatar_chaoben, "wizard_A" to R.drawable.avatar_wizard_a, "wizard_B" to R.drawable.avatar_wizard_b)
         .mapValues { (_, id) -> lazy { android.graphics.BitmapFactory.decodeResource(resources, id) } }
-    private var near = 1f // the opponent's drawn size now, eased toward its distance's (the distance comes about 10 times a second)
     private val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val slash = Path()
     private val box = RectF()
@@ -557,15 +557,7 @@ class HpBar(a: Activity) : View(a) {
         val h = height.toFloat()
         c.drawColor(Color.BLACK)
         val slot = info.foeSlot
-        if (slot != null) { // null: a PC too old to say who the opponent is
-            val target = if (info.dist > 0) (REF_DIST / info.dist).toFloat().coerceIn(FAR, 1f) else 1f
-            near += (target - near) * .25f
-            if (kotlin.math.abs(target - near) > .002f) postInvalidateOnAnimation() else near = target
-            c.save()
-            c.scale(near, near, w / 2, h * .02f) // toward the vanishing point, the top centre
-            drawFoe(c, w, h, slot)
-            c.restore()
-        }
+        if (slot != null) drawFoe(c, w, h, slot) // null: a PC too old to say who the opponent is. Full size however far (no perspective; iOS the same)
         drawMine(c, w, h)
     }
 
@@ -628,8 +620,4 @@ class HpBar(a: Activity) : View(a) {
         slash.close()
     }
 
-    companion object {
-        const val REF_DIST = 1.2 // m: this near or nearer, the opponent at full size (the players start 2.4 m apart: half size)
-        const val FAR = .3f      // the smallest it gets
-    }
 }

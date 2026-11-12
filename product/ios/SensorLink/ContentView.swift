@@ -202,11 +202,9 @@ struct LanSheet: View {
 
 /// The HP screen (match mode), on black and at full brightness. The display fills the top half,
 /// mirrored vertically to match Android. Both HP bars are flat with parallel slanted ends.
-/// The opponent's avatar and bar shrink toward the vanishing point as distance increases.
+/// The opponent's avatar and bar at full size however far it is (no perspective; Android the same). A long press calibrates, mid-match too.
 struct HpScreen: View {
     @EnvironmentObject var model: Model
-    static let refDist = 1.2 // m: this near or nearer, the opponent at full size (the players start 2.4 m apart: half size)
-    static let far: CGFloat = 0.3 // the smallest it gets
 
     var body: some View {
         GeometryReader { g in
@@ -217,8 +215,6 @@ struct HpScreen: View {
                     if let slot = info.foeSlot { // nil: a PC too old to say who the opponent is
                         foe(info, slot: slot, w: w, h: h)
                             .frame(width: w, height: h, alignment: .topLeading)
-                            .scaleEffect(near(info.dist), anchor: UnitPoint(x: 0.5, y: 0.02)) // toward the vanishing point, the top centre
-                            .animation(.easeOut(duration: 0.15), value: near(info.dist))
                     }
                     mine(info, w: w, h: h)
                         .frame(width: w, height: h, alignment: .topLeading)
@@ -235,12 +231,13 @@ struct HpScreen: View {
                     .frame(width: w, height: g.size.height)
                 }
             }
+            .contentShape(Rectangle())
+            .onLongPressGesture(minimumDuration: 0.5) { model.calibrate(); UIImpactFeedbackGenerator(style: .heavy).impactOccurred() }
         }
         .ignoresSafeArea()
     }
 
     private func share(_ v: Double, _ m: Double) -> CGFloat { CGFloat(Swift.max(0, Swift.min(1, v / Swift.max(1, m)))) }
-    private func near(_ d: Double) -> CGFloat { d > 0 ? Swift.max(Self.far, Swift.min(1, CGFloat(Self.refDist / d))) : 1 }
 
     private func foe(_ info: HpInfo, slot: String, w: CGFloat, h: CGFloat) -> some View {
         let size: CGFloat = Swift.min(h * 0.42, w * 0.3), cy: CGFloat = h * 0.27, x0: CGFloat = w * 0.05
