@@ -123,7 +123,7 @@ vec3 engravedRune(vec2 p, vec3 ground) {
   vec2 g = vec2(runeDepth(q + vec2(e, 0.)) - runeDepth(q - vec2(e, 0.)), runeDepth(q + vec2(0., e)) - runeDepth(q - vec2(0., e))) / (2. * e);
   if (h < .003 && dot(g, g) < 1e-4) return ground;
   vec3 n = normalize(vec3(RUNE_DEPTH * g.x, 1., RUNE_DEPTH * g.y)), sun = normalize(vec3(sun2.x, uBodySun.y, sun2.y));
-  float lit = clamp(max(dot(n, sun), 0.) / max(sun.y, .25), .18, 1.7); // against the flat ground's light
+  float lit = clamp((max(dot(n, sun), 0.) + .3) / (max(sun.y, 0.) + .3), .2, 1.8); // against the flat ground's light: flat ground is exactly 1
   float bed = smoothstep(.2, .75, h);
   float a = atan(q.y, q.x) * 40. + length(q) * 55., aw = fwidth(a); // the laid grass: streaks round the centre, faded where they would shimmer
   float streak = sin(a) * (1. - smoothstep(.8, 2.5, aw));
@@ -202,10 +202,10 @@ void main() {
   gl_FragColor = vec4(c, alpha);
 }`;
 
-// The mahoujin's print drawn as grooves in the ground: its 1 mm lines vanish from the camera, so each RUNE_CELL × RUNE_CELL px of
-// the print becomes one texel (darkest wins), lines are widened by RUNE_WIDEN texels each side and the edges blurred into sloping
-// walls. Returns { w, h, depth } (0 the ground .. 255 a groove's bottom).
-const RUNE_CELL = 3, RUNE_WIDEN = 2;
+// The mahoujin's print drawn as grooves in the ground: each RUNE_CELL × RUNE_CELL px of the print becomes one texel (darkest wins,
+// so 1 mm lines survive) and the edges are blurred a little into sloping walls. The print's faint construction lines (some run
+// past the circle, across the whole sheet) are left out. Returns { w, h, depth } (0 the ground .. 255 a groove's bottom).
+const RUNE_CELL = 2;
 export function runeCarve(d) {
   const w = Math.floor(d.w / RUNE_CELL), h = Math.floor(d.h / RUNE_CELL), n = w * h;
   let a = new Uint8Array(n);
@@ -214,7 +214,7 @@ export function runeCarve(d) {
     for (let v = 0; v < RUNE_CELL; v++) for (let u = 0; u < RUNE_CELL; u++) { const k = d.ink[(y * RUNE_CELL + v) * d.w + x * RUNE_CELL + u]; if (k > 110) m = Math.max(m, k); } // faint construction lines are left out
     a[y * w + x] = m;
   }
-  const pass = (r, f) => { // one separable pass each way: f = Math.max (widen) or a box mean (blur)
+  const pass = (r, f) => { // one separable pass each way: f 'max' (widen) or 'mean' (box blur)
     for (const [len, lines, step, across] of [[w, h, 1, w], [h, w, w, 1]]) {
       const b = new Uint8Array(n);
       for (let l = 0; l < lines; l++) for (let i = 0; i < len; i++) {
@@ -225,7 +225,7 @@ export function runeCarve(d) {
       a = b;
     }
   };
-  pass(RUNE_WIDEN, 'max'); pass(1, 'mean'); pass(1, 'mean');
+  pass(1, 'mean');
   return { w, h, depth: a };
 }
 
