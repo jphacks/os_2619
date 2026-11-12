@@ -239,9 +239,9 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     el.style.width = w + 'px'; el.style.height = h + 'px';
     const srcW = S.mode === 'final' ? (fpv ? w * devicePixelRatio : video.videoWidth || 1920) : w * devicePixelRatio;
     renderer.setPixelRatio(Math.min(devicePixelRatio, Math.max(1, srcW / w))); // no more pixels than the picture
-    // the CRT look: a whole number of device pixels per line (so the scanlines don't beat with the screen's pixels), about CRT_LINES lines
+    // the CRT look: a whole number of device pixels per line (1 or more), about CRT_LINES lines
     S.crt = !!cfg.crt; el.classList.toggle('crt', S.crt); crtVeil.style.display = S.crt ? '' : 'none';
-    const pitch = Math.max(2, Math.round(h * devicePixelRatio / CRT_LINES)) / devicePixelRatio; // css px per line
+    const pitch = Math.max(1, Math.round(h * devicePixelRatio / CRT_LINES)) / devicePixelRatio; // css px per line
     S.crtLines = h / pitch;
     if (S.crt) crtVeil.style.background = 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.45) 100%)'; // no scanline stripes (taken out on request)
     fx.setSize(w, h);
