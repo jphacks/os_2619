@@ -121,7 +121,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   // whole turn about its forward axis, p.roll), stays there, and DODGE.back s before DODGE.stay is up hops back sideways to where the
   // player really is (p.hop m off the floor at the top, leaning into the jump: p.lean). field3d.js turns and lifts the drawn figure;
   // shots hit it where it is on the floor, so a dodge in time gets out of a shot's way.
-  const DODGE = { dist: 2.5, out: .45, stay: 2, back: .5, hop: .45, lean: 22 * Math.PI / 180 }; // 11/13: a big roll out, a hop back after 2 s
+  const DODGE = { dist: 1.25, out: .45, stay: 1, back: .3, hop: .45, lean: 22 * Math.PI / 180 }; // 11/13: a roll out, a hop back, home after 1 s
   function dodgeOffset(p) {
     const d = p.dodge, t = d ? now() - d.t0 : Infinity;
     p.roll = p.hop = p.lean = 0;
