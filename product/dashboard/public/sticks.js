@@ -1,6 +1,6 @@
 // 棒設定 (screen 5 of the dashboard): the saved sticks. Each 3D model built from a phone's Scan (stickui.js) is saved here with one of its
 // photos and goes to the phone that scanned it; its power and speed come from its wood volume (stick-stats.js). Here: which stick
-// players A / B use, and each stick's name, element, power and speed by hand (or back to the volume's). HP and the charge time are the
+// players A / B use, and each stick's name, element, power and speed by hand (or back to the scan's shape/volume). HP and the charge time are the
 // same for every stick (the game screen's rules).
 // mountSticks(root) draws into root.
 import { STAT_RANGE } from './stick-stats.js';
@@ -27,7 +27,7 @@ export function mountSticks(root) {
     <div class="main">
       <section class="card">
         <header><h2>保存した棒</h2><span class="sub num" data-count></span></header>
-        <p class="sub" style="margin:0 0 10px">スマホの「Scan」で 3D モデルを作ると、ここに保存され、撮ったスマホの棒になります。</p>
+        <p class="sub" style="margin:0 0 10px">スマホの「Scan」で 3D モデルを作ると、形から属性を判定してここに保存します。枝分かれが多いと電気（雷）、まっすぐなら炎、滑らかに曲がると風、くねると水です。「反映」で撮ったスマホの棒になります。</p>
         <div class="list" data-list></div>
       </section>
     </div>

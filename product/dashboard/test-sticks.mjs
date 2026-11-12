@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { stickVolume, statsFromVolume, stickElement, REF_VOLUME, ELEMENTS } from './public/stick-stats.js';
+import { stickVolume, statsFromVolume, elementFromShape, REF_VOLUME } from './public/stick-stats.js';
 
 // a straight stick of length L and radius r (m) as a v 3 model: a cylinder of π r² L
 const rod = (L, r, n = 9) => ({ v: 3, length: L, r: [r, r], tip: n - 1, nodes: Array.from({ length: n }, (_, i) => [0, -L / 2 + L * i / (n - 1)]), edges: Array.from({ length: n - 1 }, (_, i) => [i, i + 1]) });
@@ -23,8 +23,20 @@ for (const cm3 of [20, 80, 150, 250, 350, 500, 800, 1400, 3000]) {
   last = s;
 }
 assert.ok(statsFromVolume(1400e-6).speed > .8, 'a big stick is only a little slower');
-const seen = new Set(); for (let seed = 0; seed < 200; seed++) { assert.equal(stickElement(seed), stickElement(seed)); seen.add(stickElement(seed)); }
-assert.equal(seen.size, ELEMENTS.length);
+// Shape decides the attribute: two real branches first, otherwise the main path's bends.
+const curved = (L, r, fn) => {
+  const m = rod(L, r, 33);
+  m.nodes = m.nodes.map(([, a]) => [fn((a + L / 2) / L), a]);
+  return m;
+};
+assert.equal(elementFromShape(rod(1, .01)), 'fire', 'straight');
+assert.equal(elementFromShape(curved(1, .01, t => .006 * Math.sin(8 * Math.PI * t))), 'fire', 'scan-size ripples are ignored');
+assert.equal(elementFromShape(curved(1, .01, t => .06 * Math.sin(Math.PI * t))), 'wind', 'one smooth bow');
+assert.equal(elementFromShape(curved(1, .01, t => .06 * Math.sin(2 * Math.PI * t))), 'water', 'S bend');
+assert.equal(elementFromShape(curved(1, .01, t => .06 * Math.sin(2 * Math.PI * t) ** 2)), 'water', 'two same-side bends');
+const twigs = curved(1, .01, t => .06 * Math.sin(2 * Math.PI * t));
+twigs.nodes.push([.15, -.1], [-.15, .1]); twigs.edges.push([12, 33], [20, 34]);
+assert.equal(elementFromShape(twigs), 'thunder', 'two branches override the trunk bend');
 console.log('stick stats ok');
 
 // ---- server: /sticks round trip (data and rules in a temp folder) ----
@@ -44,11 +56,11 @@ await wait(() => inbox.find(k => k.type === 'sticks' && k.A === null && k.B === 
 await wait(() => inbox.find(k => k.type === 'stick' && k.slot === 'A' && k.model === null)); // on hello: each slot's model
 const jpeg = 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]).toString('base64');
 // a built model for slot A: saved, assigned to A, its model sent to the pages
-const big = rod(1, .015), small = rod(.8, .006);
+const big = rod(1, .015), small = curved(.8, .006, t => .05 * Math.sin(Math.PI * t));
 let r = await json('/sticks', { model: big, image: jpeg, slot: 'A' });
 assert.equal(r.status, 200);
 const rec = await r.json();
-assert.match(rec.id, /^[a-z0-9]{8,32}$/); assert.ok(rec.name.length > 0); assert.ok(ELEMENTS.includes(rec.element)); assert.equal(rec.element, stickElement(rec.seed));
+assert.match(rec.id, /^[a-z0-9]{8,32}$/); assert.ok(rec.name.length > 0); assert.equal(rec.element, 'fire'); assert.equal(rec.seed, undefined);
 assert.deepEqual(rec.stats, statsFromVolume(stickVolume(big))); assert.equal(rec.volume, Math.round(stickVolume(big) * 1e6));
 assert.equal(rec.image, `/sticks/img/${rec.id}.jpg`);
 const pic = await fetch(base + rec.image); assert.equal(pic.status, 200); assert.match(pic.headers.get('content-type'), /jpeg/);
@@ -58,6 +70,7 @@ await wait(() => inbox.find(k => k.type === 'stick' && k.slot === 'A' && k.model
 // one without a slot or a photo: saved only
 const rec2 = await (await json('/sticks', { name: '細い枝', model: small })).json();
 assert.equal(rec2.name, '細い枝'); assert.equal(rec2.image, undefined);
+assert.equal(rec2.element, 'wind', 'server uses the scanned bow');
 assert.ok(rec2.stats.power < rec.stats.power && rec2.stats.speed > rec.stats.speed, 'the thin stick is weaker and faster');
 assert.equal((await (await json('/sticks/assign')).json()).B, null);
 // trust boundary

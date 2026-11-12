@@ -20,7 +20,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, extname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { stickElement, stickVolume, statsFromVolume, ELEMENTS, STATS, STAT_RANGE } from './public/stick-stats.js';
+import { elementFromShape, stickVolume, statsFromVolume, ELEMENTS, STATS, STAT_RANGE } from './public/stick-stats.js';
 
 const PORT = +process.env.PORT || 8000;
 const root = fileURLToPath(new URL('.', import.meta.url));
@@ -335,7 +335,7 @@ async function rulesFile(req, res) {
 }
 
 // ---- /sticks: the saved sticks. A dashboard posts each 3D model it builds from a phone's Scan (stickui.js) with one of the photos;
-// a new random seed picks the element. Stats (power, speed: stick-stats.js) come from the model's wood volume, or the admin's own.
+// the model's branch and bend shape picks the element. Stats (power, speed: stick-stats.js) come from its wood volume, or the admin's own.
 //  GET /sticks → records   POST /sticks {name?, model, image?: jpeg data URL, slot?: 'A' | 'B' (assign it there)} → the new record
 //  PATCH /sticks/<id> {name?, element?, stats?: {power, speed} (0.5-2) | null = back to the volume's}   DELETE /sticks/<id>
 //  GET /sticks/assign → {A, B}   POST /sticks/assign {A?: id|null, B?: id|null}   GET /sticks/img/<id>.jpg
@@ -393,8 +393,8 @@ async function sticksRoute(req, res, path) {
       jpg = m && Buffer.from(m[1], 'base64');
       if (!jpg || jpg.length > 1048576 || jpg[0] !== 0xff || jpg[1] !== 0xd8) return json(400, { ok: false, error: 'image' });
     }
-    const id = Date.now().toString(36) + randomBytes(3).toString('hex'), seed = randomBytes(4).readUInt32LE();
-    const rec = { id, createdAt: new Date().toISOString(), name: cleanName(k.name, `枝 ${db.sticks.length + 1}`), seed, element: stickElement(seed), model: k.model, ...(jpg && { image: `/sticks/img/${id}.jpg` }) };
+    const id = Date.now().toString(36) + randomBytes(3).toString('hex');
+    const rec = { id, createdAt: new Date().toISOString(), name: cleanName(k.name, `枝 ${db.sticks.length + 1}`), element: elementFromShape(k.model), model: k.model, ...(jpg && { image: `/sticks/img/${id}.jpg` }) };
     if (jpg) { await mkdir(IMG_DIR, { recursive: true }); await writeFile(join(IMG_DIR, id + '.jpg'), jpg); }
     db.sticks.push(rec);
     if (k.slot) db.assign[k.slot] = id;

@@ -7,6 +7,7 @@
 // corners, then the model's length, the branch, the thickness at both ends, the bow and which end is the tip.   node test-stickscan.mjs
 process.env.MARKER = 'rune';
 const W = await import('./public/world.js'), { buildStick, viewCamera, parseDesign, SCAN } = await import('./public/stickscan.js');
+const { elementFromShape } = await import('./public/stick-stats.js');
 SCAN.lengthScale = 1; // the pictures are drawn at the true size: no correction
 const design = parseDesign((await import('node:zlib')).gunzipSync((await import('node:fs')).readFileSync(new URL('./public/mahoujin-design.bin.gz', import.meta.url))));
 let fails = 0;
@@ -134,6 +135,7 @@ check(m.r[0] > m.r[1] && m.nodes[0][1] < m.nodes[m.tip][1], 'grip thicker than t
 const main = m.nodes.slice(0, m.tip + 1), sideAt = a => main.reduce((b, n) => Math.abs(n[1] - a) < Math.abs(b[1] - a) ? n : b)[0];
 const sag = Math.abs(sideAt(0) - (sideAt(-.4) + sideAt(.4)) / 2), trueSag = bow(.5) - (bow(.5 - .4 / SL) + bow(.5 + .4 / SL)) / 2;
 check(Math.abs(sag - trueSag) < .008, `bow ${(sag * 1000).toFixed(1)} mm (true ${(trueSag * 1000).toFixed(1)})`);
+check(elementFromShape(m) === 'wind', `one branch and a smooth bow become wind (${elementFromShape(m)})`);
 let threw = false; try { buildStick(views.slice(0, 3)); } catch { threw = true; }
 check(threw, 'too few pictures: an error, not a model');
 console.log(fails ? `${fails} FAILED` : 'all ok');

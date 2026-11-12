@@ -1,5 +1,5 @@
 // Stick scan on the dashboard: the phones' { type: 'scan' } pictures in, a model out (stickscan.js), saved by the server as a new stick
-// with one of the photos (POST /sticks: its power and speed from the volume, stick-stats.js); 棒設定 (sticks.js) lists them. It becomes
+// with one of the photos (POST /sticks: its element from the shape and power/speed from the volume, stick-stats.js); 棒設定 (sticks.js) lists them. It becomes
 // the phone's stick when the connection screen's 反映 assigns it (the server then sends { type: 'stick' } to every page: field3d.js setStick).
 // createStickScan(onText, onBuilt): collects one scan per slot; onText(slot, text) says how far it got, onBuilt(slot, record) gives the saved stick.
 // createStickView(canvas): the model turning slowly, for the connection screen.
@@ -56,7 +56,8 @@ export function createStickScan(onText, onBuilt = () => {}) {
           }
           const rec = await r.json();
           onBuilt(slot, rec);
-          onText(slot, `作成しました（まだ反映していません）：${shape}。体積 ${rec.volume} cm³ → 威力 ×${rec.stats.power.toFixed(2)}・弾速 ×${rec.stats.speed.toFixed(2)}。「反映」でこのスマホの棒になります`);
+          const element = { fire: '炎', thunder: '電気（雷）', wind: '風', water: '水' }[rec.element] ?? rec.element;
+          onText(slot, `作成しました（まだ反映していません）：${shape}。形から判定した属性は ${element}。体積 ${rec.volume} cm³ → 威力 ×${rec.stats.power.toFixed(2)}・弾速 ×${rec.stats.speed.toFixed(2)}。「反映」でこのスマホの棒になります`);
         } catch (e) { onText(slot, '作成できませんでした：' + e.message); console.warn(e); }
         delete scans[slot];
       }
