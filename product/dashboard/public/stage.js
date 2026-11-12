@@ -254,16 +254,36 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
   }
 
   /** Render one frame. In final mode the base scene is strictly camera pixels; only fx is projected over it. */
-  function render(dt, game, est) {
+  // The end-of-match show (ko-show.js): its state this frame, set by render(). It slows the effects and the flying pieces, rushes the camera in
+  // on a player (an off-centre window of the same view: works for every camera mode) and puts its backdrop between the arena and the players.
+  let koS = null;
+  const koV = new THREE.Vector3();
+  function koView(cam) {
+    if (!koS || koS.zoom <= 1.001 || !koS.focus?.chest) return false;
+    koV.copy(koS.focus.chest).project(cam); if (Math.abs(koV.z) > 1) return false; // behind the camera
+    const z = koS.zoom, fx = (koV.x + 1) / 2 * S.w, fy = (1 - koV.y) / 2 * S.h, ty = .55;
+    cam.setViewOffset(S.w, S.h, fx - koS.x * S.w / z, fy - ty * S.h / z, S.w / z, S.h / z); cam.updateMatrixWorld();
+    return true;
+  }
+  function koBackdrop(cam) {
+    if (!koS || koS.k <= 0) { fx.setKo(0); return; }
+    let ctr = null;
+    if (koS.focus?.chest) { koV.copy(koS.focus.chest).project(cam); ctr = new THREE.Vector2((koV.x + 1) / 2, (koV.y + 1) / 2); }
+    fx.setKo(koS.k, koS.color, ctr);
+  }
+  function koRender(cam) { const off = koView(cam); koBackdrop(cam); fx.render(field.setPass); if (off) { cam.clearViewOffset(); cam.updateMatrixWorld(); } }
+
+  function render(dt, game, est, ko = null) {
     const P = game.players, setup = game.match.phase === 'setup';
+    koS = ko; const fdt = dt * (ko?.scale ?? 1); // the show's slow motion (0 during the hit stop)
     const yawOf = b => Math.atan2(-b.R[6], b.R[0]); // body x axis = forward
     const needArena = S.mode === 'game' || cfg.pip;
     if (needArena) {
       drone.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
-      field.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot,
-        { body: p.body, base: p.base, tip: p.tip, hp: p.hp, hpMax: p.hpMax, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, skel: p.skel, calibAt: p.calibAt, lost: game.match.phase === 'result' && !!game.winner && game.winner !== p }])));
+      field.update(fdt, Object.fromEntries(Object.values(P).map(p => [p.slot,
+        { body: p.body, base: p.base, tip: p.tip, hp: p.hp, hpMax: p.hpMax, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, skel: p.skel, calibAt: p.calibAt, lost: game.match.phase === 'result' && !!game.winner && game.winner !== p }])), fdt);
     }
-    fx.step(dt);
+    fx.step(fdt);
     if (minimap) { const on = S.mode === 'game' && cfg.minimap && !setup; minimap.canvas.style.display = on ? '' : 'none'; if (on) minimap.draw(P, game.shots); }
     const sx = (Math.random() - .5) * 20 * S.shake, sy = (Math.random() - .5) * 20 * S.shake;
     el.style.transform = S.shake ? `translate(${sx}px, ${sy}px)` : '';
@@ -282,14 +302,14 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
       if (S.fixed) { // where phone C is, as on screen 4 (the dummy room's exact pose, else the scan, else the guide camera)
         applyCam(); if (video.__dummy) { toThreeCamera(video.__dummy.truePose, camera); camera.aspect = S.aspect; }
         camera.zoom = zoom; camera.updateProjectionMatrix(); camera.updateMatrixWorld(); keepView(camera);
-        renderer.setViewport(0, 0, S.w, S.h); fx.render(field.setPass);
+        renderer.setViewport(0, 0, S.w, S.h); koRender(camera);
         camera.zoom = 1; camera.updateProjectionMatrix(); return; // the final render shares this camera
       }
       overCam.aspect = S.aspect; overCam.updateProjectionMatrix();
       const keep = { p: camera.position.clone(), q: camera.quaternion.clone(), fov: camera.fov };
       camera.position.copy(overCam.position); camera.quaternion.copy(overCam.quaternion); camera.fov = overCam.fov; camera.aspect = S.aspect; camera.zoom = zoom; camera.updateProjectionMatrix();
       camera.updateMatrixWorld(); keepView(camera);
-      renderer.setViewport(0, 0, S.w, S.h); fx.render(field.setPass);
+      renderer.setViewport(0, 0, S.w, S.h); koRender(camera);
       camera.position.copy(keep.p); camera.quaternion.copy(keep.q); camera.fov = keep.fov; camera.zoom = 1; camera.updateProjectionMatrix();
       return;
     }

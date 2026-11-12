@@ -25,6 +25,7 @@ import { createPlayable } from './playable.js';
 import { createTutorial } from './tutorial.js';
 import { createGauge } from './hudgauge.js';
 import { PRESETS, DEFAULT_HOUR, clock } from './sky.js';
+import { createKoShow } from './ko-show.js';
 const TOD_SPEEDS = [['ゆっくり', 2], ['ふつう', 6], ['はやい', 24]]; // hours per minute: ふつう = a 60 s match from sunset into the night
 
 const $ = s => document.querySelector(s);
@@ -111,6 +112,27 @@ const hud = $('#hudTpl').content.firstElementChild.cloneNode(true);
 stage.el.append(hud);
 stage.attachMinimap(hud.querySelector('.minimap'));
 hudFlash.el = hud.querySelector('.flash');
+// the end of a match: KO (hit stop, camera rush, the loser blown apart) or time up, then the results (ko-show.js), in the winner's element colour
+const koShow = createKoShow(hud, {
+  colorOf: s => s ? EL_COLOR[game.players[s].element] ?? EL_COLOR.thunder : '#c9cfdc',
+  nameOf: s => { const p = game.players[s], sk = p.stick; return [sk?.name, ELEMENT_JA[p.element]].filter(Boolean).join('　'); },
+  onBurst(loser, winner) {
+    const at = loser.chest.clone(), dir = winner ? at.clone().sub(winner.chest) : at.clone().multiplyScalar(0);
+    stage.field.breakApart(loser.slot, at, dir);
+    stage.fx.hit(winner?.element ?? 'thunder', at.clone(), 1, { tier: 'l', target: at.clone() });
+    stage.drone.event('hit', { target: loser.slot, pos: at, power: 1 }); stage.state.shake = 1; stage.field.cheer();
+  },
+  sound(kind) { const w = game.winner; if (kind === 'ko' || kind === 'burst') sfx?.hit(w?.element ?? 'thunder', 0, 1, 'l'); },
+});
+let koPhase = null;
+function watchEnd() { // the show starts when the game says the match is over, and is put away when a new one (or setup) begins
+  const ph = game.match.phase; if (ph === koPhase) return;
+  if (ph === 'result') { const w = game.winner, l = w ? game.players[w.slot === 'A' ? 'B' : 'A'] : null; koShow.start(w, l, !!l && l.hp <= 0, game.players); }
+  else if (ph === 'countdown') { koShow.reset(); stage.field.unbreak(); koShow.intro(game.players); } // a new match: introduced, the broken one stands again
+  else if (ph === 'fight') {} // the intro runs on into the fight's first moment ("FIGHT!")
+  else { koShow.reset(); stage.field.unbreak(); }
+  koPhase = ph;
+}
 function flash(el) {
   const f = hudFlash.el; f.style.transition = 'none'; f.style.opacity = .5;
   f.style.background = `radial-gradient(${{ fire: '#ff7a1a', water: '#3d8bff', wind: '#e8fbff' }[el] ?? '#bfe8ff'}, transparent 70%)`;
@@ -181,7 +203,7 @@ gameCtrl.innerHTML = `
   <div class="row" id="zoomRow"><label title="今のカメラのズーム。カメラごとに覚える。1 が元の大きさ">ズーム <input id="zoom" type="range" min="0.5" max="3" step="0.05" style="width:130px;vertical-align:middle"> <span id="zoomOut" class="num"></span> 倍</label><button id="zoomReset">1 倍に戻す</button><span class="muted" id="zoomFor" style="font-size:12px"></span></div>
   <h3>表示</h3>
   <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="debug">デバッグ</button></div>
-  <div class="row"><span class="muted" style="font-size:12px">背景</span><span class="seg" id="backdrops"><button data-backdrop="court">中庭</button><button data-backdrop="rock">岩場</button><button data-backdrop="plain">無地</button></span></div>
+  <div class="row"><span class="muted" style="font-size:12px">背景</span><span class="seg" id="backdrops"><button data-backdrop="court">中庭</button><button data-backdrop="rock">岩場</button><button data-backdrop="chaoben">チャオベン劇場</button><button data-backdrop="plain">無地</button></span></div>
   <div class="row"><label title="中庭と岩場の空と光の時刻。動かすと影も付け直す"><span class="muted" style="font-size:12px">時刻</span> <input id="tod" type="range" min="0" max="24" step="0.25" style="width:130px;vertical-align:middle"> <span id="todOut" class="num"></span></label><span class="seg" id="todPresets">${PRESETS.map(([n, h]) => `<button data-tod="${h}">${n}</button>`).join('')}</span></div>
   <div class="row"><button id="todAuto" title="空の時刻がひとりでに進む。プリセットを押すと、そこから進む">時刻を自動で進める</button><span class="seg" id="todSpeeds">${TOD_SPEEDS.map(([n, v]) => `<button data-todspeed="${v}" title="1分で${v}時間">${n}</button>`).join('')}</span></div>
   <div class="row"><button data-tog="mimic" title="第三者視点カメラの映像を MediaPipe で見て、アバターに同じ姿勢をとらせる（別スレッドで 1 秒に最大 15 回）">カメラの姿勢をアバターに反映</button><span class="muted" id="mimicStatus" style="font-size:12px"></span></div>
@@ -393,7 +415,7 @@ function updateHud() {
   const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : m.mode === 'demo' ? 'デモ試合（相手を狙って撃つ）' : '';
   setText(pp, pt); pp.style.display = pt ? '' : 'none';
   const bt = game.bannerText(), bn = hud.querySelector('.banner');
-  bn.style.display = bt ? 'grid' : 'none'; setText(bn, bt);
+  bn.style.display = bt && !koShow.active ? 'grid' : 'none'; setText(bn, bt); // the end of a match is ko-show.js's
   setText(hud.querySelector('.status'), cfg.debug ? `位置: A ${POS_JA[game.players.A.src] ?? game.players.A.src} / B ${POS_JA[game.players.B.src] ?? game.players.B.src}　ドローン: ${DRONE_JA[stage.drone.mode]}（${stage.drone.shot}）　${stage.state.msg}` : '');
 }
 const LOG_ICON = { shot: '発射', special: '大', hit: '命中', charge: '溜め', guard: 'ガード', phase: '進行', win: '勝敗' };
@@ -507,7 +529,8 @@ function frame(ts) {
   vision.want(mimicOn || layersOn, layersOn);
   if (mimicOn || layersOn) vision.setHints(visionHints());
   applyMimic(mimicOn);
-  if (screen === 'game' || screen === 'final') { stage.render(dt, game, est); updateHud(); }
+  watchEnd();
+  if (screen === 'game' || screen === 'final') { stage.render(dt, game, est, koShow.state(dt)); updateHud(); }
   else stage.fx.step(dt); // effects keep their time even when nobody looks
   if (screen === 'final') finalControls.updateStatus();
   if (screen === 'space') space.frame(nowS(), est);

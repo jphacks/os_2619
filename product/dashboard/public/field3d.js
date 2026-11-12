@@ -12,6 +12,8 @@ import { makeWizard } from './wizard.js';
 import { makeWizardModel } from './wizardmodel.js';
 import { makeChaobenModel } from './chaobenmodel.js';
 import { stickGeometry, STICK_COLOR } from './stickmesh.js';
+import { createShatter } from './ko-shatter.js';
+import { createChaobenStage, THEATER_GLSL } from './chaoben-stage.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
@@ -94,6 +96,7 @@ varying vec2 vP;
 ${TOD_GLSL}
 ${SAND_GLSL}
 ${LAWN_GLSL}
+${THEATER_GLSL}
 float aline(float d, float px) { return 1. - smoothstep(.5 * px, 1.5 * px, d); } // ~1.5 px wide line at distance d (px units)
 float gridAt(vec2 p, float s) { vec2 q = p / s, g = abs(fract(q - .5) - .5) / fwidth(q); return 1. - min(min(g.x, g.y) / 1.2, 1.); }
 float ring(vec2 p, vec2 c, float r, float w) { float d = abs(length(p - c) - r); return 1. - smoothstep(w * .5, w * .5 + fwidth(d) * 1.5, d); }
@@ -126,7 +129,7 @@ void main() {
   c += mix(vec3(.04, .05, .08), vec3(.10, .12, .17), inside) * gridAt(p, .5) * (inside > .5 ? 1. : exp(-d * .8));
   c += inside * vec3(.07, .08, .11) * gridAt(p, 1.);
   if (uRock > .5) { // the canyon or the courtyard: the same ground as outside the floor, the lines below are painted on it
-    c = uRock > 1.5 ? lawnColor(p) : sandColor(p);
+    c = uRock > 2.5 ? theaterColor(p) : uRock > 1.5 ? lawnColor(p) : sandColor(p);
     float lines = 1. - smoothstep(.1, .15, abs(d));
     c *= 1. - .5 * lines; // a dark edge, so a team colour reads on the orange stone
     float wide = 1. - smoothstep(.055, .055 + fwidth(d) * 1.5, abs(d));
@@ -504,10 +507,10 @@ function makeAvatar(slot) {
 
 
   return {
-    root, world, slot, setStick, setChara, get chara() { return chara; },
+    root, world, slot, setStick, setChara, get chara() { return chara; }, broken: false, // broken: blown to pieces at a KO (ko-shatter.js), hidden until the next match
     update(dt, p) {
       const vis = !!p?.body;
-      root.visible = vis && !p.hideBody; world.visible = vis; // hideBody: the real skeleton from the camera is drawn instead
+      root.visible = vis && !p.hideBody && !this.broken; world.visible = vis && !this.broken; // hideBody: the real skeleton from the camera is drawn instead
       if (!vis) { smSeen = false; st.tall = null; st.cap = []; return null; } // the next one seen starts standing
       st.ko += ((p.hp ?? 100) <= 0 || p.lost ? 1 : -1) * dt * 2; st.ko = Math.max(0, Math.min(1, st.ko)); // lost: down in the same kneel as a crouch
       if (p.skel && POSE.show) return poseUpdate(dt, p);
@@ -602,7 +605,7 @@ export function createField(scene, opts = {}) {
   };
   const tod = Object.fromEntries(Object.keys(uniforms).filter(k => k.startsWith('uTod')).map(k => [k, uniforms[k]]));
   // The looks behind the arena. Each is built the first time it is shown (they bake textures and lights), and the floor shares its ground's uniforms.
-  const LOOKS = { rock: { make: createBackdrop, id: 1, shared: ['tN', 'tG', 'tSh', 'uSun', 'uExt'], ground: 0xb87a52 }, court: { make: createCourtyard, id: 2, shared: ['cN', 'cSh', 'cG', 'cSun', 'cExt'], ground: 0x6f9a45 } };
+  const LOOKS = { rock: { make: createBackdrop, id: 1, shared: ['tN', 'tG', 'tSh', 'uSun', 'uExt'], ground: 0xb87a52 }, court: { make: createCourtyard, id: 2, shared: ['cN', 'cSh', 'cG', 'cSun', 'cExt'], ground: 0x6f9a45 }, chaoben: { make: createChaobenStage, id: 3, shared: [], ground: 0xc8b6ff } };
   const built = {}; let activeLook = null, fieldR = 0, hour = DEFAULT_HOUR, settleAt = 0, lastBakeMs = 0, shownLook;
   const lookOf = name => {
     if (!built[name]) {
@@ -657,6 +660,8 @@ export function createField(scene, opts = {}) {
     const ax = new THREE.AxesHelper(.4); a.root.add(ax); a.ax = ax; ax.visible = false;
   }
 
+  const shatter = createShatter(group);
+
   const background = canvasTex(4, 512, (g, w, h) => {
     g.fillStyle = '#07090d'; g.fillRect(0, 0, w, h);
   });
@@ -664,14 +669,25 @@ export function createField(scene, opts = {}) {
   scene.add(group);
   return {
     group, background, rebuild,
-    update(dt, players = {}) {
+    update(dt, players = {}, fxDt = dt) {
       if (fieldSig() !== sig) rebuild();
+      shatter.step(fxDt); // the pieces keep the KO's slow motion (ko-show.js)
       uniforms.uTime.value += dt; if (activeLook) built[activeLook].update(dt);
+      if (activeLook) built[activeLook].watch?.(['A', 'B'].map(s => players[s]?.body && V(players[s].body.t[0], 1.3, players[s].body.t[2]))); // チャオベン劇場's giant head
       ['A', 'B'].forEach((s, i) => {
         const r = avatars[s].update(dt, players[s]);
         uniforms.uP.value[i].set(r?.x ?? 0, r?.z ?? 0, r?.hp ?? 0, r ? r.vis : 0);
       });
     },
+    /** KO: slot's character, stick and HP bar break into pieces, flung from at (world point) along dir (the blow). Hidden until unbreak(). */
+    breakApart(slot, at, dir) {
+      const a = avatars[slot]; if (!a || a.broken || !a.root.visible) return false;
+      shatter.burst([a.root, a.world], at, dir); a.broken = true; return true;
+    },
+    /** The look's crowd reacts to a KO (チャオベン劇場), if it has one. */
+    cheer() { if (activeLook) built[activeLook].react?.(); },
+    /** A new match: the characters stand again, the last pieces are swept away. */
+    unbreak() { for (const a of Object.values(avatars)) a.broken = false; shatter.clear(); },
     /** slot's stick drawn as the scanned model m (stickscan.js), or the plain rod with null */
     setStick(slot, m) { avatars[slot]?.setStick(m); },
     /** slot's character: 'wizard' | 'chaoben' (CHARAS) */
@@ -683,6 +699,7 @@ export function createField(scene, opts = {}) {
         if (pass === 'back') { a.shown = [a.root.visible, a.world.visible]; a.root.visible = a.world.visible = false; } // update() decides who is shown: only hide them for this pass
         else if (pass === 'front') [a.root.visible, a.world.visible] = a.shown;
       }
+      shatter.group.visible = pass !== 'back'; // the pieces fly in front of the KO backdrop
       if (arena) arena.visible = pass !== 'front';
       if (activeLook) built[activeLook].group.visible = pass !== 'front';
       uniforms.uHpOnly.value = pass === 'front' ? 1 : 0;

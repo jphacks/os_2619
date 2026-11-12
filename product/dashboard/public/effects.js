@@ -960,7 +960,17 @@ export function createFx(renderer, scene, camera, opts = {}) {
     transparent: true, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
     blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
   });
-  const hitDim = createHitDim(), dimMat = passMat('uniform float uA; void main() { gl_FragColor = vec4(0., 0., 0., uA); }', { uA: { value: 0 } }, { transparent: true });
+  // between the background and the players: the 大 shot's darkening, or the KO backdrop (ko-show.js): the winner's colour with speed lines
+  // rushing into the beaten player (uCtr, 0..1 on screen)
+  const hitDim = createHitDim(), dimMat = passMat(`uniform float uA, uK, uT, uAsp; uniform vec3 uC; uniform vec2 uCtr; varying vec2 vUv;
+    float h(float n) { return fract(sin(n) * 43758.5453); }
+    void main() {
+      vec2 d = (vUv - uCtr) * vec2(uAsp, 1.); float r = length(d), a = atan(d.y, d.x) / 6.2832 + .5;
+      float n = floor(a * 160.), w = h(n), line = step(.62, w) * smoothstep(.08 + .25 * h(n + 7.), .6, r) * step(.35, fract(r * (.6 + w) - uT * (2. + 3. * w) + w));
+      vec3 bg = mix(uC * 1.15, uC * .35, smoothstep(0., 1.1, r)) + line * .55 * (vec3(1.) + uC) * .5;
+      gl_FragColor = vec4(mix(vec3(0.), bg, uK), max(uA, uK));
+    }`, { uA: { value: 0 }, uK: { value: 0 }, uT: { value: 0 }, uAsp: { value: 1 }, uC: { value: new THREE.Color() }, uCtr: { value: new THREE.Vector2(.5, .5) } }, { transparent: true });
+  const ko = { k: 0, color: new THREE.Color(), ctr: new THREE.Vector2(.5, .5) };
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2)), quadScene = new THREE.Scene(), quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   quad.frustumCulled = false; quadScene.add(quad);
   const pass = (mat, target) => { quad.material = mat; renderer.setRenderTarget(target); renderer.render(quadScene, quadCam); };
@@ -1042,6 +1052,8 @@ export function createFx(renderer, scene, camera, opts = {}) {
     /** Adds a style: make(kit) -> handlers (see above). */
     addStyle(name, make) { styles[name] = { ...make(kit) }; if (name === styleName) style = styles[name]; },
     setStyle(name) { styleName = name; style = styles[name] ?? classic; },
+    /** The KO backdrop (ko-show.js): k 0..1 how much of it covers the background, color (THREE.Color, display colour), ctr the speed lines' centre (0..1 on screen, y up). */
+    setKo(k, color, ctr) { ko.k = Math.max(0, Math.min(1, k)); if (color) ko.color.copy(color); if (ctr) ko.ctr.copy(ctr); },
     get style() { return styleName; },
     get styles() { return Object.keys(styles); },
     dodge(element, pos, dir) {
@@ -1105,13 +1117,14 @@ export function createFx(renderer, scene, camera, opts = {}) {
       const ac = renderer.autoClear, rt0 = renderer.getRenderTarget(), ca = renderer.getClearAlpha(); renderer.getClearColor(cc);
       renderer.setRenderTarget(null); renderer.autoClear = true;
       timed('scene', () => {
-        const dim = setPass ? hitDim.level : 0;
+        const dim = setPass ? Math.max(hitDim.level, ko.k) : 0;
         if (!dim) { renderer.render(scene, camera); return; }
         // the depth stays through all three, so a rock still hides a player behind it
         const sky = scene.background;
         setPass('back'); renderer.render(scene, camera);
         renderer.autoClear = false;
-        dimMat.uniforms.uA.value = dim; pass(dimMat, null);
+        const u = dimMat.uniforms; u.uA.value = hitDim.level; u.uK.value = ko.k; u.uC.value.copy(ko.color); u.uCtr.value.copy(ko.ctr); u.uT.value = time; u.uAsp.value = dbs.x / Math.max(1, dbs.y);
+        pass(dimMat, null);
         scene.background = null; setPass('front'); renderer.render(scene, camera);
         scene.background = sky; setPass(null);
       });
