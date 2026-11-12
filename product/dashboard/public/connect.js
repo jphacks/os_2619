@@ -60,15 +60,23 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
       </div>
       <h3>棒の 3D モデル <span class="badge off stickstate">なし</span></h3>
       <canvas class="stick3d" style="width:100%;height:110px;display:block" aria-label="スキャンした棒の 3D モデル（左が先端）"></canvas>
-      <div class="row" style="margin-top:6px;align-items:center"><span class="kv stickinfo" style="font-size:12px;flex:1">アプリの「Scan」で作る（魔法陣の上に棒を置き、周りを歩いて撮る）。作るとこのスマホの棒になり、棒設定に保存される。左が先端</span><button class="stickclear">外す</button></div>
+      <div class="row" style="margin-top:6px;align-items:center"><span class="kv stickinfo" style="font-size:12px;flex:1">アプリの「Scan」で作る（魔法陣の上に棒を置き、周りを歩いて撮る）。作ると棒設定に保存され、「反映」でこのスマホの棒になる。左が先端</span><button class="stickapply" disabled>反映</button><button class="stickclear">外す</button></div>
     </section>`;
   for (const s of ['A', 'B']) {
     cards.insertAdjacentHTML('beforeend', tpl(s));
     const el = cards.lastElementChild, q = c => el.querySelector(c);
-    slots[s] = { el, q, imu: [], traj: [], stick: createStickView(q('.stick3d')) };
-    q('.stickclear').onclick = () => { // the stick stays saved (棒設定); only this slot goes back to the plain rod
-      if (slots[s].stick.model && confirm(`スマホ ${s} の棒を外します（ゲームはいつもの棒に戻る。棒は棒設定に残る）`))
-        fetch('/sticks/assign', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ [s]: null }) }).catch(e => alert('外せませんでした: ' + e.message));
+    slots[s] = { el, q, imu: [], traj: [], stick: createStickView(q('.stick3d')), pending: null, assigned: null };
+    const assign = id => fetch('/sticks/assign', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ [s]: id }) })
+      .then(r => { if (!r.ok) throw new Error(r.status); });
+    q('.stickapply').onclick = () => { // the stick just built becomes this phone's (the server's 'stick' then shows it as in use)
+      const p = slots[s].pending; if (!p) return;
+      assign(p.id).then(() => { slots[s].pending = null; showStick(s); }).catch(e => alert('反映できませんでした: ' + e.message));
+    };
+    q('.stickclear').onclick = () => { // the stick stays saved (棒設定); this slot goes back to the plain rod, and a stick not yet applied is dropped from view
+      const S = slots[s]; if (!S.assigned && !S.pending) return;
+      if (!confirm(`スマホ ${s} の棒を外します（ゲームはいつもの棒に戻る。棒は棒設定に残る）`)) return;
+      S.pending = null; showStick(s);
+      if (S.assigned) assign(null).catch(e => alert('外せませんでした: ' + e.message));
     };
     // euler[0] is WitMotion's "roll" (about sensor X), but on the mounted sensor that reads as pitch, so the labels are swapped
     for (const [k, names] of [['euler', ['ピッチ', 'ロール', 'ヨー']], ['gyro', ['x', 'y', 'z']], ['acc', ['x', 'y', 'z']]])
@@ -186,13 +194,21 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
   info(); setInterval(info, 5000);
 
   // ---- data in ----
-  const stickScan = createStickScan((slot, text) => { const s = slots[slot]; if (s) s.q('.stickinfo').textContent = text; });
+  const stickScan = createStickScan((slot, text) => { const s = slots[slot]; if (s) s.q('.stickinfo').textContent = text; },
+    (slot, rec) => { const s = slots[slot]; if (s) { s.pending = rec; showStick(slot); } });
+  /** The 3D view and badge of a slot's stick: one just built and not applied yet (反映 on), else the one in use (server 'stick'). */
+  function showStick(slot) {
+    const s = slots[slot], m = s.pending?.model ?? s.assigned, b = s.q('.stickstate');
+    s.stick.set(m);
+    b.textContent = s.pending ? `未反映 ${(m.length * 100).toFixed(0)} cm` : m ? `使用中 ${(m.length * 100).toFixed(0)} cm` : 'なし';
+    b.className = 'badge stickstate ' + (s.pending ? 'warn' : m ? 'ok' : 'off');
+    s.q('.stickapply').disabled = !s.pending; s.q('.stickclear').disabled = !s.pending && !s.assigned;
+  }
   function ingest(k) {
     const s = slots[k.slot]; if (!s) return;
     if (k.type === 'scan') stickScan.ingest(k);
     if (k.type === 'stick') {
-      s.stick.set(k.model);
-      const b = s.q('.stickstate'); b.textContent = k.model ? `${(k.model.length * 100).toFixed(0)} cm` : 'なし'; b.className = 'badge stickstate ' + (k.model ? 'ok' : 'off');
+      s.assigned = k.model ?? null; showStick(k.slot);
       if (k.model) sq(`.sticks input[data-s="${k.slot}"]`).value = k.model.length; // app.js takes the length for the game
     }
     if (k.type === 'imu') { s.imu.push(k); while (s.imu.length && s.imu[0].t < k.t - WINDOW) s.imu.shift(); }
