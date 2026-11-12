@@ -21,7 +21,7 @@ const now = () => performance.now() / 1000;
 const toMat = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
 // where phone C should go: 3.5 m in front of the centre, 1.7 m up or higher, tilted down a little (camera before a scan)
 export const GUIDE_CAM = { x: 0, y: 1.7, z: 3.5, yaw: 0, pitch: -16, roll: 0, fov: 45 };
-const CRT_LINES = 400; // the CRT look's lines, about (cfg.crt)
+const CRT_LINES = 270; // the CRT look's lines, about (cfg.crt)
 export const DRONE_JA = { fixed: '定点（最終映像と同じ）', auto: '自動演出', orbit: '周回', chaseA: 'A の肩越し', chaseB: 'B の肩越し', top: '真上', side: '真横', free: '自由操作' };
 
 const RK = W.MARKER === 'rune' ? '-mahoujinA' + W.RUNE_SCALE : ''; // a scan belongs to the sheets it saw: the mahoujin (T0 on A's side, at its scale) or the AprilTag square
@@ -242,7 +242,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     S.crt = !!cfg.crt; el.classList.toggle('crt', S.crt); crtVeil.style.display = S.crt ? '' : 'none';
     const pitch = Math.max(2, Math.round(h * devicePixelRatio / CRT_LINES)) / devicePixelRatio; // css px per line
     S.crtLines = h / pitch;
-    if (S.crt) crtVeil.style.background = `radial-gradient(ellipse at center, transparent 62%, rgba(0,0,0,.3) 100%), repeating-linear-gradient(to bottom, transparent 0 ${pitch / 2}px, rgba(0,0,0,.2) ${pitch / 2}px ${pitch}px)`;
+    if (S.crt) crtVeil.style.background = `radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.45) 100%), repeating-linear-gradient(to bottom, transparent 0 ${pitch / 2}px, rgba(0,0,0,.35) ${pitch / 2}px ${pitch}px)`;
     fx.setSize(w, h);
     S.w = w; S.h = h;
     if (minimap) minimap.canvas.width = minimap.canvas.height = Math.round(Math.min(w, h) * .26 * devicePixelRatio);
@@ -274,11 +274,12 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
         return (texture2D(tFrame, vec2(vUv.x + dx, y - lh / 3.)).rgb + texture2D(tFrame, vec2(vUv.x + dx, y)).rgb + texture2D(tFrame, vec2(vUv.x + dx, y + lh / 3.)).rgb) / 3.; }
       void main() {
         // the beam: about a line height sharp, and it bleeds along its line
-        vec3 c = line(0., 0.) * .4 + (line(-.5, 0.) + line(.5, 0.)) * .2 + (line(-1.2, 0.) + line(1.2, 0.)) * .1;
+        vec3 c = line(0., 0.) * .3 + (line(-.7, 0.) + line(.7, 0.)) * .2 + (line(-1.6, 0.) + line(1.6, 0.)) * .15;
+        c.r = mix(c.r, line(.5, 0.).r, .5); c.b = mix(c.b, line(-.5, 0.).b, .5); // the three guns a little out of line
         vec3 g = vec3(0.);
         for (int i = 0; i < 12; i++) { vec2 d = vec2(cos(float(i) * .5236), sin(float(i) * .5236));
-          g += max(line(d.x * 2.5, floor(d.y * 2.5 + .5)) - .6, 0.) + max(line(d.x * 5., floor(d.y * 5. + .5)) - .6, 0.); } // only what is bright glows
-        gl_FragColor = vec4(c + g * (.55 / 24.), 1.);
+          g += max(line(d.x * 2.5, floor(d.y * 2.5 + .5)) - .5, 0.) + max(line(d.x * 5., floor(d.y * 5. + .5)) - .5, 0.); } // only what is bright glows
+        gl_FragColor = vec4(c + g * (1.1 / 24.), 1.);
       }`,
     depthTest: false, depthWrite: false,
   });
