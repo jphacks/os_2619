@@ -26,6 +26,7 @@ import { createTutorial } from './tutorial.js';
 import { createGauge } from './hudgauge.js';
 import { PRESETS, DEFAULT_HOUR, clock } from './sky.js';
 import { createKoShow } from './ko-show.js';
+import { createSwingSense, SWING_DEFAULT, SWING_GAIN, ATTACK_SPEED } from './swing-sense.js';
 const TOD_SPEEDS = [['ゆっくり', 2], ['ふつう', 6], ['はやい', 24]]; // hours per minute: ふつう = a 60 s match from sunset into the night
 
 const $ = s => document.querySelector(s);
@@ -40,9 +41,10 @@ const DEFAULTS = {
   zoom: { fixed: 1, auto: 1, orbit: 1, chaseA: 1, chaseB: 1, top: 1, side: 1 }, // game screen: zoom per camera mode (free: the mouse wheel)
   chara: { A: 'wizard', B: 'wizard' }, // who each player is drawn as (field3d.js CHARAS): the wizard, or the special character チャオベン
   mimic: true, // the avatars copy the poses MediaPipe finds in phone C's picture (screen 3, and the small 3D window of screen 4)
+  swing: SWING_DEFAULT, // the sword swing heard on the player's phone (swing-sense.js): on, and the 小 / 中 / 大 lines in °/s
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
-const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen }, zoom: { ...DEFAULTS.zoom, ...saved.zoom }, chara: { ...DEFAULTS.chara, ...saved.chara } };
+const cfg = { ...DEFAULTS, ...saved, swing: { ...SWING_DEFAULT, ...saved.swing }, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen }, zoom: { ...DEFAULTS.zoom, ...saved.zoom }, chara: { ...DEFAULTS.chara, ...saved.chara } };
 if ((saved.viewVer ?? 0) < 2) { cfg.mirrorX = cfg.mirrorY = cfg.swordFlip = false; cfg.viewVer = 2; } // the left-right / up-down guesses are off until a measured need: the alignment is solved from the tags now
 cfg.visOn = false; // picture recognition (MediaPipe) is off at every start: nothing is loaded or run until it is switched on in the final bar
 if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
@@ -80,6 +82,16 @@ function phoneSound(slots, kind, ...args) {
   for (const slot of new Set(slots)) hub.send?.({ type: 'sfx', slot, ...(kind === 'chargeFail' ? { kind } : { voices }) });
 }
 
+// every fast turn of a stick plays a sword swing on that player's phone, louder for a bigger swing (swing-sense.js): the player hears that the
+// system saw the movement. Sent straight from the stick's packets, in any phase.
+const swingSense = createSwingSense(() => cfg.swing), SWING_RATE = { s: 1.1, m: 1, l: .92 }; // a bigger swing a little lower, as a heavier blade
+const swingFx = { A: null, B: null }; // the last swing per player, for the meter
+function swingSound(k) {
+  const e = swingSense.ingest(k); if (!e) return;
+  swingFx[e.slot] = { ...e, at: performance.now() };
+  hub.send?.({ type: 'sfx', slot: e.slot, voices: [{ file: 'swing', gain: SWING_GAIN[e.tier], rate: SWING_RATE[e.tier], offset: 0, dur: 0, rel: .25, fade: null }] });
+}
+
 // recognition on the final screen (vision.js) and its layers under the effects (visionfx.js); nothing runs unless it is switched on (cfg.visOn) and a layer is on
 const VIS_KEYS = ['visDraw', 'visGhost', 'visSpot', 'visTrail'], EL_COLOR = { fire: '#ff7a1a', thunder: '#ffd23d', water: '#2f7dff', wind: '#d8f4f2' };
 const vision = createVision({ getSource: () => video.__dummy?.canvas ?? video, stickLen: () => (cfg.stickLen.A + cfg.stickLen.B) / 2, getFps: () => fps }); // fps (below): the recognition backs off while the page itself is slow
@@ -107,6 +119,7 @@ hub.on(k => {
   }
   connect.ingest(k); game.ingest(k);
   if (k.type === 'truth' && !playable.owns(k.slot)) vsrc.dummy?.setTruth(k.slot, k); // fake-world.mjs: the dummy room shows the simulated players
+  if (k.type === 'imu') swingSound(k);
   if (k.type === 'imu' || k.type === 'ar' || k.type === 'calib')
     for (const ev of detectors.ingest(k, axis[k.slot])) { if (!ev.keep) connect.logAction(ev); if (!playable.owns(ev.slot)) game.onSensed(ev); }
 });
@@ -185,6 +198,11 @@ gameCtrl.innerHTML = `
       <div class="facts"></div>
       <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="2.5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
   </div>
+  <h3>振りの音（スマホ）</h3>
+  <div class="row"><button id="swingOn" title="棒を速く振ると、そのプレイヤーのスマホから刀を振る音が鳴る。振りが大きいほど大きな音">刀の振り音を鳴らす</button><button id="swingTry" title="この PC で中の大きさを鳴らす">試聴</button></div>
+  <div class="swingm">${['A', 'B'].map(s => `<div class="row"><b style="color:var(--${s});width:1.2em">${s}</b><canvas data-swingm="${s}" width="300" height="44"></canvas></div>`).join('')}</div>
+  <div class="rules">${['s', 'm', 'l'].map(t => `<label title="棒の回転の速さがこれを超えると${TIER_JA[t]}の音">${TIER_JA[t]}の音になる速さ <input data-swing="${t}" type="range" min="100" max="1500" step="10" style="width:110px;vertical-align:middle"> <span data-swingout="${t}" class="num"></span> °/s</label>`).join('')}</div>
+  <p class="muted" style="font-size:12px;margin:4px 0">メーターは棒の回転の速さ（°/s）。白い棒が今の速さ、縦線が 小・中・大 の音の境目、赤い線が攻撃の境目（${ATTACK_SPEED}°/s より速く 60° 以上振って、ピタッと止めると弾が出る）</p>
   <h3>キャラクター</h3>
   <div id="charas">${['A', 'B'].map(s => `<div class="row" style="align-items:center;gap:6px"><b style="color:var(--${s});width:1.2em">${s}</b><div class="seg">${Object.entries(CHARAS).map(([k, v]) => `<button data-chara="${k}" data-s="${s}">${v}</button>`).join('')}</div></div>`).join('')}</div>
   <h3>プレイヤーの動き（ダミー映像）</h3>
@@ -226,6 +244,38 @@ tutorial.mountButton($('#tutRow'));
 for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.onclick = () => game.command({ cmd: 'phase', phase: b.dataset.phase });
 gameCtrl.querySelector('[data-cmd=pause]').onclick = () => game.command({ cmd: 'pause' });
 gameCtrl.querySelector('[data-cmd=reset]').onclick = () => game.command({ cmd: 'reset' });
+$('#swingOn').onclick = () => { cfg.swing.on = !cfg.swing.on; save(); };
+$('#swingTry').onclick = () => { sfx?.unlock?.(); sfx?.play('swing', { gain: SWING_GAIN.m }); };
+for (const i of gameCtrl.querySelectorAll('[data-swing]')) {
+  i.value = cfg.swing[i.dataset.swing];
+  i.oninput = () => { // the lines stay in order: 小 ≤ 中 ≤ 大
+    const t = i.dataset.swing, v = +i.value, c = cfg.swing; c[t] = v;
+    if (t === 's') { c.m = Math.max(c.m, v); c.l = Math.max(c.l, c.m); } else if (t === 'm') { c.s = Math.min(c.s, v); c.l = Math.max(c.l, v); } else { c.m = Math.min(c.m, v); c.s = Math.min(c.s, c.m); }
+    for (const j of gameCtrl.querySelectorAll('[data-swing]')) j.value = c[j.dataset.swing];
+    save();
+  };
+}
+const SWING_MAX = 1500, swingShown = { A: 0, B: 0 };
+function drawSwingMeters() { // the stick's turning speed against the lines; a swing just heard shows its size for a moment
+  const c = cfg.swing;
+  for (const o of gameCtrl.querySelectorAll('[data-swingout]')) setText(o, String(c[o.dataset.swingout]));
+  $('#swingOn').classList.toggle('on', !!c.on);
+  for (const cv of gameCtrl.querySelectorAll('[data-swingm]')) {
+    const s = cv.dataset.swingm, g = cv.getContext('2d'), W = cv.width, H = cv.height, x = v => Math.min(1, v / SWING_MAX) * (W - 2) + 1;
+    swingShown[s] = Math.max(swingSense.speed(s), swingShown[s] * .85); // falls back smoothly, so a fast flick is still seen
+    g.clearRect(0, 0, W, H);
+    const y0 = 13, bh = 16; // the bar; the attack line's label above it, the sound lines' below
+    g.fillStyle = 'rgba(255,255,255,.08)'; g.fillRect(0, y0, W, bh);
+    const band = [[0, c.s, 'rgba(255,255,255,.04)'], [c.s, c.m, 'rgba(120,200,255,.18)'], [c.m, c.l, 'rgba(120,200,255,.32)'], [c.l, SWING_MAX, 'rgba(120,200,255,.5)']];
+    for (const [a, b, col] of band) { g.fillStyle = col; g.fillRect(x(a), y0, x(b) - x(a), bh); }
+    g.fillStyle = '#fff'; g.fillRect(1, y0 + 4, x(swingShown[s]) - 1, bh - 8);
+    g.font = '10px system-ui'; g.textBaseline = 'top';
+    for (const [v, label] of [[c.s, '小'], [c.m, '中'], [c.l, '大']]) { g.fillStyle = '#cfe8ff'; g.fillRect(x(v) - .5, y0 - 2, 1.5, bh + 4); g.fillText(label, Math.min(W - 12, x(v) + 2), y0 + bh + 2); }
+    g.fillStyle = '#ff5a5a'; g.fillRect(x(ATTACK_SPEED) - .5, y0 - 2, 1.5, bh + 4); g.fillText('攻撃', Math.min(W - 24, x(ATTACK_SPEED) + 2), 0);
+    const f = swingFx[s];
+    if (f && performance.now() - f.at < 900) { g.fillStyle = '#ffe600'; g.fillRect(x(f.peak) - 1, y0 - 2, 3, bh + 4); g.font = 'bold 11px system-ui'; g.textAlign = 'right'; g.fillText(`${TIER_JA[f.tier]} ${Math.round(f.peak)}°/s`, W - 1, 0); g.textAlign = 'left'; }
+  }
+}
 const secIn = $('#secIn'); secIn.value = cfg.matchSec;
 secIn.onchange = () => { cfg.matchSec = Math.max(10, +secIn.value || 60); save(); game.command({ cmd: 'matchSec', value: cfg.matchSec }); };
 // rules: written straight into cfg.rules, which game.js reads every time
@@ -414,6 +464,7 @@ function damagePops() {
   }
 }
 function updateHud() {
+  if (screen === 'game') drawSwingMeters();
   damagePops();
   const m = game.match;
   for (const p of Object.values(game.players)) {
