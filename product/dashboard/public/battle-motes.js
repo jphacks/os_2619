@@ -1,5 +1,5 @@
 // Battle motes: during a fight, the whole field breathes fire and magic — embers welling up from the ground, short flickers of flame,
-// and slow drifting sparks of magic light — drawn over the arena (field3d.js) on the game screen. One THREE.Points; every mote's place
+// and slow drifting sparks of magic light, all in oranges and reds — drawn over the arena (field3d.js) on the game screen. One THREE.Points; every mote's place
 // is a function of the time (no per-frame work on the CPU), additive and depth-tested so the players stand in front of them.
 // createBattleMotes(extent): { points, update(dt, on) } — extent { minX, maxX, minZ, maxZ } (field3d.js fieldExtent), spread 1 m past it;
 // on: a fight is running (the motes fade in over ~1 s, and out again after).
@@ -8,7 +8,7 @@ import * as THREE from 'three';
 const KINDS = [ // count, life (s), size (m)
   { n: 420, life: 2.4, size: .045 }, // ember: small, rises fast, flickers
   { n: 140, life: 1.1, size: .13 },  // flame: a short-lived lick of fire close to the ground
-  { n: 160, life: 5.5, size: .08 },  // magic: blue / violet / teal, floats and wanders
+  { n: 160, life: 5.5, size: .08 },  // magic: orange / red / crimson, floats and wanders
 ];
 
 const VS = `
@@ -25,16 +25,16 @@ void main() {
   if (aKind < .5) {        // ember: wells up from the ground, wavering, and flickers
     p.y = f * f * 2.4 + f * .6; p.x += .18 * sin(t * 2.3 + r * 9.); p.z += .18 * cos(t * 1.9 + r * 7.);
     a *= .55 + .45 * sin(t * 23. + r * 40.);
-    vCol = mix(vec3(1., .32, .05), vec3(1., .78, .3), r);
+    vCol = mix(vec3(1., .14, .02), vec3(1., .5, .08), r); // red to orange
   } else if (aKind < 1.5) { // flame: a quick lick of fire off the floor
     p.y = .05 + f * .55; size *= 1. - .6 * f;
-    vCol = mix(vec3(1., .45, .08), vec3(1., .85, .45), 1. - f);
+    vCol = mix(vec3(.95, .12, .02), vec3(1., .55, .12), 1. - f); // orange at the root, red as it dies
     a *= .8;
   } else {                 // magic: floats in the air, wandering slowly
     p.y = .25 + 1.6 * hash(r + 7.7) + .25 * sin(t * .9 + r * 6.);
     p.x += .35 * sin(t * .6 + r * 11.); p.z += .35 * cos(t * .5 + r * 13.);
     a *= .65 + .35 * sin(t * 4. + r * 20.);
-    vCol = r < .34 ? vec3(.35, .55, 1.) : r < .67 ? vec3(.72, .4, 1.) : vec3(.3, 1., .85);
+    vCol = r < .34 ? vec3(1., .42, .06) : r < .67 ? vec3(1., .16, .04) : vec3(.85, .05, .12); // orange, red, crimson
   }
   vA = min(1., a * uLevel * 1.8); // bright enough to glow (the CRT pass makes the brightest bloom)
   vec4 mv = modelViewMatrix * vec4(p, 1.);

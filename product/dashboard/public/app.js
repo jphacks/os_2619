@@ -359,6 +359,7 @@ for (const r of drawer.querySelectorAll('[data-vol]')) r.oninput = () => {
 };
 $('#mute').onclick = () => sfx?.setMuted(!sfx.muted);
 $('#tutRow').append($('#bgmPreview')); // the match BGM button sits next to 発表用スライド on screen 3 (moved out of the settings drawer)
+{ const b = document.querySelector('[data-tog="crt"]'); b.insertAdjacentHTML('beforeend', '<kbd>C</kbd>'); $('#tutRow').append(b); } // and the CRT look's on / off (C), easy to find
 $('#bgmPreview').onclick = () => { if (!sfx) return; sfx.unlock?.(); sfx.previewBgm(!sfx.previewingBgm); };
 for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
   if (!sfx) return; sfx.unlock?.();
@@ -380,6 +381,7 @@ addEventListener('keydown', e => {
   if (held[k] && screen !== 'final') return holdCharge(held[k], true);
   if (KEYS[k]) return game.command(KEYS[k]);
   if (k === 'k') scan();
+  else if (k === 'c') document.querySelector('[data-tog="crt"]').click(); // ブラウン管風 on / off
   else if (k === 'm') $('#bgmPreview').click(); // 試合 BGM を流す / 止める (also while the slides are open: tutorial.js lets M through); the minimap is its button only
   else if (k === 'Escape') drawer.classList.remove('open');
 });
