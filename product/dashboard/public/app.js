@@ -86,10 +86,11 @@ function phoneSound(slots, kind, ...args) {
 // system saw the movement. Sent straight from the stick's packets, in any phase.
 const swingSense = createSwingSense(() => cfg.swing), SWING_RATE = { s: 1.1, m: 1, l: .92 }; // a bigger swing a little lower, as a heavier blade
 const swingFx = { A: null, B: null }; // the last swing per player, for the meter
+const sendSwing = (slot, tier) => hub.send?.({ type: 'sfx', slot, voices: [{ file: 'swing', gain: SWING_GAIN[tier], rate: SWING_RATE[tier], offset: 0, dur: 0, rel: .25, fade: null }] });
 function swingSound(k) {
   const e = swingSense.ingest(k); if (!e) return;
   swingFx[e.slot] = { ...e, at: performance.now() };
-  hub.send?.({ type: 'sfx', slot: e.slot, voices: [{ file: 'swing', gain: SWING_GAIN[e.tier], rate: SWING_RATE[e.tier], offset: 0, dur: 0, rel: .25, fade: null }] });
+  sendSwing(e.slot, e.tier);
 }
 
 // recognition on the final screen (vision.js) and its layers under the effects (visionfx.js); nothing runs unless it is switched on (cfg.visOn) and a layer is on
@@ -199,7 +200,8 @@ gameCtrl.innerHTML = `
       <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="2.5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
   </div>
   <h3>振りの音（スマホ）</h3>
-  <div class="row"><button id="swingOn" title="棒を速く振ると、そのプレイヤーのスマホから刀を振る音が鳴る。振りが大きいほど大きな音">刀の振り音を鳴らす</button><button id="swingTry" title="この PC で中の大きさを鳴らす">試聴</button></div>
+  <div class="row"><button id="swingOn" title="棒を速く振ると、そのプレイヤーのスマホから刀を振る音が鳴る。振りが大きいほど大きな音">刀の振り音を鳴らす</button><button id="swingTry" title="この PC で中の大きさを鳴らす">試聴（PC）</button></div>
+  <div class="row" style="gap:4px;align-items:center"><span class="muted" style="font-size:12px">スマホで鳴らす</span>${['A', 'B'].map(s => `<b style="color:var(--${s});margin-left:6px">${s}</b>${['s', 'm', 'l'].map(t => `<button data-swingtest="${t}" data-s="${s}" title="${s} のスマホで${TIER_JA[t]}の振り音を鳴らす（つながっていれば）">${TIER_JA[t]}</button>`).join('')}`).join('')}</div>
   <div class="swingm">${['A', 'B'].map(s => `<div class="row"><b style="color:var(--${s});width:1.2em">${s}</b><canvas data-swingm="${s}" width="300" height="44"></canvas></div>`).join('')}</div>
   <div class="rules">${['s', 'm', 'l'].map(t => `<label title="棒の回転の速さがこれを超えると${TIER_JA[t]}の音">${TIER_JA[t]}の音になる速さ <input data-swing="${t}" type="range" min="100" max="1500" step="10" style="width:110px;vertical-align:middle"> <span data-swingout="${t}" class="num"></span> °/s</label>`).join('')}</div>
   <p class="muted" style="font-size:12px;margin:4px 0">メーターは棒の回転の速さ（°/s）。白い棒が今の速さ、縦線が 小・中・大 の音の境目、赤い線が攻撃の境目（${ATTACK_SPEED}°/s より速く 60° 以上振って、ピタッと止めると弾が出る）</p>
@@ -246,6 +248,7 @@ gameCtrl.querySelector('[data-cmd=pause]').onclick = () => game.command({ cmd: '
 gameCtrl.querySelector('[data-cmd=reset]').onclick = () => game.command({ cmd: 'reset' });
 $('#swingOn').onclick = () => { cfg.swing.on = !cfg.swing.on; save(); };
 $('#swingTry').onclick = () => { sfx?.unlock?.(); sfx?.play('swing', { gain: SWING_GAIN.m }); };
+for (const b of gameCtrl.querySelectorAll('[data-swingtest]')) b.onclick = () => sendSwing(b.dataset.s, b.dataset.swingtest); // the phone's own sound, without swinging
 for (const i of gameCtrl.querySelectorAll('[data-swing]')) {
   i.value = cfg.swing[i.dataset.swing];
   i.oninput = () => { // the lines stay in order: 小 ≤ 中 ≤ 大
