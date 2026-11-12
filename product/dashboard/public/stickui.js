@@ -70,8 +70,9 @@ export function createStickView(canvas) {
   let model = null;
   return {
     set(m) {
-      model = m; mesh.geometry.dispose();
-      mesh.geometry = m ? stickGeometry(m) : new THREE.BufferGeometry(); if (!m) return;
+      mesh.geometry.dispose();
+      const g = m && stickGeometry(m); // null: a model in a format this cannot draw (shown as none)
+      model = g ? m : null; mesh.geometry = g || new THREE.BufferGeometry(); if (!g) return;
       mesh.scale.set(1, m.length, 1);
       cam.position.set(0, 0, m.length * .62 / Math.tan(15 * Math.PI / 180) / Math.max(1, cam.aspect)); cam.lookAt(0, 0, 0); // the length fills the width
     },
