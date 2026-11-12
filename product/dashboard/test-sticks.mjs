@@ -86,6 +86,7 @@ assert.equal((await json('/sticks', { model: { ...big, v: 2 } })).status, 400);
 assert.equal((await json('/sticks', { model: { ...big, edges: [[0, 99]] } })).status, 400);
 assert.equal((await json('/sticks', { model: big, slot: 'C' })).status, 400);
 assert.equal((await json('/sticks', { model: big, image: 'data:image/png;base64,AAAA' })).status, 400);
+assert.equal((await json('/sticks', { model: big, snap: 'data:image/png;base64,AAAA' })).status, 400);
 assert.equal((await json('/sticks', { model: big, image: 'data:image/jpeg;base64,' + 'A'.repeat(1.6e6) })).status, 413);
 assert.equal((await json('/sticks/img/..%2Fx.jpg')).status, 404);
 assert.equal((await json('/sticks/assign', { A: 'nope' })).status, 400);
@@ -119,10 +120,17 @@ await wait(() => pin.find(k => k.type === 'stick' && k.slot === 'A' && k.model?.
   let l = await wait(() => pin.find(k => k.type === 'stickList'));
   assert.deepEqual(l.sticks.map(s => s.id), [rec3.id, rec.id]); assert.equal(l.current, rec.id);
   assert.equal(l.sticks[0].model, undefined); assert.equal(l.sticks[0].image, null); assert.equal(l.sticks[1].image, rec.image);
+  // the model's own picture wins over the scan photo; a stick saved without one gets it later (PUT)
+  const s = await (await fetch(`${base}/sticks/${rec.id}/snap`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ snap: jpeg }) })).json();
+  assert.equal(s.snap, `/sticks/img/${rec.id}s.jpg`); assert.equal((await fetch(base + s.snap)).status, 200);
+  assert.equal((await fetch(`${base}/sticks/${rec.id}/snap`, { method: 'PUT', body: '{"snap":"x"}' })).status, 400);
+  phone.send(JSON.stringify({ type: 'stickList' }));
+  assert.equal((await wait(() => pin.filter(k => k.type === 'stickList')[1])).sticks[1].image, s.snap);
+  pin.splice(0); // the picks below count their own answers
   phone.send(JSON.stringify({ type: 'pickStick', id: 'nope' })); // unknown: nothing changes
   phone.send(JSON.stringify({ type: 'pickStick', id: rec3.id }));
-  l = await wait(() => pin.filter(k => k.type === 'stickList')[2]);
-  assert.equal(pin.filter(k => k.type === 'stickList')[1].current, rec.id); assert.equal(l.current, rec3.id);
+  l = await wait(() => pin.filter(k => k.type === 'stickList')[1]);
+  assert.equal(pin.filter(k => k.type === 'stickList')[0].current, rec.id); assert.equal(l.current, rec3.id);
   await wait(() => inbox.find(k => k.type === 'sticks' && k.A?.id === rec3.id));
   await wait(() => pin.find(k => k.type === 'stick' && k.slot === 'A' && k.model?.length === .8));
 }

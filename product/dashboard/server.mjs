@@ -223,14 +223,14 @@ wss.on('connection', (ws, req) => {
       if (ms > 0) for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, { type: 'flash', ms });
       return;
     }
-    // the phone's Stick menu: { type: 'stickList' } → every saved stick (newest first; its photo's path, GET over HTTP, not its model: small and quick
-    // on a slow link) and the one this slot uses;
+    // the phone's Stick menu: { type: 'stickList' } → every saved stick (newest first; its picture's path, GET over HTTP, not its model: small and
+    // quick on a slow link — the model rendered (snap) when there is one, else a scan photo) and the one this slot uses;
     // { type: 'pickStick', id } puts that stick on this phone's slot (as 棒設定 does) and answers with the list again
     if ((k.type === 'stickList' || k.type === 'pickStick') && role === 'phone' && p && p.ws === ws) {
       if (k.type === 'pickStick' && typeof k.id === 'string' && byId(k.id) && db.assign[p.slot] !== k.id) {
         db.assign[p.slot] = k.id; saveDb(); toDashboards(sticksMsg()); sendModel(p.slot); log(`sticks: phone ${p.slot} picked ${k.id}`);
       }
-      return send(ws, { type: 'stickList', current: db.assign[p.slot], sticks: db.sticks.slice().reverse().map(s => ({ id: s.id, name: s.name, element: s.element, stats: withStats(s).stats, image: s.image ?? null })) });
+      return send(ws, { type: 'stickList', current: db.assign[p.slot], sticks: db.sticks.slice().reverse().map(s => ({ id: s.id, name: s.name, element: s.element, stats: withStats(s).stats, image: s.snap ?? s.image ?? null })) });
     }
     if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); if (rec && (k.type === 'imu' || k.type === 'ar')) { rec.out.write(JSON.stringify({ ...k, rx: Date.now() / 1000 }) + '\n'); rec.n++; } }
   });
@@ -345,7 +345,8 @@ async function rulesFile(req, res) {
 
 // ---- /sticks: the saved sticks. A dashboard posts each 3D model it builds from a phone's Scan (stickui.js) with one of the photos;
 // the model's branch and bend shape picks the element. Stats (power, speed: stick-stats.js) come from its wood volume, or the admin's own.
-//  GET /sticks → records   POST /sticks {name?, model, image?: jpeg data URL, slot?: 'A' | 'B' (assign it there)} → the new record
+//  GET /sticks → records   POST /sticks {name?, model, image?: jpeg data URL, snap?: jpeg data URL (the model rendered, stickshot.js), slot?: 'A' | 'B' (assign it there)} → the new record
+//  PUT /sticks/<id>/snap {snap} → the record (a dashboard renders the picture for a stick saved without one)
 //  PATCH /sticks/<id> {name?, element?, stats?: {power, speed} (0.5-2) | null = back to the volume's}   DELETE /sticks/<id>
 //  GET /sticks/assign → {A, B}   POST /sticks/assign {A?: id|null, B?: id|null}   GET /sticks/img/<id>.jpg
 // Stored in DATA_DIR (data/, not in git): sticks.json {sticks, assign} and sticks/<id>.jpg. Stats are never trusted from the file: they
@@ -370,6 +371,8 @@ const saveDb = () => { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(S
 const cleanName = (n, or) => String(n ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 24) || or;
 // null when over max; the rest is still read (up to 8 × max) so the client gets the 413 instead of a reset
 async function body(req, max) { let b = '', n = 0; for await (const c of req) { n += c.length; if (n > 8 * max) return req.destroy(), null; if (n <= max) b += c; } return n > max ? null : b; }
+// a JPEG data URL (up to 1 MB) -> its bytes, false when it is not one
+const jpegOf = u => { const m = typeof u === 'string' && u.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/), b = m && Buffer.from(m[1], 'base64'); return !!b && b.length <= 1048576 && b[0] === 0xff && b[1] === 0xd8 && b; };
 async function sticksRoute(req, res, path) {
   const json = (code, v) => res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(v));
   const img = path.match(/^\/sticks\/img\/([a-z0-9]+)\.jpg$/);
@@ -396,21 +399,30 @@ async function sticksRoute(req, res, path) {
     let k; try { k = JSON.parse(b); } catch {}
     if (!okStick(k?.model)) { log('sticks: refused (model)'); return json(400, { ok: false, error: 'model' }); }
     if (k.slot != null && !SLOTS.includes(k.slot)) return json(400, { ok: false, error: 'slot' });
-    let jpg = null;
-    if (k.image != null) {
-      const m = typeof k.image === 'string' && k.image.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/);
-      jpg = m && Buffer.from(m[1], 'base64');
-      if (!jpg || jpg.length > 1048576 || jpg[0] !== 0xff || jpg[1] !== 0xd8) return json(400, { ok: false, error: 'image' });
-    }
+    const jpg = k.image != null ? jpegOf(k.image) : null, snap = k.snap != null ? jpegOf(k.snap) : null;
+    if (jpg === false) return json(400, { ok: false, error: 'image' });
+    if (snap === false) return json(400, { ok: false, error: 'snap' });
     const id = Date.now().toString(36) + randomBytes(3).toString('hex');
-    const rec = { id, createdAt: new Date().toISOString(), name: cleanName(k.name, `枝 ${db.sticks.length + 1}`), element: elementFromShape(k.model), model: k.model, ...(jpg && { image: `/sticks/img/${id}.jpg` }) };
-    if (jpg) { await mkdir(IMG_DIR, { recursive: true }); await writeFile(join(IMG_DIR, id + '.jpg'), jpg); }
+    const rec = { id, createdAt: new Date().toISOString(), name: cleanName(k.name, `枝 ${db.sticks.length + 1}`), element: elementFromShape(k.model), model: k.model, ...(jpg && { image: `/sticks/img/${id}.jpg` }), ...(snap && { snap: `/sticks/img/${id}s.jpg` }) };
+    if (jpg || snap) await mkdir(IMG_DIR, { recursive: true });
+    if (jpg) await writeFile(join(IMG_DIR, id + '.jpg'), jpg);
+    if (snap) await writeFile(join(IMG_DIR, id + 's.jpg'), snap);
     db.sticks.push(rec);
     if (k.slot) db.assign[k.slot] = id;
     saveDb(); const out = withStats(rec);
     log(`sticks: saved ${id} ${rec.element}, ${out.volume} cm³, power ${out.stats.power} speed ${out.stats.speed}${k.slot ? ', for ' + k.slot : ''}`);
     if (k.slot) { toDashboards(sticksMsg()); sendModel(k.slot); }
     return json(200, out);
+  }
+  const snapAt = path.match(/^\/sticks\/([a-z0-9]+)\/snap$/);
+  if (snapAt && req.method === 'PUT') {
+    const s = ID.test(snapAt[1]) && byId(snapAt[1]); if (!s) return json(404, { ok: false });
+    const b = await body(req, 1.5e6); if (b === null) return json(413, { ok: false, error: 'too big' });
+    let k; try { k = JSON.parse(b); } catch {}
+    const snap = jpegOf(k?.snap); if (!snap) return json(400, { ok: false, error: 'snap' });
+    await mkdir(IMG_DIR, { recursive: true }); await writeFile(join(IMG_DIR, s.id + 's.jpg'), snap);
+    s.snap = `/sticks/img/${s.id}s.jpg`; saveDb();
+    return json(200, withStats(s));
   }
   const del = path.match(/^\/sticks\/([a-z0-9]+)$/);
   if (del && req.method === 'PATCH') { // the admin edits a stick by hand
@@ -435,7 +447,7 @@ async function sticksRoute(req, res, path) {
     if (!ID.test(del[1]) || !byId(del[1])) return json(404, { ok: false });
     db.sticks = db.sticks.filter(s => s.id !== del[1]);
     const was = ['A', 'B'].filter(s => db.assign[s] === del[1]); for (const s of was) db.assign[s] = null;
-    saveDb(); rmSync(join(IMG_DIR, del[1] + '.jpg'), { force: true });
+    saveDb(); for (const f of [del[1] + '.jpg', del[1] + 's.jpg']) rmSync(join(IMG_DIR, f), { force: true });
     if (was.length) { toDashboards(sticksMsg()); for (const s of was) sendModel(s); }
     return json(200, { ok: true });
   }

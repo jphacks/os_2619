@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { buildStick, viewCamera, parseDesign } from './stickscan.js';
 import { stickGeometry, STICK_COLOR } from './stickmesh.js';
+import { stickSnapshot } from './stickshot.js';
 
 async function decode(jpg) {
   const blob = await (await fetch('data:image/jpeg;base64,' + jpg)).blob(), bmp = await createImageBitmap(blob);
@@ -53,7 +54,7 @@ export function createStickScan(onText, onBuilt = () => {}) {
           const ends = model.nodes.filter((_, i) => model.edges.filter(e => e.includes(i)).length === 1).length; // grip, tip and one per branch
           const shape = `長さ ${(model.length * 100).toFixed(0)} cm、枝分かれ ${ends - 2} 本、太さ 根元 ${(2000 * model.r[0]).toFixed(0)} mm・先 ${(2000 * model.r[1]).toFixed(0)} mm（${model.views} 方向から）`;
           const image = 'data:image/jpeg;base64,' + s.jpgs[s.jpgs.length >> 1]; // a picture from the middle of the walk round
-          const r = await fetch('/sticks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, image }) });
+          const r = await fetch('/sticks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, image, snap: stickSnapshot(model) }) }); // snap: the picture the phones' Stick menu shows
           if (!r.ok) {
             const why = (await r.json().catch(() => null))?.error ?? '';
             throw new Error(`保存できませんでした（${r.status} ${why}）。${why === 'features or image' ? 'PC のサーバーが古いままです。サーバーを再起動してください。' : ''}${shape}`);
@@ -67,6 +68,16 @@ export function createStickScan(onText, onBuilt = () => {}) {
       }
     },
   };
+}
+
+/** Sticks saved before the model's picture existed (no snap): render it here and give it to the server, once per page load. */
+export async function backfillSnaps() {
+  try {
+    for (const s of await (await fetch('/sticks', { cache: 'no-store' })).json()) {
+      const snap = !s.snap && s.model && stickSnapshot(s.model);
+      if (snap) await fetch(`/sticks/${s.id}/snap`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ snap }) });
+    }
+  } catch (e) { console.warn('stick pictures', e); }
 }
 
 export function createStickView(canvas) {
