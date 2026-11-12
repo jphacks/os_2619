@@ -46,6 +46,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     private let vibe = Vibe()
     private let hitSound = HitSound()
     private let chargeSound = ChargeSound()
+    private let gameSound = GameSound()
     private let torchQ = DispatchQueue(label: "torch") // lockForConfiguration can block
     private var torchOff = DispatchTime(uptimeNanoseconds: 0) // on torchQ: when the torch goes off
 
@@ -85,6 +86,8 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         link.onFlash = { [weak self] ms in self?.flash(ms: ms); self?.redScreen(ms: ms); if ms > 0 { self?.hitSound.play(); self?.vibe.hit() } }
         link.onVibrate = { [weak self] kind in self?.vibe.handle(kind); if kind == "off" || kind == "win" { self?.chargeSound.stop() } }
         link.onCharge = { [weak self] el, tier, level in self?.chargeSound.charge(element: el, tier: tier, level: level) }
+        link.onSound = { [weak self] voices in self?.gameSound.play(voices) }
+        link.onChargeFail = { [weak self] in self?.chargeSound.fail() }
         session.delegate = self
         session.delegateQueue = arQueue
     }

@@ -40,6 +40,10 @@ class Link(private val id: String, private val name: String) {
     @Volatile var onVibrate: ((String) -> Unit)? = null
     /** A `vibrate` charge packet also says what the PC's charge sound is doing: element, tier (s / m / l), level 0..1. OkHttp's thread. */
     @Volatile var onCharge: ((String, String, Double) -> Unit)? = null
+    /** A game sound for this player (`sfx`, dashboard app.js phoneSound): its voices (GameSound.play). OkHttp's thread. */
+    @Volatile var onSound: ((org.json.JSONArray) -> Unit)? = null
+    /** The charge broke off (`sfx` kind chargeFail): ChargeSound.fail. OkHttp's thread. */
+    @Volatile var onChargeFail: (() -> Unit)? = null
     /** The PC's word on this slot's scanned stick (dashboard stickscan.js): "91 cm", "none", or null before it said anything. */
     @Volatile var stick: String? = null; private set
 
@@ -93,6 +97,7 @@ class Link(private val id: String, private val name: String) {
                 "welcome" -> { slot = k.optString("slot", "-"); marker = k.optString("marker", "april"); status = "connected" }
                 "marker" -> marker = k.optString("marker", marker)
                 "flash" -> onFlash?.invoke(k.optInt("ms"))
+                "sfx" -> if (k.optString("kind") == "chargeFail") onChargeFail?.invoke() else k.optJSONArray("voices")?.let { onSound?.invoke(it) }
                 "vibrate" -> {
                     onVibrate?.invoke(k.optString("kind"))
                     if (k.optString("kind") == "charge") onCharge?.invoke(k.optString("element"), k.optString("tier", "s"), k.optDouble("level", 0.0))

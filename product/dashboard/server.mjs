@@ -199,6 +199,15 @@ wss.on('connection', (ws, req) => {
       for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, m);
       return;
     }
+    if (k.type === 'sfx') { // a game sound for that slot's phone (app.js phoneSound): { kind: 'chargeFail' } or { voices: [{ file, gain, rate, offset, dur, rel, fade }] }
+      if (role !== 'dashboard') return;
+      const num = (x, lo, hi, d = 0) => Number.isFinite(+x) ? Math.max(lo, Math.min(hi, +x)) : d;
+      const m = k.kind === 'chargeFail' ? { type: 'sfx', kind: 'chargeFail' } : { type: 'sfx', voices: (Array.isArray(k.voices) ? k.voices : []).slice(0, 4)
+        .filter(v => PHONE_SFX.has(v?.file)).map(v => ({ file: v.file, gain: num(v.gain, 0, 1), rate: num(v.rate, .25, 4, 1), offset: num(v.offset, 0, 10), dur: num(v.dur, 0, 10), rel: num(v.rel, 0, 2, .25),
+          fade: Array.isArray(v.fade) ? [num(v.fade[0], 0, 10), num(v.fade[1], 0, 10)] : null })) };
+      if (m.kind || m.voices.length) for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, m);
+      return;
+    }
     if (k.type === 'flash') { // a hit: { type: 'flash', slot, ms } from a dashboard lights the torch of that slot's phone
       if (role !== 'dashboard') return;
       const ms = Math.min(+k.ms || 0, 2000);
@@ -335,6 +344,8 @@ const byId = id => db.sticks.find(s => s.id === id) ?? null;
 // stats: the admin's own values (PATCH, s.custom) or, without them, from (seed, rarity, rarityMul)
 const withStats = s => s && { ...s, stats: s.custom ? { ...s.custom } : stickStats(s.seed, s.rarity, rarityMul) };
 const ELEMENTS = ['fire', 'thunder', 'water', 'wind'], STAT_KEYS = ['hp', 'power', 'speed', 'charge'], STAT_RANGE = [.5, 2];
+// the game sounds a phone has (Android res/raw, iOS bundle): what { type: 'sfx' } may name
+const PHONE_SFX = new Set(['fire', 'lightning', 'water', 'wind'].flatMap(e => [1, 2, 3].map(i => e + i)).concat(['guard', 'guard_reflect']));
 const assigned = () => ({ A: withStats(byId(db.assign.A)), B: withStats(byId(db.assign.B)) });
 const sticksMsg = () => JSON.stringify({ type: 'sticks', ...assigned() });
 const saveDb = () => { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(STICKS_FILE, JSON.stringify(db, null, 2)); }; // sync: two saves never interleave

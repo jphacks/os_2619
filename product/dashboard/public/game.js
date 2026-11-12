@@ -42,11 +42,11 @@ const TIER = {
 export const POS_JA = { auto: '自動', phones: '胸スマホ', start: '立ち位置' };
 
 /**
- * createGame({ fx, drone, sfx: () => audio | null, cfg, onFlash, onHit?, onVibrate?, clock? }) → { players, match, shots, events, step, onSensed, command, canAct, ... }
+ * createGame({ fx, drone, sfx: () => audio | null, cfg, onFlash, onHit?, onVibrate?, onSound?, clock? }) → { players, match, shots, events, step, onSensed, command, canAct, ... }
  * cfg (live object): posSrc 'auto'|'phones'|'camera'|'start', hand 'R'|'L', aim 'stick'|'eye', stickLen { A, B }, test (no HP loss),
  * rules (RULES: tier seconds, damage, rapid-fire interval, how far you may move while charging).
  */
-export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {}, onHit = () => {}, onVibrate = () => {}, clock = null, getDummyFrame = () => null }) {
+export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {}, onHit = () => {}, onVibrate = () => {}, onSound = () => {}, clock = null, getDummyFrame = () => null }) {
   const now = clock ?? (() => performance.now() / 1000); // test-game.mjs drives a fake clock
   const events = []; // newest first: { at: Date.now(), slot, kind, text }
   const log = (slot, kind, text) => { events.unshift({ at: Date.now(), slot, kind, text }); if (events.length > 200) events.pop(); };
@@ -153,7 +153,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       const level = sideways(p); // only a stick lying sideways guards; held upright or pointed forward it does nothing
       const still = level && t - h[0].t >= win - 1e-6 && dev < GUARD_STILL && t - (p.swingAt ?? -9) > AFTER_SWING; // held still for the whole hold
       const on = canAct() && !p.charging && (p.guardKey ?? still); // a keyboard player says so itself (playable.js); a real stick guards by being held still
-      if (on && !p.guarding) { showAct(p, 'ガード'); log(p.slot, 'guard', 'ガード'); sfx()?.guard('up', panOf(p.chest)); }
+      if (on && !p.guarding) { showAct(p, 'ガード'); log(p.slot, 'guard', 'ガード'); sfx()?.guard('up', panOf(p.chest)); onSound([p.slot], 'guard', 'up'); }
       p.guarding = on;
     }
   }
@@ -170,8 +170,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         : (cfg.aim ?? 'motion') === 'motion' ? (tier === 's' ? levelAim(p) : motionAim(p) ?? p.dir.clone()) : p.dir.clone();
     p.shots++; if (tier === 'l') p.specials++;
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
-    if (tier === 'l') { s?.special(p.element, panOf(p.tip)); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
-    else { s?.shot(p.element, panOf(p.tip), T.power); drone?.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() }); }
+    if (tier === 'l') { s?.special(p.element, panOf(p.tip)); onSound([p.slot], 'special', p.element); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
+    else { s?.shot(p.element, panOf(p.tip), T.power); onSound([p.slot], 'shot', p.element, 0, T.power); drone?.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() }); }
     const k = sizeOf(tier);
     // steer: the dummy room keeps turning a shot onto the chest it was drawn at; デモ試合 never does (aimed once, then straight)
     const steer = dummyTarget && match.mode !== 'demo';
@@ -212,7 +212,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const sizeOf = tier => Math.max(.2, Math.min(4, +(rules().size?.[tier] ?? 1) || 1));
   function fxShot(p, tier) { // try-out: aimed at the other player's chest so it always shows the hit too
     const T = TIER[tier], foe = other(p), aim = foe.chest.clone().sub(p.tip).normalize();
-    if (tier === 'l') sfx()?.special(p.element, panOf(p.tip)); else sfx()?.shot(p.element, panOf(p.tip), T.power);
+    if (tier === 'l') { sfx()?.special(p.element, panOf(p.tip)); onSound([p.slot], 'special', p.element); } else { sfx()?.shot(p.element, panOf(p.tip), T.power); onSound([p.slot], 'shot', p.element, 0, T.power); }
     const k = sizeOf(tier);
     shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, test: true, homing: match.mode === 'demo', pos: p.tip.clone(), vel: aim.multiplyScalar(speedOf(T, p, tier)), born: now() });
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
@@ -240,7 +240,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       if (hit && foe.guarding) { // 小 bounces back at its shooter; 中 / 大 go through the guard and hit
         fx.block(foe.element, s.pos.clone());
         if (s.tier === 's') {
-          sfx()?.guard('reflect', panOf(s.pos));
+          sfx()?.guard('reflect', panOf(s.pos)); onSound([foe.slot], 'guard', 'reflect');
           const back = s.owner.chest.clone().sub(s.pos).normalize();
           fx.endShot(s.id, 'timeout');
           s.id = fx.shot(s.element, s.pos.clone(), back.clone(), T.power, T.big * (s.size ?? 1), { tier: s.tier, scale: s.size ?? 1 });
@@ -251,7 +251,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         log(foe.slot, 'guard', `${TIER_JA[s.tier]}にガードを貫通された`);
       }
       if (hit) {
-        fx.hit(s.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.element, panOf(s.pos), T.hit, s.tier);
+        fx.hit(s.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.element, panOf(s.pos), T.hit, s.tier); onSound([foe.slot, s.owner.slot], 'hit', s.element, 0, T.hit, s.tier); // both: the one hit and the one who hit
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
         onHit(foe.slot, T.flash); // the phone of the player who was hit lights its torch for this many ms (app.js, server.mjs)
         if (!s.test) damage(foe, s.owner, s.tier, s.mul ?? 1); // try-out shots only show
@@ -279,7 +279,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function failCharge(p, why) {
     if (!p.charging) return;
     p.charging = false; p.charge = 0; p.chargeT = 0; p.tier = null; p.autoRelease = null; p.fails++;
-    sfx()?.chargeFail?.(p.slot); // the charge sound runs backwards and fades instead of stopping dead
+    sfx()?.chargeFail?.(p.slot); onSound([p.slot], 'chargeFail'); // the charge sound runs backwards and fades instead of stopping dead (the phone's too)
     fx.hit(p.element, p.tip.clone(), .1); showAct(p, '溜め失敗'); log(p.slot, 'charge', `溜め失敗（${why}）`);
   }
   /** A detector event from actions.js ({ slot, name, dir, power, speed }). Dodge is not part of the game; Guard comes from

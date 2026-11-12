@@ -67,6 +67,17 @@ const vsrc = createVideoSource(video, { onChange: () => { stage?.resize(); } });
 
 let sfx = null; // sound: loaded lazily so a failing module never stops the picture
 import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const v = JSON.parse(localStorage.getItem('pd-vol')); if (v) for (const [k, x] of Object.entries(v)) sfx.setVolume(k, x); } catch {} }).catch(e => console.warn('audio', e));
+/** A game sound that concerns these players (their shot, guard, failed charge, a hit they took or landed) plays on their
+ *  phones as well: the same files cut / pitched / faded as here (audio.js describe), sent through the server ({ type: 'sfx' }).
+ *  The phone plays at gain × PHONE_REF: the loudest sound (大's hit, MIX.special +3 dB) at full scale. */
+const PHONE_REF = Math.pow(10, -3 / 20), PHONE_FILE = { guardUp: 'guard', guardReflect: 'guard_reflect' };
+function phoneSound(slots, kind, ...args) {
+  if (!sfx || sfx.muted) return;
+  const voices = kind === 'chargeFail' ? [] : sfx.describe(kind, ...args).map(v => ({ file: PHONE_FILE[v.name] ?? v.name, gain: Math.min(1, +(v.gain * PHONE_REF).toFixed(3)),
+    rate: +v.rate.toFixed(3), offset: v.offset, dur: v.dur, rel: v.rel, fade: v.fade }));
+  if (kind !== 'chargeFail' && !voices.length) return;
+  for (const slot of new Set(slots)) hub.send?.({ type: 'sfx', slot, ...(kind === 'chargeFail' ? { kind } : { voices }) });
+}
 
 // recognition on the final screen (vision.js) and its layers under the effects (visionfx.js); nothing runs unless it is switched on (cfg.visOn) and a layer is on
 const VIS_KEYS = ['visDraw', 'visGhost', 'visSpot', 'visTrail'], EL_COLOR = { fire: '#ff7a1a', thunder: '#ffd23d', water: '#2f7dff', wind: '#d8f4f2' };
@@ -75,7 +86,7 @@ const vfx = createVisionFx();
 const overlay = { compose: (src, w, h, dt) => vfx.compose(src, w, h, dt, vision, cfg.visOn ? { draw: cfg.visDraw, ghost: cfg.visGhost, spot: cfg.visSpot, trail: cfg.visTrail } : {}, { A: EL_COLOR[game.players.A.element] ?? EL_COLOR.thunder, B: EL_COLOR[game.players.B.element] ?? EL_COLOR.thunder }) };
 const stage = createStage({ video, cfg, hub, PA, isSetup: () => game.match.phase === 'setup', overlay });
 const hudFlash = { el: null };
-const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), onHit: (slot, ms) => hub.send?.({ type: 'flash', slot, ms }), onVibrate: (slot, kind, extra) => hub.send?.({ type: 'vibrate', slot, kind, ...extra }), getDummyFrame: () => vsrc.dummy?.frame });
+const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), onHit: (slot, ms) => hub.send?.({ type: 'flash', slot, ms }), onVibrate: (slot, kind, extra) => hub.send?.({ type: 'vibrate', slot, kind, ...extra }), onSound: phoneSound, getDummyFrame: () => vsrc.dummy?.frame });
 stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: プログラム版 (smash, default) / 画像素材版 (textured) / いつもの (classic)
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
 // A / B: keyboard / random / still (screens 3 / 4, dummy room only), through the dummy's truth input and game.command

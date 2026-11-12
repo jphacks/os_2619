@@ -120,6 +120,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     try { v.src.stop(t + fade + .005); } catch {}
   }
   function voice(key, name, { gain = 1, pan = 0, rate = 1, dur = 0, rel = .25, vary = true, fade = null, offset = 0 } = {}) {
+    if (capture) { if (buf[name]) capture.push({ name, gain: gain * norm[name], rate, offset, dur, rel, fade }); return null; } // describe(): what would play, nothing plays
     const b = buf[name];
     if (!b || ctx.state !== 'running' || muted) return null;
     const t = ctx.currentTime, same = voices.filter(v => v.key === key);
@@ -147,6 +148,7 @@ export function createAudio({ base = 'audio/' } = {}) {
   // ---- BGM ducking: the deepest request wins until it is over ----
   let duckEnd = 0, duckDepth = 1;
   function duck([d, hold, rel]) {
+    if (capture) return;
     const t = ctx.currentTime, target = db(d);
     if (t < duckEnd && target > duckDepth) return; // a deeper duck is running
     const g = duckG.gain;
@@ -306,6 +308,14 @@ export function createAudio({ base = 'audio/' } = {}) {
     voice(key('guard', kind), name, { pan, gain: db(kind === 'up' ? MIX.shot - 4 : MIX.hit - 2) });
   }
   function play(name, { gain = 1, pan = 0, rate = 1 } = {}) { return !!voice(key('play', name), name, { gain, pan, rate, vary: false }); }
+  /** The voices a game sound (shot / hit / special / guard) would start, without playing them: [{ name, gain (linear, incl.
+   *  loudness norm), rate, offset, dur, rel, fade }]. The players' phones play the same (app.js phoneSound). */
+  let capture = null;
+  function describe(kind, ...args) {
+    if (!['shot', 'hit', 'special', 'guard'].includes(kind)) return [];
+    capture = [];
+    try { ({ shot, hit, special, guard })[kind](...args); return capture; } finally { capture = null; }
+  }
 
   function setVolume(b, v) {
     if (!(b in vol)) return;
@@ -335,7 +345,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     load, unlock,
     get unlocked() { return ctx.state === 'running'; }, get loaded() { return loaded; },
     setVolume, get volumes() { return { ...vol }; }, setMuted, get muted() { return muted; },
-    bgm, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, chargeFail, aura, guard, play, stopAll, dispose,
+    bgm, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, chargeFail, describe, aura, guard, play, stopAll, dispose,
     peak, // output peak (linear) over the last ~43 ms, for meters / tests
     ctx,
   };

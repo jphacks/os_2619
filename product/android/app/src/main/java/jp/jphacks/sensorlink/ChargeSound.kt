@@ -10,6 +10,7 @@ import android.media.MediaFormat
 import android.media.SoundPool
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import java.nio.ByteOrder
 import kotlin.math.PI
@@ -26,7 +27,11 @@ import kotlin.math.sin
  * repeat for LEASE_MS it stops by itself (like Vibe), so a lost PC or link cannot leave it on. Any thread.
  */
 class ChargeSound(private val context: Context) {
-    private class Loop(val track: AudioTrack, val rate: Int, val frames: Int)
+    private class Loop(val track: AudioTrack, val rate: Int, val frames: Int, val pcm: ShortArray, val ch: Int)
+    private var startedAt = 0L // elapsedRealtime when the current loop started
+    private var heardAt = 0L; private var heard = 0.0 // s of the loop played up to heardAt (the pitch changes the pace)
+    private var pitch = 1.0
+    private var vol = 1f
 
     private val th = HandlerThread("chargesound").apply { start() }
     private val h = Handler(th.looper)
@@ -47,12 +52,34 @@ class ChargeSound(private val context: Context) {
         h.removeCallbacks(leaseOver); h.postDelayed(leaseOver, LEASE_MS)
         val name = if (loops.containsKey("charge_$element")) "charge_$element" else "charge"
         val loop = loops[name] ?: return@post
-        if (cur != name) { stopNow(); h.postDelayed(leaseOver, LEASE_MS); loop.track.reloadStaticData(); loop.track.setLoopPoints(0, loop.frames, -1); loop.track.play(); cur = name; this.tier = null }
+        if (cur != name) { stopNow(); h.postDelayed(leaseOver, LEASE_MS); loop.track.reloadStaticData(); loop.track.setLoopPoints(0, loop.frames, -1); loop.track.play(); cur = name; this.tier = null; startedAt = SystemClock.elapsedRealtime(); heardAt = startedAt; heard = 0.0 }
         if (tier == "l" && this.tier != "l") stingId[element]?.let { stings.play(it, 1f, 1f, 1, 0, 1f) } // 大 reached
+        if (tier != this.tier) { val t = SystemClock.elapsedRealtime(); heard += (t - heardAt) / 1000.0 * pitch; heardAt = t; pitch = PITCH[tier] ?: PITCH.getValue("s") }
         this.tier = tier
-        loop.track.playbackRate = (loop.rate * (PITCH[tier] ?: PITCH.getValue("s"))).roundToInt()
+        loop.track.playbackRate = (loop.rate * pitch).roundToInt()
         // audio.js: db(MIX.charge + MIX.chargeSpan * level), here relative to a full charge (0 dB on the phone's speaker)
-        loop.track.setVolume(10.0.pow(SPAN_DB * (level.coerceIn(0.0, 1.0) - 1) / 20).toFloat())
+        vol = 10.0.pow(SPAN_DB * (level.coerceIn(0.0, 1.0) - 1) / 20).toFloat()
+        loop.track.setVolume(vol)
+    }
+
+    /** The charge broke off (audio.js chargeFail): instead of a cut, the charge heard so far plays backwards, fast, from where
+     *  the loop is now, fading to silence over FAIL_FADE s. */
+    fun fail() = h.post {
+        val name = cur ?: return@post
+        val loop = loops[name] ?: return@post
+        val t = SystemClock.elapsedRealtime()
+        val sofar = heard + (t - heardAt) / 1000.0 * pitch
+        val pos = loop.track.playbackHeadPosition.toLong().mod(loop.frames.toLong()).toDouble()
+        stopNow()
+        if (sofar < .05) return@post
+        val speed = pitch * (minOf(sofar, 3.0) / FAIL_SPAN).coerceIn(FAIL_MIN, FAIL_MAX)
+        val n = (FAIL_FADE * loop.rate).roundToInt(); val ch = loop.ch; val out = ShortArray(n * ch)
+        for (i in 0 until n) {
+            val s = (pos - i * speed).mod(loop.frames.toDouble()); val k = s.toInt(); val a = s - k; val k1 = (k + 1) % loop.frames
+            val g = vol * (1 - i.toDouble() / n)
+            for (c in 0 until ch) out[i * ch + c] = ((loop.pcm[k * ch + c] * (1 - a) + loop.pcm[k1 * ch + c] * a) * g).roundToInt().coerceIn(-32768, 32767).toShort()
+        }
+        playPcm(out, loop.rate, ch, h)
     }
 
     fun stop() = h.post { stopNow() }
@@ -69,7 +96,7 @@ class ChargeSound(private val context: Context) {
 
     /** Decode res/raw/<name>.mp3 to 16-bit PCM, cut [a, e) s and equal-power crossfade its last x s into its head (audio.js loopBuffer). */
     private fun load(name: String, region: DoubleArray): Loop {
-        val (pcm, rate, ch) = decode(name)
+        val (pcm, rate, ch) = decodeRaw(context, name)
         val frames = pcm.size / ch
         val a = (region[0] * rate).roundToInt()
         val n = minOf(frames, (region[1] * rate).roundToInt()) - a
@@ -88,46 +115,12 @@ class ChargeSound(private val context: Context) {
                 .setChannelMask(if (ch == 2) AudioFormat.CHANNEL_OUT_STEREO else AudioFormat.CHANNEL_OUT_MONO).build())
             .setTransferMode(AudioTrack.MODE_STATIC).setBufferSizeInBytes(out.size * 2).build()
         track.write(out, 0, out.size)
-        return Loop(track, rate, out.size / ch)
-    }
-
-    private fun decode(name: String): Triple<ShortArray, Int, Int> {
-        val ex = MediaExtractor()
-        context.resources.openRawResourceFd(raw(name)).use { ex.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
-        ex.selectTrack(0)
-        val fmt = ex.getTrackFormat(0)
-        var rate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE); var ch = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-        val codec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME)!!)
-        codec.configure(fmt, null, null, 0); codec.start()
-        val chunks = ArrayList<ShortArray>(); val info = MediaCodec.BufferInfo()
-        var inDone = false
-        while (true) {
-            if (!inDone) {
-                val i = codec.dequeueInputBuffer(10_000)
-                if (i >= 0) {
-                    val n = ex.readSampleData(codec.getInputBuffer(i)!!, 0)
-                    if (n < 0) { codec.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inDone = true }
-                    else { codec.queueInputBuffer(i, 0, n, ex.sampleTime, 0); ex.advance() }
-                }
-            }
-            val o = codec.dequeueOutputBuffer(info, 10_000)
-            if (o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                codec.outputFormat.let { rate = it.getInteger(MediaFormat.KEY_SAMPLE_RATE); ch = it.getInteger(MediaFormat.KEY_CHANNEL_COUNT) }
-            } else if (o >= 0) {
-                val b = codec.getOutputBuffer(o)!!.order(ByteOrder.nativeOrder()).asShortBuffer()
-                chunks.add(ShortArray(b.remaining()).also { b.get(it) })
-                codec.releaseOutputBuffer(o, false)
-                if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
-            }
-        }
-        codec.stop(); codec.release(); ex.release()
-        val pcm = ShortArray(chunks.sumOf { it.size }); var k = 0
-        for (c in chunks) { c.copyInto(pcm, k); k += c.size }
-        return Triple(pcm, rate, ch)
+        return Loop(track, rate, out.size / ch, out, ch)
     }
 
     private companion object {
         const val LEASE_MS = 1000L
+        const val FAIL_FADE = .3; const val FAIL_SPAN = .35; const val FAIL_MIN = 1.8; const val FAIL_MAX = 4.0 // audio.js FAIL_REV
         const val SPAN_DB = 5.0 // audio.js MIX.chargeSpan
         val ELEMENTS = listOf("fire", "thunder", "water", "wind")
         val PITCH = mapOf("s" to .85, "m" to 1.1, "l" to 1.45) // audio.js CHARGE_PITCH
