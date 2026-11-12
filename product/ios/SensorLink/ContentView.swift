@@ -287,7 +287,7 @@ private struct SlashBar: View {
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .leading) {
-                SlashShape().fill(Color(red: 0.145, green: 0.165, blue: 0.196))
+                SlashShape().fill(Color(red: 0.898, green: 0.169, blue: 0.169)) // the HP lost: red (Android the same)
                     .frame(width: g.size.width, height: g.size.height)
                 if progress > 0 {
                     SlashShape().fill(color)

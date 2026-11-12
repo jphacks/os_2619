@@ -603,7 +603,7 @@ class HpBar(a: Activity) : View(a) {
     private fun drawSlashBar(c: Canvas, bounds: RectF, remaining: Float, color: Int) {
         p.shader = null; p.style = Paint.Style.FILL
         slashPath(bounds.left, bounds.top, bounds.right, bounds.bottom)
-        p.color = 0xFF252A32.toInt()
+        p.color = 0xFFE52B2B.toInt() // the HP lost: red (iOS the same)
         c.drawPath(slash, p)
         if (remaining > 0f) {
             slashPath(bounds.left, bounds.top, bounds.left + bounds.width() * remaining, bounds.bottom)
