@@ -367,7 +367,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     private fun scanButton(b: Button) {
         if (!scan.on) AlertDialog.Builder(this).setTitle("Scan the stick")
             .setMessage("The PC turns photos into a 3D model of your stick's shape. Open the PC dashboard first (connection screen).\n\n" +
-                "1. Lay the magic circle flat and lay the stick straight across its middle, its TIP toward tag T0 (the top of the poster).\n" +
+                "1. Lay the magic circle flat and lay the stick straight across its middle, its GRIP (handle) end toward tag T0 (id 0).\n" +
                 "2. Keep anything else that is not black or white off the circle (hands, feet, bags). Don't move the circle or the stick from now on.\n" +
                 "3. Tap Start and walk slowly around it twice, 0.8-1.2 m away: once high, looking down, and once low, about 30° above the floor. " +
                 "A photo is taken every half second while 2 or more tags show green; get the whole stick in the picture.\n" +

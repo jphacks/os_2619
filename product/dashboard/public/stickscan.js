@@ -1,6 +1,6 @@
 // Stick scan: the 3D shape of a (natural, mostly brown) stick from phone photos of it lying on the (black and white) mahoujin.
 // The phone (Scan button: Android Scan.kt, iOS Scan.swift) sends { type: 'scan', step, n, k, tags, jpg, w, h } packets:
-//   step 'stick' a picture of the stick lying on the sheets, tip toward T0 / -z; 'start' / 'done' / 'cancel' around them.
+//   step 'stick' a picture of the stick lying on the sheets, its grip (handle) end toward tag T0 (id 0); 'start' / 'done' / 'cancel' around them.
 //   stickui.js decodes the pictures and calls buildStick() here on 'done'.
 // Method: every picture's camera from the sheets' tags (extrinsics.js solveCamera); per picture a mask of the stick: where the printed
 // design (public/mahoujin-design.bin.gz, matched to the real, slightly distorted print) has no ink, whatever is not paper (designMask);
@@ -26,8 +26,12 @@ export const SCAN = {
   colour: .06,   // stickMask: coloured = chroma this much above the picture's usual (the paper's white balance)
   paper: .75, ink: .3, // stickMask: brighter than this x the paper's level is paper, darker than this x is ink (when without colour)
   floorCell: .002, inkTol: 0, darker: .15, solid: .7, // designMask: grid (m); the print's darkest within this many cells (0: the matched print is close enough); the stick is this
-                 // much darker; on the tag patches design ink over solid (within one cell) is black
+                 // much darker; on the tag patches design ink over solid (within one cell) is not judged (designMask)
   minTop: .005,  // skeleton: footprint cells lower than this are the floor misread (a print line), not wood (m)
+  // the model's length (and its nodes along it) x this, to correct the scale against sticks of known length. 1: a 116 cm stick that came
+  // out 86 cm had lost its ends over the tag patches' dots (now unknown there, not 'no stick'); the real scans now come out 107-118 cm.
+  // Set it from a stick measured by hand if they still come out short or long.
+  lengthScale: 1,
   alignTile: 40, alignSearch: 12, // floorModel: the print matched to the design in tiles of this many cells, up to this many cells off
 };
 
@@ -182,7 +186,7 @@ export function floorModel(vs, D) {
   // the print where it really is (the design shifted by the field), its darkest within inkTol cells (pose and field errors). E: the
   // darkness to expect, as the cameras see the print on average (F ~ a + b x design ink, least squares). A near, sharp view sees black
   // ink darker than that average. On the tag patches (glued on by hand, a few mm off the poster's own dots, so the field misses them)
-  // solid ink (design ink over SCAN.solid within one cell) is taken as black, or their dots pass for the stick. Elsewhere not: a
+  // solid ink (design ink over SCAN.solid within one cell) is not judged (designMask: unknown), or their dots pass for the stick. Elsewhere not: a
   // dense band of letters would hide the stick crossing it. Flat misreads left over: skeleton minTop.
   const Pw = new Float32Array(n * n);
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
@@ -199,10 +203,10 @@ export function floorModel(vs, D) {
     for (let d = 0; d < 9 && !solid[j * n + i]; d++) if (Pw[(j + (d / 3 | 0) - 1) * n + i + d % 3 - 1] > SCAN.solid) solid[j * n + i] = 1;
   }
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { let v = 0; for (let d = -inkTol; d <= inkTol; d++) v = Math.max(v, Pw[j * n + Math.min(n - 1, Math.max(0, i + d))]); E1[j * n + i] = v; }
-  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { let v = 0; for (let d = -inkTol; d <= inkTol; d++) v = Math.max(v, E1[Math.min(n - 1, Math.max(0, j + d)) * n + i]); E[j * n + i] = solid[j * n + i] ? 1 : fa + fb * v; }
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { let v = 0; for (let d = -inkTol; d <= inkTol; d++) v = Math.max(v, E1[Math.min(n - 1, Math.max(0, j + d)) * n + i]); E[j * n + i] = fa + fb * v; }
   const matched = ok.reduce((a, b) => a + b, 0);
   let worst = 0; for (let q = 0; q < nt * nt; q++) if (ok[q]) worst = Math.max(worst, Math.hypot(mx[q], mz[q]) * g);
-  return { n, g, R, E, paper: fa, shift: { tiles: matched, maxMm: +(worst * 1000).toFixed(1), at: (x, z) => { const i = (x + R) / g - .5, j = (z + R) / g - .5; return [field(mx, i, j) * g, field(mz, i, j) * g]; } } };
+  return { n, g, R, E, solid, paper: fa, shift: { tiles: matched, maxMm: +(worst * 1000).toFixed(1), at: (x, z) => { const i = (x + R) / g - .5, j = (z + R) / g - .5; return [field(mx, i, j) * g, field(mz, i, j) * g]; } } };
 }
 
 /**
@@ -220,6 +224,8 @@ export function designMask(v, fm) {
     const s = -O[1] / dy, X = O[0] + s * (Rt[0] * a + Rt[3] * b + Rt[6]), Z = O[2] + s * (Rt[2] * a + Rt[5] * b + Rt[8]);
     if (X * X + Z * Z > Rin) { m[p] = 2; continue; }
     const i = Math.floor((X + R) / g), j = Math.floor((Z + R) / g);
+    if (fm.solid[j * n + i]) { m[p] = 2; continue; } // over a tag patch's dots a dark stick cannot be told from the print: this view does not judge
+      // here (it was 'no stick', and a stick laid grip toward T0 lost its end over the dots: 116 cm came out 86)
     const e = E[j * n + i], o = 1 - lum[p] / paper; // expected and seen darkness
     m[p] = o > Math.max(e + SCAN.darker, 1 - SCAN.paper) || (chr[p] > cut && e < fm.paper + SCAN.darker) ? 1 : 0; // colour only where the print is plain paper
   }
@@ -241,7 +247,7 @@ function inHull(vs, ms, x, y, z) {
 
 /**
  * buildStick(views, design?) -> model, or throws an Error saying what is missing.
- * views: { img: { data RGBA, width, height }, cam: viewCamera(...) }. The stick lies on the sheets with its tip toward -z (T0).
+ * views: { img: { data RGBA, width, height }, cam: viewCamera(...) }. The stick lies on the sheets with its grip end toward tag T0 (id 0).
  * design: parseDesign(...) of the mahoujin's print; with it a stick as dark as the print is found too (designMask), without it stickMask.
  * model: { v: 3, length (m), r: [grip, tip] radius (m), nodes: [[side, along]] (m; along -length/2 at the grip .. +length/2 at the tip,
  *          side across it, lying flat), edges: [[i, j]] node pairs joined by wood, tip: the tip's node (nodes 0..tip are the stick's own
@@ -276,7 +282,9 @@ export function buildStick(views, design = null) {
   const P = [];
   for (let id = 0; id < keepF.length; id++) if (keepF[id]) { const fk = id % fn, fj = ((id / fn) | 0) % fy, fi = (id / fn / fy) | 0; P.push([-half + (fi + .5) * fine, (fj + .5) * fine, -half + (fk + .5) * fine]); }
   if (P.length < 50) throw new Error('棒が見つかりません（魔法陣の白黒以外のものが写っていない）');
-  return { ...skeleton(P), views: vs.length, ...(fm && { printShiftMm: fm.shift.maxMm }) };
+  const m = skeleton(P), k = SCAN.lengthScale;
+  if (k !== 1) { m.length = +(m.length * k).toFixed(3); m.nodes = m.nodes.map(([s, a]) => [s, +(a * k).toFixed(4)]); } // along the stick only: the thickness is measured right
+  return { ...m, views: vs.length, ...(fm && { printShiftMm: fm.shift.maxMm }) };
 }
 
 const smooth = (a, k) => a.map((_, i) => { let s = 0, n = 0; for (let d = -k; d <= k; d++) if (a[i + d] !== undefined) { s += a[i + d]; n++; } return s / n; });
@@ -284,7 +292,7 @@ const median = a => { const s = [...a].sort((x, y) => x - y); return s[s.length 
 
 /**
  * The blob as a tree lying on the floor. Its footprint (seen from above) gives the shape: the longest path through it is the stick
- * (grip -> tip, the tip toward T0 / -z), then each part reaching farther than SCAN.branchMin off what is found so far is a branch.
+ * (grip -> tip, the grip the end nearer tag T0), then each part reaching farther than SCAN.branchMin off what is found so far is a branch.
  * Thickness is two numbers, at the grip and at the tip: the footprint's half width there, or half the height if that is smaller.
  */
 function skeleton(P) {
@@ -341,8 +349,8 @@ function skeleton(P) {
   const trace = (from, c) => { const path = [c]; while (from[c] >= 0) path.push(c = from[c]); return path; }; // c back to its source
   const start = top.findIndex(v => v > 0);
   const ends = bfs([start]), main = bfs([ends.far]), path = trace(main.from, main.far); // the longest path, end to end
-  const zOf = c => xz(c)[1];
-  if (zOf(path[0]) < zOf(path[path.length - 1])) path.reverse(); // grip first; the tip lies toward -z
+  const t0 = W.runeTagPos(0), toT0 = c => { const [x, z] = xz(c); return Math.hypot(x - t0[0], z - t0[2]); };
+  if (toT0(path[0]) > toT0(path[path.length - 1])) path.reverse(); // grip first: the stick is laid with its grip end toward tag T0
   // the frame: along the grip -> tip line, side across it
   const G = xz(path[0]), T = xz(path[path.length - 1]), gl = Math.hypot(T[0] - G[0], T[1] - G[1]) || 1;
   const ax = (T[0] - G[0]) / gl, az = (T[1] - G[1]) / gl, sx = -az, sz = ax;

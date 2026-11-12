@@ -129,7 +129,7 @@ function setRuneScale(v) {
 // The game's stick for each slot is the model of the saved stick assigned to it (/sticks below). Every dashboard (now and on hello)
 // and the slot's phone get { type: 'stick', slot, model | null } whenever that changes. (sticks.json next to this file, the old
 // per-slot store, is no longer read.) v 3 models only (a tree: nodes [side, along], edges, thickness r [grip, tip]).
-const okStick = m => m && typeof m === 'object' && m.v === 3 && m.length > .1 && m.length < 2
+const okStick = m => m && typeof m === 'object' && m.v === 3 && m.length > .1 && m.length < 3 // up to 3 m: stickscan.js lengthScale stretches long sticks
   && Array.isArray(m.r) && m.r.length === 2 && m.r.every(v => v > 0 && v < .2)
   && Array.isArray(m.nodes) && m.nodes.length >= 2 && m.nodes.length <= 1024
   && m.nodes.every(n => Array.isArray(n) && n.length === 2 && Math.abs(n[0]) < 1 && Math.abs(n[1]) <= m.length)

@@ -1,12 +1,13 @@
 // Stick scan (public/stickscan.js) on synthetic pictures: the real mahoujin print (public/mahoujin-design.bin.gz) on the floor, distorted
 // by up to ~9 mm as a glued-up poster is (buildStick matches the print to the design), carpet round it, and a natural 0.9 m stick (dark
 // grey bark as dark as the print's lines, with darker streaks and a pale knot: only the design tells it from the print) lying on it with
-// its shadow, tip toward
-// -z: tapered (r 15 mm at the grip to 8 mm at the tip), a knot (+6 mm) at 30 %, bowed 25 mm sideways, and a 22 cm side branch (a Y)
+// its shadow, its grip end
+// toward tag T0 (-x): tapered (r 15 mm at the grip to 8 mm at the tip), a knot (+6 mm) at 30 %, bowed 25 mm sideways, and a 22 cm side branch (a Y)
 // leaving it at 45 %. Many angles, noise, a warm white balance that differs per picture. Checks the cameras from the mahoujin's tag
 // corners, then the model's length, the branch, the thickness at both ends, the bow and which end is the tip.   node test-stickscan.mjs
 process.env.MARKER = 'rune';
-const W = await import('./public/world.js'), { buildStick, viewCamera, parseDesign } = await import('./public/stickscan.js');
+const W = await import('./public/world.js'), { buildStick, viewCamera, parseDesign, SCAN } = await import('./public/stickscan.js');
+SCAN.lengthScale = 1; // the pictures are drawn at the true size: no correction
 const design = parseDesign((await import('node:zlib')).gunzipSync((await import('node:fs')).readFileSync(new URL('./public/mahoujin-design.bin.gz', import.meta.url))));
 let fails = 0;
 const check = (ok, msg) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); if (!ok) fails++; };
@@ -30,7 +31,8 @@ function floorRGB(x, z) {
   return [l, l, l];
 }
 // the stick: a chain of capsules along a bowed centre line, resting on the floor (centre height = radius)
-const A0 = [.05, .45], A1 = [-.05, -.45], SL = Math.hypot(A1[0] - A0[0], A1[1] - A0[1]);
+const A0 = [-.45, .05], A1 = [.45, -.05], // the grip end toward tag T0 (-x)
+  SL = Math.hypot(A1[0] - A0[0], A1[1] - A0[1]);
 const AX = [(A1[0] - A0[0]) / SL, (A1[1] - A0[1]) / SL], SIDE = [-AX[1], AX[0]];
 const rTrue = t => .015 - .007 * t + .006 * Math.exp(-(((t - .3) / .03) ** 2));
 const bow = t => .025 * Math.sin(Math.PI * t);
