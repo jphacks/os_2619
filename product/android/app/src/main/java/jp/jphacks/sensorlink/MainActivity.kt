@@ -198,9 +198,10 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             btn("Calibrate") { calibrate() }
             btn("LAN") { lanDialog() }
             btn("Scan") { scanButton(it) }
+            btn("Stick") { showStickMenu(this@MainActivity, link) }
             btn("HP") { openHp() }
         }
-        // the five buttons on top (below the status bar), the picture filling everything under them
+        // the six buttons on top (below the status bar), the picture filling everything under them
         bar.setOnApplyWindowInsetsListener { v, ins -> v.setPadding(0, ins.systemWindowInsetTop, 0, 0); ins }
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
