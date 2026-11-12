@@ -129,9 +129,11 @@ const koShow = createKoShow(hud, {
   nameOf: s => { const p = game.players[s], sk = p.stick; return [sk?.name, ELEMENT_JA[p.element]].filter(Boolean).join('　'); },
   onBurst(loser, winner) {
     const at = loser.chest.clone(), dir = winner ? at.clone().sub(winner.chest) : at.clone().multiplyScalar(0);
-    stage.field.breakApart(loser.slot, at, dir);
-    stage.fx.hit(winner?.element ?? 'thunder', at.clone(), 1, { tier: 'l', target: at.clone() });
-    stage.drone.event('hit', { target: loser.slot, pos: at, power: 1 }); stage.state.shake = 1; stage.field.cheer();
+    const el = winner?.element ?? 'thunder', color = EL_COLOR[el] ?? EL_COLOR.thunder;
+    // the blast (a hot ball, shock rings, a pillar of light), every piece trailing the winner's element, and the element's biggest hit twice
+    stage.field.breakApart(loser.slot, at, dir, { color, trail: pos => stage.fx.hit(el, pos.clone(), .18, { tier: 's' }) });
+    for (const [k, dy] of [[1, 0], [.6, .7]]) stage.fx.hit(el, at.clone().setY(at.y + dy), k, { tier: 'l', target: at.clone() });
+    stage.drone.event('hit', { target: loser.slot, pos: at, power: 1 }); stage.state.shake = 2.2; stage.field.cheer();
   },
   sound(kind) { const w = game.winner; if (kind === 'ko' || kind === 'burst') sfx?.hit(w?.element ?? 'thunder', 0, 1, 'l'); },
 });

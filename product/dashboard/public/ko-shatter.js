@@ -4,15 +4,15 @@
 import * as THREE from 'three';
 
 export const SHATTER = {
-  speed: [2.5, 5.5], // m/s out from the blow
+  speed: [3.5, 7.5], // m/s out from the blow
   push: 2.5,         // m/s more along the blow's direction
-  up: [2, 4.5],      // m/s upwards
-  spin: [4, 11],     // rad/s
+  up: [3, 6.5],      // m/s upwards
+  spin: [6, 16],     // rad/s
   g: 16,             // m/s², more than real: it reads as heavy and quick
   bounce: .3, friction: .7,
   life: 2.6,         // s until a piece is gone
   shrink: .6,        // s of shrinking at the end of the life
-  flash: .18,        // s of white-hot glow at the start
+  flash: .35,        // s of white-hot glow at the start
 };
 // One piece per body part, roughly at the joints (the two models' bone names, wizard.glb / chaoben.glb): about ten pieces
 const SEG = { Neck: 'head', Head: 'head', L_Upperarm: 'armUL', R_Upperarm: 'armUR', L_Forearm: 'armFL', L_Hand: 'armFL', R_Forearm: 'armFR', R_Hand: 'armFR',
@@ -97,9 +97,27 @@ export function createShatter(parent, { random = Math.random } = {}) {
   }
   function remove(p) { group.remove(p.mesh); for (const m of p.mesh.children) m.geometry.dispose(); }
   let age = 0;
+  // the blast around the break: a hot ball, two shock rings racing out along the floor, a pillar of light, all in the blow's colour (additive)
+  const blastMat = c => new THREE.MeshBasicMaterial({ color: c, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+  const BALL = new THREE.SphereGeometry(1, 24, 12), RING = new THREE.RingGeometry(.86, 1, 64).rotateX(-Math.PI / 2), PILLAR = new THREE.CylinderGeometry(1, 1, 1, 24, 1, true).translate(0, .5, 0);
+  const blasts = []; // { mesh, t, life, grow(k) }
+  let onTrail = null, trailAt = 0;
+  function blast(geo, color, life, delay, grow) {
+    const mesh = new THREE.Mesh(geo, blastMat(color)); mesh.visible = false; mesh.renderOrder = 5; group.add(mesh);
+    blasts.push({ mesh, t: -delay, life, grow });
+  }
   return {
     group,
-    burst(roots, at, dir = V()) {
+    /** opt: { color (the blast, a CSS colour or number; none: no blast), trail(pos) called for each flying piece every ~0.07 s of its first second (sparks behind it) } */
+    burst(roots, at, dir = V(), { color = null, trail = null } = {}) {
+      onTrail = trail; trailAt = 0;
+      if (color != null) {
+        const c = new THREE.Color(color), white = new THREE.Color(1, 1, 1), floor = V(at.x, .03, at.z);
+        blast(BALL, white, .26, 0, (m, k) => { m.position.copy(at); m.scale.setScalar(.15 + 1.3 * Math.pow(k, .4)); m.material.opacity = .8 * (1 - k) * (1 - k); m.material.color.copy(white).lerp(c, k); }); // small: the pieces must show through it
+        blast(RING, c, .9, 0, (m, k) => { m.position.copy(floor); m.scale.setScalar(.3 + 11 * (1 - Math.pow(1 - k, 3))); m.material.opacity = 1 - k; });
+        blast(RING, white, .7, .12, (m, k) => { m.position.copy(floor); m.scale.setScalar(.3 + 7 * (1 - Math.pow(1 - k, 3))); m.material.opacity = .8 * (1 - k); });
+        blast(PILLAR, c, .75, 0, (m, k) => { m.position.set(at.x, 0, at.z); m.scale.set(.9 * (1 - k) + .05, 40, .9 * (1 - k) + .05); m.material.opacity = Math.min(1, 3 * (1 - k)); });
+      }
       const chunks = chunk(bakeTriangles(roots));
       const d = dir.clone().setY(0); if (d.lengthSq() > 1e-6) d.normalize();
       age = 0;
@@ -121,6 +139,12 @@ export function createShatter(parent, { random = Math.random } = {}) {
     },
     step(dt) {
       age += dt;
+      for (let i = blasts.length - 1; i >= 0; i--) {
+        const b = blasts[i]; b.t += dt;
+        if (b.t >= b.life) { group.remove(b.mesh); b.mesh.material.dispose(); blasts.splice(i, 1); continue; }
+        if (b.t >= 0) { b.mesh.visible = true; b.grow(b.mesh, b.t / b.life); }
+      }
+      if (onTrail && age < 1.1 && age - trailAt >= .07) { trailAt = age; for (const p of pieces) if (p.mesh.position.y > p.r * .5 + .05) onTrail(p.mesh.position); }
       const glow = Math.max(0, 1 - age / SHATTER.flash);
       for (const m of mats.values()) if (m.emissive) { m.emissive.copy(m.userData.baseEmissive).lerp(new THREE.Color(1, 1, 1), glow); m.emissiveIntensity = m.userData.baseIntensity + 2.5 * glow; }
       for (let i = pieces.length - 1; i >= 0; i--) {
@@ -139,7 +163,7 @@ export function createShatter(parent, { random = Math.random } = {}) {
         m.scale.setScalar(Math.max(.001, Math.min(1, (p.life - p.t) / SHATTER.shrink)));
       }
     },
-    clear() { for (const p of pieces) remove(p); pieces.length = 0; },
+    clear() { for (const p of pieces) remove(p); pieces.length = 0; for (const b of blasts) { group.remove(b.mesh); b.mesh.material.dispose(); } blasts.length = 0; onTrail = null; },
     get count() { return pieces.length; },
     dispose() { this.clear(); for (const m of mats.values()) m.dispose(); mats.clear(); parent.remove(group); },
   };

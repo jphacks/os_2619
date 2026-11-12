@@ -616,14 +616,14 @@ export function createField(scene, opts = {}) {
     uCA: { value: new THREE.Color().setHex(TEAM.A, THREE.LinearSRGBColorSpace) }, uCB: { value: new THREE.Color().setHex(TEAM.B, THREE.LinearSRGBColorSpace) }, // the shader writes display colours: unconverted, or they come out darker than the HP bars
     uSA: { value: new THREE.Vector2() }, uSB: { value: new THREE.Vector2() },
     uP: { value: [new THREE.Vector4(), new THREE.Vector4()] },
-    uRock: { value: 0 }, uHpOnly: { value: 0 }, uBodySun: { value: V(0, 1, 1).normalize() },
+    uRock: { value: 0 }, uHpOnly: { value: 0 }, uBeatT: { value: 0 }, uFace: { value: null } /* チャオベン劇場's beat clock and face picture (chaoben-stage.js), shared once it is built */, uBodySun: { value: V(0, 1, 1).normalize() },
     tN: { value: null }, tG: { value: null }, tSh: { value: null }, uSun: { value: V(0, 1, 0) }, uExt: { value: 64 }, // the canyon's, set when it is built
     cN: { value: null }, cSh: { value: null }, cG: { value: null }, cSun: { value: V(0, 1, 0) }, cExt: { value: 64 }, // the courtyard's
     ...todUniforms(), // the clock's sky and light (sky.js): one set, shared with whichever look is shown
   };
   const tod = Object.fromEntries(Object.keys(uniforms).filter(k => k.startsWith('uTod')).map(k => [k, uniforms[k]]));
   // The looks behind the arena. Each is built the first time it is shown (they bake textures and lights), and the floor shares its ground's uniforms.
-  const LOOKS = { rock: { make: createBackdrop, id: 1, shared: ['tN', 'tG', 'tSh', 'uSun', 'uExt'], ground: 0xb87a52 }, court: { make: createCourtyard, id: 2, shared: ['cN', 'cSh', 'cG', 'cSun', 'cExt'], ground: 0x6f9a45 }, chaoben: { make: createChaobenStage, id: 3, shared: [], ground: 0xc8b6ff } };
+  const LOOKS = { rock: { make: createBackdrop, id: 1, shared: ['tN', 'tG', 'tSh', 'uSun', 'uExt'], ground: 0xb87a52 }, court: { make: createCourtyard, id: 2, shared: ['cN', 'cSh', 'cG', 'cSun', 'cExt'], ground: 0x6f9a45 }, chaoben: { make: createChaobenStage, id: 3, shared: ['uBeatT', 'uFace'], ground: 0xc8b6ff } };
   const built = {}; let activeLook = null, fieldR = 0, hour = DEFAULT_HOUR, settleAt = 0, lastBakeMs = 0, shownLook;
   const lookOf = name => {
     if (!built[name]) {
@@ -698,9 +698,9 @@ export function createField(scene, opts = {}) {
       });
     },
     /** KO: slot's character, stick and HP bar break into pieces, flung from at (world point) along dir (the blow). Hidden until unbreak(). */
-    breakApart(slot, at, dir) {
+    breakApart(slot, at, dir, opt) { // opt: ko-shatter.js burst's { color, trail }
       const a = avatars[slot]; if (!a || a.broken || !a.root.visible) return false;
-      shatter.burst([a.root, a.world], at, dir); a.broken = true; return true;
+      shatter.burst([a.root, a.world], at, dir, opt); a.broken = true; return true;
     },
     /** The look's crowd reacts to a KO (チャオベン劇場), if it has one. */
     cheer() { if (activeLook) built[activeLook].react?.(); },
