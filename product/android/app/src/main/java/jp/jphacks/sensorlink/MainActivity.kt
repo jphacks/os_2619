@@ -113,24 +113,24 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         }
     }
 
-    // match mode: the top half of the screen is the HP display (HpBar), turned upside down (flipped top to bottom only), at full brightness
-    // while it is up; the bottom half stays the camera. Opened by the HP button or when the dashboard starts a match; a tap on it, or the
+    // match mode: the whole screen black, no camera picture (the camera still runs: ARCore places the player), the top half the HP display
+    // (HpBar) turned upside down (flipped top to bottom only), at full brightness while it is up. Opened by the HP button or when the dashboard starts a match; a tap on it, or the
     // match going back to setup, closes it. The red hit blink stays over it
     private val hpBar by lazy { HpBar(this).apply { scaleY = -1f } }
     private val hpScreen by lazy {
         FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK); visibility = View.GONE
             isClickable = true; setOnClickListener { closeHp() } // takes the touches: the buttons are under it
-            addView(hpBar, FrameLayout.LayoutParams(-1, -1))
+            addView(hpBar, FrameLayout.LayoutParams(-1, 0, Gravity.TOP)) // the top half: sized once the screen's height is known
         }
     }
     private fun openHp() {
         if (hpScreen.visibility == View.VISIBLE) return
-        hpScreen.visibility = View.VISIBLE
+        hpScreen.visibility = View.VISIBLE; overlay.visibility = View.INVISIBLE // nothing draws the picture under it
         window.attributes = window.attributes.apply { screenBrightness = 1f } // as bright as it goes
     }
     private fun closeHp() {
-        hpScreen.visibility = View.GONE
+        hpScreen.visibility = View.GONE; overlay.visibility = View.VISIBLE
         window.attributes = window.attributes.apply { screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
     }
 
@@ -213,12 +213,12 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         }
         val root = FrameLayout(this).apply {
             addView(column, FrameLayout.LayoutParams(-1, -1))
-            addView(hpScreen, FrameLayout.LayoutParams(-1, 0, Gravity.TOP)) // the top half: sized below once the screen's height is known
+            addView(hpScreen, FrameLayout.LayoutParams(-1, -1)) // all of it: black, the HP display in its top half
             addView(hitRed, FrameLayout.LayoutParams(-1, -1)) // last: over everything, buttons and the HP display too
         }
         root.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
             val half = (bottom - top) / 2
-            if (hpScreen.layoutParams.height != half) hpScreen.post { hpScreen.layoutParams = hpScreen.layoutParams.apply { height = half } }
+            if (hpBar.layoutParams.height != half) hpBar.post { hpBar.layoutParams = hpBar.layoutParams.apply { height = half } }
         }
         setContentView(root)
 
