@@ -1,6 +1,6 @@
 // Stick scan on the dashboard: the phones' { type: 'scan' } pictures in, a model out (stickscan.js), saved by the server as a new stick
 // with one of the photos (POST /sticks: its element from the shape and power/speed from the volume, stick-stats.js); 棒設定 (sticks.js) lists them. It becomes
-// the phone's stick when the connection screen's 反映 assigns it (the server then sends { type: 'stick' } to every page: field3d.js setStick).
+// the stick of the phone that scanned it at once (POST with its slot; the server then sends { type: 'stick' } to every page: field3d.js setStick).
 // createStickScan(onText, onBuilt): collects one scan per slot; onText(slot, text) says how far it got, onBuilt(slot, record) gives the saved stick.
 // createStickView(canvas): the model turning slowly, for the connection screen.
 import * as THREE from 'three';
@@ -54,7 +54,7 @@ export function createStickScan(onText, onBuilt = () => {}) {
           const ends = model.nodes.filter((_, i) => model.edges.filter(e => e.includes(i)).length === 1).length; // grip, tip and one per branch
           const shape = `長さ ${(model.length * 100).toFixed(0)} cm、枝分かれ ${ends - 2} 本、太さ 根元 ${(2000 * model.r[0]).toFixed(0)} mm・先 ${(2000 * model.r[1]).toFixed(0)} mm（${model.views} 方向から）`;
           const image = 'data:image/jpeg;base64,' + s.jpgs[s.jpgs.length >> 1]; // a picture from the middle of the walk round
-          const r = await fetch('/sticks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, image, snap: stickSnapshot(model) }) }); // snap: the picture the phones' Stick menu shows
+          const r = await fetch('/sticks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, image, snap: stickSnapshot(model), slot }) }); // snap: the picture the phones' Stick menu shows
           if (!r.ok) {
             const why = (await r.json().catch(() => null))?.error ?? '';
             throw new Error(`保存できませんでした（${r.status} ${why}）。${why === 'features or image' ? 'PC のサーバーが古いままです。サーバーを再起動してください。' : ''}${shape}`);
@@ -62,7 +62,7 @@ export function createStickScan(onText, onBuilt = () => {}) {
           const rec = await r.json();
           onBuilt(slot, rec); tell(slot, 'built', { rec });
           const element = { fire: '炎', thunder: '電気（雷）', wind: '風', water: '水' }[rec.element] ?? rec.element;
-          onText(slot, `作成しました（まだ反映していません）：${shape}。形から判定した属性は ${element}。体積 ${rec.volume} cm³ → 威力 ×${rec.stats.power.toFixed(2)}・弾速 ×${rec.stats.speed.toFixed(2)}。「反映」でこのスマホの棒になります`);
+          onText(slot, `作成して、このスマホの棒にしました：${shape}。形から判定した属性は ${element}。体積 ${rec.volume} cm³ → 威力 ×${rec.stats.power.toFixed(2)}・弾速 ×${rec.stats.speed.toFixed(2)}`);
         } catch (e) { onText(slot, '作成できませんでした：' + e.message); tell(slot, 'failed', { error: e.message }); console.warn(e); }
         delete scans[slot];
       }

@@ -27,7 +27,7 @@ export function mountSticks(root) {
     <div class="main">
       <section class="card">
         <header><h2>保存した棒</h2><span class="sub num" data-count></span></header>
-        <p class="sub" style="margin:0 0 10px">スマホの「Scan」で 3D モデルを作ると、形から属性を判定してここに保存します。大きな枝分かれがあると電気（雷）、まっすぐなら炎、滑らかに曲がると風、くねると水です。「反映」で撮ったスマホの棒になります。</p>
+        <p class="sub" style="margin:0 0 10px">スマホの「Scan」で 3D モデルを作ると、形から属性を判定してここに保存します。大きな枝分かれがあると電気（雷）、まっすぐなら炎、滑らかに曲がると風、くねると水です。作るとそのまま撮ったスマホの棒になります。</p>
         <div class="list" data-list></div>
       </section>
     </div>
