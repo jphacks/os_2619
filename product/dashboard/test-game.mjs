@@ -13,10 +13,10 @@ register('data:text/javascript,' + encodeURIComponent(`
 const { createGame, RULES } = await import('./public/game.js');
 
 const DT = 1 / 60;
-function setup({ rules = {}, matchSec = 60, test = false, dummy = false, sfx = null } = {}) {
+function setup({ rules = {}, matchSec = 60, test = false, dummy = false, sfx = null, chara = undefined } = {}) {
   let t = 1000, ids = 1;
   const fx = { aura() {}, charge() {}, shot: () => ids++, moveShot() {}, endShot() {}, hit() {}, guard() {}, block() {} };
-  const cfg = { posSrc: 'start', aim: 'motion', hand: 'R', stickLen: { A: .8, B: .8 }, useTruth: true, test,
+  const cfg = { posSrc: 'start', aim: 'motion', hand: 'R', stickLen: { A: .8, B: .8 }, useTruth: true, test, chara,
     rules: { ...RULES, t1: 2, t2: 5, chargeHold: 0, ...rules, dmg: { ...RULES.dmg, ...rules.dmg }, size: { ...RULES.size, ...rules.size } } };
   const pos = { A: [-1.2, 0], B: [1.2, 0] };
   // dummy: the dummy room's frame (app.js getDummyFrame), players where the script puts them, as the dummy room draws them
@@ -334,8 +334,15 @@ scenario('止めた棒の向きが 1.5° ほど揺れ、センサーの更新が
   }
   eq(S.B.guarding, true, '止めて 0.66 秒後の B のガード');
 });
-scenario('棒をどの向きで止めていても（相手に向けたままでも）ガードになり、小は跳ね返る', () => {
-  const S = setup(); S.fight(); stickB(S, [-1, .3, 0]); S.run(.4);
+scenario('棒を相手に向けたまま止めてもガードにならない（横から 30° より前）', () => {
+  const S = setup(); S.fight(); stickB(S, [-1, .3, 0]); S.run(.4); eq(S.B.guarding, false, '相手に向けた B のガード');
+  stickB(S, [-Math.sin(.6), 0, Math.cos(.6)]); S.run(.4); eq(S.B.guarding, false, '横から 34° 前に向けた B のガード');
+});
+scenario('横向きでも上下に 30° より傾けるとガードにならない', () => {
+  const S = setup(); S.fight(); stickB(S, [0, Math.sin(.6), Math.cos(.6)]); S.run(.4); eq(S.B.guarding, false, '34° 上げた B のガード');
+});
+scenario('横から 25° 前・25° 上げた棒はガードになり、小は跳ね返る', () => {
+  const a = .44, S = setup(); S.fight(); stickB(S, [-Math.sin(a) * Math.cos(a), Math.sin(a), Math.cos(a) * Math.cos(a)]); S.run(.4);
   eq(S.B.guarding, true, 'B のガード');
   S.swing('A'); S.run(1.5);
   eq(S.B.hp, 100, 'B の HP'); eq(S.A.hp, 90, '跳ね返った小を受けた A の HP（小 5 × 反射 2 倍）');
@@ -517,9 +524,9 @@ scenario('速さ 2倍の棒なら、小の連打の間隔が半分（0.125秒）
   for (let i = 0; i < 4; i++) { N.swing('A'); N.run(.15); }
   eq(S.A.shots, 4, '速さ2倍で0.15秒おき4回の発射数'); eq(N.A.shots, 2, '棒なしの発射数');
 });
-scenario('溜め 2倍の棒なら、3秒で大になる', () => {
+scenario('溜め時間は棒の溜めの能力によらず決まっている（溜め 2倍の棒でも 3 秒では中）', () => {
   const S = setup(); S.g.setSticks({ A: stick('fire', { charge: 2 }) }); S.fight(); S.chargeShot('A', 3);
-  eq(S.B.hp, 40, 'B の HP（大1発）');
+  eq(S.B.hp, 80, 'B の HP（中1発）');
 });
 scenario('試合中に棒を替えてもすぐ反映され、HPは残りの割合を保つ', () => {
   const S = setup(); S.fight(); S.A.hp = 50; S.g.setSticks({ A: stick('water', { hp: 1.5 }) }); S.run(.1);
@@ -533,6 +540,22 @@ scenario('水と風の棒でも撃ち合い・反射・溜めが動く', () => {
   S.swing('A'); S.run(1); S.chargeShot('A', 3);
   S.g.command({ cmd: 'guard', slot: 'B', on: true }); S.run(.5); S.swing('A'); S.run(1.5);
   eq(S.B.hp, 75, 'B の HP（小＋中）'); eq(S.A.hp, 90, 'A の HP（反射された小）');
+});
+
+scenario('弾の速さは小・中・大それぞれの倍率で飛ぶ（古い1つの値は3つ共通）', () => {
+  const vel = (speed, tier) => { const S = setup({ rules: { speed } }); S.fight(); S.g.command({ cmd: 'fxShot', slot: 'A', tier }); return S.g.shots.at(-1).vel.length(); };
+  const base = { s: vel({ s: 1, m: 1, l: 1 }, 's'), m: vel({ s: 1, m: 1, l: 1 }, 'm'), l: vel({ s: 1, m: 1, l: 1 }, 'l') };
+  const k = { s: 2, m: .5, l: 1.5 };
+  for (const t of ['s', 'm', 'l']) eq(+(vel(k, t) / base[t]).toFixed(3), k[t], `${t} の速さの倍率`);
+  for (const t of ['s', 'm', 'l']) eq(+(vel(.6, t) / base[t]).toFixed(3), .6, `古い値 0.6 での ${t} の倍率`);
+});
+
+scenario('小さいキャラ（魔法使い 1/3・チャオベン 1/2）は胸が縮み、棒はどちらもチャオベンの大きさ、それでも撃ち合える', () => {
+  const S = setup({ chara: { A: 'wizard', B: 'chaoben' } }); S.fight(); S.run(.1);
+  eq(+S.A.chest.y.toFixed(3), +(1.3 / 3).toFixed(3), 'A（魔法使い）の胸の高さ'); eq(+S.B.chest.y.toFixed(3), .65, 'B（チャオベン）の胸の高さ');
+  eq(+S.A.tip.distanceTo(S.A.base).toFixed(3), .4, 'A（魔法使い）の棒の長さはチャオベンと同じ 1/2'); eq(+S.B.tip.distanceTo(S.B.base).toFixed(3), .4, 'B（チャオベン）の棒の長さ');
+  eq(+S.A.chest.x.toFixed(3), -1.2, 'A の床の上の位置は変わらない');
+  S.swing('A'); S.run(1.5); eq(S.B.hp, 95, 'A の小が小さい B に当たる');
 });
 
 const w = Math.max(...results.map(r => r.name.length));

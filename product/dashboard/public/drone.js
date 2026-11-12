@@ -125,7 +125,7 @@ export function createDrone(camera, domElement, opts = {}) {
     if (back > 0) pose.pos.addScaledVector(_f, -back);
     return pose;
   }
-  const bodyPts = () => [S.a, S.b].flatMap(c => [V(c.x, c.y + 0.55, c.z), V(c.x, Math.max(0.2, c.y - 0.9), c.z)]);
+  const bodyPts = () => [S.a, S.b].flatMap(c => { const r = c.y / W.CHEST_H; return [V(c.x, c.y + 0.55 * r, c.z), V(c.x, Math.max(0.2 * r, c.y - 0.9 * r), c.z)]; }); // head to knees, at the character's size (a small character's chest is lower: game.js shrink)
 
   // ---- shots: gen(dt) returns { pos, look, fov } ----
   const camAz = (c = S.mid) => az(cur.pos, c);
@@ -145,8 +145,9 @@ export function createDrone(camera, domElement, opts = {}) {
       const n = () => { const u = V(Math.cos(S.axis), 0, Math.sin(S.axis)); return V(u.z, 0, -u.x); }; // view dir: A left, B right
       const sign = n().dot(flat(cur.pos).sub(flat(S.mid))) > 0 ? -1 : 1; // stay on the side the camera is on
       return { name: 'side', w: 2.5, gen() {
-        const pos = S.mid.clone().addScaledVector(n(), -3.4 * sign); pos.y = 1.6;
-        return fit({ pos, look: V(S.mid.x, 1.1, S.mid.z), fov: o.fovWide }, bodyPts(), 0.78);
+        const r = S.mid.y / W.CHEST_H; // the characters' size: a person 1, the small ones lower (game.js shrink)
+        const pos = S.mid.clone().addScaledVector(n(), -3.4 * sign); pos.y = 1.6 * r;
+        return fit({ pos, look: V(S.mid.x, 1.1 * r, S.mid.z), fov: o.fovWide }, bodyPts(), r < .9 ? .7 : 0.78); // small ones: a little further in from the edges, their HP bars in frame
       } };
     },
     top() {

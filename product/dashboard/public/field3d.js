@@ -325,6 +325,8 @@ function makeFig(obj, mat, root, cloth, model, chara) {
 
 function makeAvatar(slot) {
   const color = TEAM[slot], root = new THREE.Group(), world = new THREE.Group();
+  // holder: the figure and its stick, drawn at the character's size (p.scale) about the floor under the chest; hud: the HP bar, kept full size
+  const holder = new THREE.Group(), hud = new THREE.Group(); holder.matrixAutoUpdate = false; holder.add(root, world);
   root.matrixAutoUpdate = false;
   const suit = new THREE.MeshStandardMaterial({ color, roughness: .55, metalness: .1, flatShading: true, emissive: color, emissiveIntensity: .12 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x252a36, roughness: .7, flatShading: true });
@@ -389,7 +391,7 @@ function makeAvatar(slot) {
   const hpCanvas = Object.assign(document.createElement('canvas'), { width: 320, height: 104 }), hpCtx = hpCanvas.getContext('2d');
   const hpTex = new THREE.CanvasTexture(hpCanvas); hpTex.colorSpace = THREE.SRGBColorSpace;
   const hpSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: hpTex, depthWrite: false, depthTest: false })); hpSprite.renderOrder = 10;
-  hpSprite.scale.set(1.4, 1.4 * 104 / 320, 1); hpSprite.center.set(.5, -.15); world.add(hpSprite); // anchored below: stays above the head on screen from any angle
+  hpSprite.scale.set(1.4, 1.4 * 104 / 320, 1); hpSprite.center.set(.5, -.15); hud.add(hpSprite); hpSprite.visible = false; // the HP bar over the head is not shown (the HUD has HP); kept so it can come back // anchored below: stays above the head on screen from any angle
   const facing = V(1, 0, 0); limitSprite(hpSprite, { facing, maxFrac: .18 });
   let hpKey = '';
   fontsReady(() => { hpKey = ''; }, 'OFFLINE 100');
@@ -410,7 +412,7 @@ function makeAvatar(slot) {
     hpTex.needsUpdate = true;
   }
 
-  const st = { phase: 0, last: null, speed: 0, time: Math.random() * 10, ko: 0, tall: null, cap: [], calibAt: undefined, grip: 0 };
+  const st = { thick: 1, phase: 0, last: null, speed: 0, time: Math.random() * 10, ko: 0, tall: null, cap: [], calibAt: undefined, grip: 0 };
   const L = a => v3(a); // body-frame point
   const offColor = new THREE.Color(0x6a6f7a), onColor = new THREE.Color(color);
   let wasOnline = null;
@@ -426,10 +428,10 @@ function makeAvatar(slot) {
   function finish(p, base, tipP) {
     if (base && tipP) {
       const d = V().subVectors(tipP, base).normalize(); // held in both hands, more of it shows below them
-      between(stick, base.clone().addScaledVector(d, -.08 - .22 * st.grip), tipP); stick.scale.x = stick.scale.z = stick.userData.r;
+      between(stick, base.clone().addScaledVector(d, -.08 - .22 * st.grip), tipP); stick.scale.x = stick.scale.z = stick.userData.r * st.thick; // thick: the holder shrinks it by the character's size, the stick is W.STICK_SCALE
       tip.position.copy(tipP);
       stickMat.emissiveIntensity = p.charging ? .5 + 1.2 * (p.charge ?? 0) * (.7 + .3 * Math.sin(st.time * 30)) : stick.userData.glow;
-      tip.scale.setScalar(.04 * (1 + (p.charging ? (p.charge ?? 0) : 0)));
+      tip.scale.setScalar(.04 * st.thick * (1 + (p.charging ? (p.charge ?? 0) : 0)));
     }
     stick.visible = tip.visible = !!(base && tipP);
     const online = p.online !== false;
@@ -439,7 +441,7 @@ function makeAvatar(slot) {
       glow.color.copy(online ? onColor : offColor).multiplyScalar(1.4);
       wire.color.copy(online ? onColor : offColor);
     }
-    drawHp(100 * (p.hp ?? 100) / (p.hpMax || 100), online, p.charging ? (p.charge ?? 0) : 0, p.hp ?? 100);
+    if (hpSprite.visible) drawHp(100 * (p.hp ?? 100) / (p.hpMax || 100), online, p.charging ? (p.charge ?? 0) : 0, p.hp ?? 100);
   }
 
   // The pose from phone C's picture (p.skel = { joints, vis }, world joints from avatarpose.js) gives the body its shape only:
@@ -506,9 +508,25 @@ function makeAvatar(slot) {
   }
 
 
+  const _P0 = V(), _m = new THREE.Matrix4(), _s = new THREE.Matrix4();
   return {
-    root, world, slot, setStick, setChara, get chara() { return chara; }, broken: false, // broken: blown to pieces at a KO (ko-shatter.js), hidden until the next match
+    root, world, holder, hud, slot, setStick, setChara, get chara() { return chara; }, broken: false, // broken: blown to pieces at a KO (ko-shatter.js), hidden until the next match
+    /** p.base / p.tip come in at the character's size (game.js shrink); the figure is posed at a person's size and the holder shrinks the drawing. */
     update(dt, p) {
+      const k = p?.body ? p.scale ?? 1 : 1;
+      st.thick = k === 1 ? 1 : W.STICK_SCALE / k;
+      if (k !== 1) {
+        _P0.set(p.body.t[0], 0, p.body.t[2]);
+        const up = v => v && v.clone().sub(_P0).divideScalar(k).add(_P0);
+        p = { ...p, base: up(p.base), tip: up(p.tip) };
+      }
+      holder.matrix.makeTranslation(_P0.x, 0, _P0.z).multiply(_s.makeScale(k, k, k)).multiply(_m.makeTranslation(-_P0.x, 0, -_P0.z)); holder.matrixWorldNeedsUpdate = true;
+      const r = this.pose(dt, p);
+      hud.visible = world.visible;
+      if (k !== 1) hpSprite.position.y = hpSprite.position.y * k + .15; // over the small head
+      return r;
+    },
+    pose(dt, p) {
       const vis = !!p?.body;
       root.visible = vis && !p.hideBody && !this.broken; world.visible = vis && !this.broken; // hideBody: the real skeleton from the camera is drawn instead
       if (!vis) { smSeen = false; st.tall = null; st.cap = []; return null; } // the next one seen starts standing
@@ -656,7 +674,7 @@ export function createField(scene, opts = {}) {
 
   const avatars = { A: makeAvatar('A'), B: makeAvatar('B') };
   for (const a of Object.values(avatars)) {
-    group.add(a.root, a.world);
+    group.add(a.holder, a.hud);
     const ax = new THREE.AxesHelper(.4); a.root.add(ax); a.ax = ax; ax.visible = false;
   }
 
@@ -696,8 +714,8 @@ export function createField(scene, opts = {}) {
     /** For a darkened background (effects.js), in this order: 'back' the look, floor and letters; 'front' the avatars, their HP bars and HP arcs; null all of it. */
     setPass(pass) {
       for (const a of Object.values(avatars)) {
-        if (pass === 'back') { a.shown = [a.root.visible, a.world.visible]; a.root.visible = a.world.visible = false; } // update() decides who is shown: only hide them for this pass
-        else if (pass === 'front') [a.root.visible, a.world.visible] = a.shown;
+        if (pass === 'back') { a.shown = [a.root.visible, a.world.visible, a.hud.visible]; a.root.visible = a.world.visible = a.hud.visible = false; } // update() decides who is shown: only hide them for this pass
+        else if (pass === 'front') [a.root.visible, a.world.visible, a.hud.visible] = a.shown;
       }
       shatter.group.visible = pass !== 'back'; // the pieces fly in front of the KO backdrop
       if (arena) arena.visible = pass !== 'front';

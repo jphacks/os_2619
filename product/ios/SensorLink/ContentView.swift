@@ -45,7 +45,7 @@ struct ContentView: View {
                 .background(Color.black.opacity(0.6))
             }
             .padding(.horizontal, 8)
-            Color.red.opacity(model.hitRed).ignoresSafeArea().allowsHitTesting(false) // a hit: over everything, buttons too
+            Color(red: 1, green: 0, blue: 0).opacity(model.hitRed).ignoresSafeArea().allowsHitTesting(false) // a hit: pure #FF0000 blinking, over everything, buttons too
         }
         .sheet(isPresented: $showImu) { ImuSheet().environmentObject(model) }
         .sheet(isPresented: $showLan) { LanSheet().environmentObject(model) }

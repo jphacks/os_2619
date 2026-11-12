@@ -79,7 +79,7 @@ export function createPlayable({ vsrc, game, cfg, save, isActive }) {
     const yaw = foe ? Math.atan2(-(foe[2] - s.chest[2]), foe[0] - s.chest[0]) : s.yaw;
     s.yaw = yaw;
     const chest = [s.chest[0], W.CHEST_H + (still ? 0 : .02 * Math.sin(2.4 * time)), s.chest[2]];
-    const bp = W.bodyPose(chest, yaw, chest[1]), h = W.STICK.hand, base = W.apply(bp, [h.fwd, h.up, h.right]);
+    const bp = W.bodyPose(chest, yaw, chest[1]);
     const sw = time - s.swingAt, swinging = !still && sw >= 0 && sw < SWING;
     let el, az;
     if (still) { el = .25; az = 0; }
@@ -87,7 +87,7 @@ export function createPlayable({ vsrc, game, cfg, save, isActive }) {
     else if (swinging) { const u = sw / SWING; el = 1.2 - 1.7 * u; az = 0; }  // down toward the opponent
     else if (guarding(s)) { el = .02; az = -1.45; } // held level across the body
     else { el = .25 + .12 * Math.sin(1.6 * time); az = .15 * Math.sin(.9 * time); } // idle sway
-    const dir = W.app3(bp.R, [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)]);
+    const dir = W.app3(bp.R, [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)]), base = W.handAt(bp, dir);
     return { slot, chest, yaw, base, tip: base.map((v, i) => v + dir[i] * W.STICK.len), dir, swinging };
   }
 

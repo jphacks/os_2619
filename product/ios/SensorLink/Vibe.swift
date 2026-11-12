@@ -5,11 +5,13 @@ import Foundation
  * The phone's vibration on the PC's word (`vibrate` packets, game.js):
  * charge = keep vibrating (the PC repeats it; with no repeat for `lease` s it stops by itself, so a lost PC or link cannot leave it on),
  * win = on / off 5 times, off = stop. Same timings as Vibe.kt.
+ * hit() (a `flash` packet: this player took a hit) = one short, light buzz; a charge vibration resumes with the next charge packet.
  */
 final class Vibe {
     private static let lease = 1.0
     private static let longest = 25.0 // Core Haptics limits one continuous event to 30 s: start a new one before that
     private static let pulseOn = 0.4, pulseOff = 0.3, pulses = 5
+    private static let hitS = 0.08, hitIntensity: Float = 0.55 // light
 
     private let q = DispatchQueue(label: "vibe")
     private var engine: CHHapticEngine?
@@ -53,6 +55,17 @@ final class Vibe {
         q.asyncAfter(deadline: .now() + max(0.05, leaseEnd - Vibe.now())) { [weak self] in
             guard let self = self, self.chargeFrom != nil else { return }
             if Vibe.now() >= self.leaseEnd { self.stop() } else { self.watchLease() }
+        }
+    }
+
+    func hit() {
+        q.async { [weak self] in
+            guard let self = self else { return }
+            self.chargeFrom = nil // the next charge packet (every 0.25 s) starts the charge vibration again
+            self.play([CHHapticEvent(eventType: .hapticContinuous, parameters: [
+                CHHapticEventParameter(parameterID: .hapticIntensity, value: Vibe.hitIntensity),
+                CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.5),
+            ], relativeTime: 0, duration: Vibe.hitS)])
         }
     }
 

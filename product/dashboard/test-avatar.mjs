@@ -20,7 +20,7 @@ put(27, O[0], .08, O[2] - .1); put(28, O[0], .08, O[2] + .1); put(29, O[0] - .05
 const player = { body: W.bodyPose([0, 1.3, 0], 0, 1.3), base: new THREE.Vector3(.3, 1.4, .2), tip: new THREE.Vector3(1.3, 1.4, .2), hp: 100, online: true, skel: { joints, vis } };
 for (let i = 0; i < 4; i++) field.update(.016, { A: player });
 scene.updateMatrixWorld(true);
-const avatar = scene.children.find(o => o.isGroup).children.filter(o => o.matrixAutoUpdate === false)[0]; // avatar A's root
+const avatar = scene.children.find(o => o.isGroup).children.filter(o => o.matrixAutoUpdate === false)[0].children[0]; // avatar A's root (inside its holder, which draws it at the character's size)
 const hand = avatar.children.find(o => o.isMesh && o.geometry.type === 'IcosahedronGeometry' && Math.abs(o.scale.x - .05) < 1e-6 && o.material.color.getHex() === 0x252a36 && o.position.z > 0);
 const wp = new THREE.Vector3(); hand.getWorldPosition(wp);
 // the camera pose shapes the body but never places it: the stick hand is at the sensors' stick base (not the camera's wrist)

@@ -127,11 +127,14 @@ function setRuneScale(v) {
 // this file (not in git). A dashboard sends { type: 'setStick', slot, model | null }; every dashboard (now and on hello) and the slot's
 // phone get { type: 'stick', slot, model }.
 const sticksFile = join(root, 'sticks.json');
-// v 2 only (shape: ring centres c, radii r per angle); a v 1 model (colours) saved by an older build is dropped on load
-const okStick = m => m && typeof m === 'object' && m.v === 2 && m.length > .1 && m.length < 2 && Number.isInteger(m.rings) && Number.isInteger(m.around)
-  && m.rings > 1 && m.rings <= 256 && m.around > 2 && m.around <= 64
-  && Array.isArray(m.r) && m.r.length === m.rings * m.around && m.r.every(v => v > 0 && v < .2)
-  && Array.isArray(m.c) && m.c.length === 2 * m.rings && m.c.every(v => Math.abs(v) < .3);
+// v 3 only (a tree: nodes [side, along], edges, thickness r [grip, tip]); older models (v 1 colours, v 2 rings) are dropped on load
+const okStick = m => m && typeof m === 'object' && m.v === 3 && m.length > .1 && m.length < 2
+  && Array.isArray(m.r) && m.r.length === 2 && m.r.every(v => v > 0 && v < .2)
+  && Array.isArray(m.nodes) && m.nodes.length >= 2 && m.nodes.length <= 1024
+  && m.nodes.every(n => Array.isArray(n) && n.length === 2 && Math.abs(n[0]) < 1 && Math.abs(n[1]) <= m.length)
+  && Number.isInteger(m.tip) && m.tip > 0 && m.tip < m.nodes.length
+  && Array.isArray(m.edges) && m.edges.length <= 1024
+  && m.edges.every(e => Array.isArray(e) && e.length === 2 && e.every(i => Number.isInteger(i) && i >= 0 && i < m.nodes.length) && e[0] !== e[1]);
 let sticks = {}; try { sticks = Object.fromEntries(Object.entries(JSON.parse(readFileSync(sticksFile, 'utf8')) ?? {}).filter(([, m]) => okStick(m))); } catch {}
 function setStick(slot, model) {
   if (!SLOTS.includes(slot) || (model !== null && !okStick(model))) return;
@@ -190,9 +193,19 @@ wss.on('connection', (ws, req) => {
     }
     if (k.type === 'setRuneScale' && role === 'dashboard') return setRuneScale(k.scale);
     if (k.type === 'record') { if (role === 'dashboard') { if (k.label) startRecording(k.label, k.sec); else stopRecording(); } return; }
-    if (k.type === 'vibrate') { // { type: 'vibrate', slot, kind: 'charge' | 'win' | 'off' } from a dashboard goes to that slot's phone
+    if (k.type === 'vibrate') { // { type: 'vibrate', slot, kind: 'charge' | 'win' | 'off', (charge:) element, tier, level } from a dashboard goes to that slot's phone
       if (role !== 'dashboard' || !['charge', 'win', 'off'].includes(k.kind)) return;
-      for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, { type: 'vibrate', kind: k.kind });
+      const m = k.kind === 'charge' ? { type: 'vibrate', kind: 'charge', element: String(k.element ?? ''), tier: ['s', 'm', 'l'].includes(k.tier) ? k.tier : 's', level: Math.max(0, Math.min(1, +k.level || 0)) } : { type: 'vibrate', kind: k.kind };
+      for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, m);
+      return;
+    }
+    if (k.type === 'sfx') { // a game sound for that slot's phone (app.js phoneSound): { kind: 'chargeFail' } or { voices: [{ file, gain, rate, offset, dur, rel, fade }] }
+      if (role !== 'dashboard') return;
+      const num = (x, lo, hi, d = 0) => Number.isFinite(+x) ? Math.max(lo, Math.min(hi, +x)) : d;
+      const m = k.kind === 'chargeFail' ? { type: 'sfx', kind: 'chargeFail' } : { type: 'sfx', voices: (Array.isArray(k.voices) ? k.voices : []).slice(0, 4)
+        .filter(v => PHONE_SFX.has(v?.file)).map(v => ({ file: v.file, gain: num(v.gain, 0, 1), rate: num(v.rate, .25, 4, 1), offset: num(v.offset, 0, 10), dur: num(v.dur, 0, 10), rel: num(v.rel, 0, 2, .25),
+          fade: Array.isArray(v.fade) ? [num(v.fade[0], 0, 10), num(v.fade[1], 0, 10)] : null })) };
+      if (m.kind || m.voices.length) for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, m);
       return;
     }
     if (k.type === 'flash') { // a hit: { type: 'flash', slot, ms } from a dashboard lights the torch of that slot's phone
@@ -331,6 +344,8 @@ const byId = id => db.sticks.find(s => s.id === id) ?? null;
 // stats: the admin's own values (PATCH, s.custom) or, without them, from (seed, rarity, rarityMul)
 const withStats = s => s && { ...s, stats: s.custom ? { ...s.custom } : stickStats(s.seed, s.rarity, rarityMul) };
 const ELEMENTS = ['fire', 'thunder', 'water', 'wind'], STAT_KEYS = ['hp', 'power', 'speed', 'charge'], STAT_RANGE = [.5, 2];
+// the game sounds a phone has (Android res/raw, iOS bundle): what { type: 'sfx' } may name
+const PHONE_SFX = new Set(['fire', 'lightning', 'water', 'wind'].flatMap(e => [1, 2, 3].map(i => e + i)).concat(['guard', 'guard_reflect']));
 const assigned = () => ({ A: withStats(byId(db.assign.A)), B: withStats(byId(db.assign.B)) });
 const sticksMsg = () => JSON.stringify({ type: 'sticks', ...assigned() });
 const saveDb = () => { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(STICKS_FILE, JSON.stringify(db, null, 2)); }; // sync: two saves never interleave

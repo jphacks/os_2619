@@ -97,9 +97,21 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     @Volatile private var torchUntilMs = 0L
     private var torchOn = false // GL thread
     private val vibe by lazy { Vibe(this) }
-    // a hit: the whole screen red for as long as the torch, then fading out (never takes touches: not clickable)
-    private val hitRed by lazy { View(this).apply { setBackgroundColor(Color.RED); alpha = 0f } }
-    private val HIT_ALPHA = .65f
+    private val hitSound by lazy { HitSound(this) }
+    private val chargeSound by lazy { ChargeSound(this) }
+    private val gameSound by lazy { GameSound(this) }
+    // a hit: the whole screen blinks pure #FF0000 (on 60 ms / off 40 ms) for as long as the hit lasts (the torch's time;
+    // a newer hit only makes it last longer). Never takes touches: not clickable
+    private val hitRed by lazy { View(this).apply { setBackgroundColor(0xFFFF0000.toInt()); alpha = 0f } }
+    private var hitRedUntilMs = 0L // UI thread only
+    private val blinkRed: Runnable = object : Runnable {
+        override fun run() {
+            val now = SystemClock.elapsedRealtime()
+            if (now >= hitRedUntilMs) { hitRed.alpha = 0f; return }
+            hitRed.alpha = if (now % 100 < 60) 1f else 0f
+            hitRed.postDelayed(this, 20)
+        }
+    }
 
     private val convertW = Worker("convert")
     private val tagW = Worker("tags")
@@ -119,10 +131,20 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
 
         val id = prefs.getString("id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("id", it).apply() }
         link = Link(id, Build.MODEL)
-        link.onVibrate = { vibe.handle(it) }
+        link.onVibrate = { vibe.handle(it); if (it == "off" || it == "win") chargeSound.stop() }
+        link.onCharge = { el, tier, level -> chargeSound.charge(el, tier, level) }
+        link.onSound = { gameSound.play(it) }
+        link.onChargeFail = { chargeSound.fail() }
+        hitSound; chargeSound; gameSound // load the sounds now, so the first hit / charge is not silent
         link.onFlash = { ms ->
             torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + ms) // another hit can only make it last longer
-            runOnUiThread { hitRed.animate().cancel(); hitRed.alpha = HIT_ALPHA; hitRed.animate().alpha(0f).setStartDelay(ms.toLong()).setDuration(300) }
+            if (ms > 0) { hitSound.play(); vibe.hit() }
+            runOnUiThread {
+                val now = SystemClock.elapsedRealtime()
+                val blinking = now < hitRedUntilMs
+                hitRedUntilMs = maxOf(hitRedUntilMs, now + ms)
+                if (!blinking) { hitRed.removeCallbacks(blinkRed); blinkRed.run() } // already blinking: it just goes on longer
+            }
         }
         scan = Scan(link)
         imu = Imu(this) { s ->
@@ -208,7 +230,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
 
     override fun onDestroy() {
         super.onDestroy()
-        link.close(); imu.disconnect(); vibe.handle("off")
+        link.close(); imu.disconnect(); vibe.handle("off"); hitSound.release(); chargeSound.release(); gameSound.release()
         listOf(convertW, tagW).forEach { it.shutdown() }
         session?.close()
     }

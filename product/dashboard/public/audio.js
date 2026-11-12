@@ -12,7 +12,8 @@
 // admin.html are not gestures. unlock() is idempotent; the first pointerdown / keydown / touchend on the page calls it.
 
 const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3', 'water1', 'water2', 'water3', 'wind1', 'wind2', 'wind3', 'guard',
-  'charge_fire', 'charge_thunder', 'charge_water', 'charge_wind', 'full_fire', 'full_thunder', 'full_water', 'full_wind'];
+  'charge_fire', 'charge_thunder', 'charge_water', 'charge_wind', 'full_fire', 'full_thunder', 'full_water', 'full_wind', 'damage'];
+const EXT = {}; // per-file extension when not mp3 (damage: the phones' hit sound, only auditioned here)
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
 const LUFS = { bgm: -4.0, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2,
@@ -90,7 +91,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     const failed = [];
     await Promise.all(FILES.map(async name => {
       try {
-        const r = await fetch(base + name + '.mp3');
+        const r = await fetch(base + name + '.' + (EXT[name] ?? 'mp3'));
         if (!r.ok) throw new Error(r.status);
         const b = await ctx.decodeAudioData(await r.arrayBuffer());
         buf[name] = LOOPS[name] ? loopBuffer(b, LOOPS[name]) : b;
@@ -119,6 +120,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     try { v.src.stop(t + fade + .005); } catch {}
   }
   function voice(key, name, { gain = 1, pan = 0, rate = 1, dur = 0, rel = .25, vary = true, fade = null, offset = 0 } = {}) {
+    if (capture) { if (buf[name]) capture.push({ name, gain: gain * norm[name], rate, offset, dur, rel, fade }); return null; } // describe(): what would play, nothing plays
     const b = buf[name];
     if (!b || ctx.state !== 'running' || muted) return null;
     const t = ctx.currentTime, same = voices.filter(v => v.key === key);
@@ -146,6 +148,7 @@ export function createAudio({ base = 'audio/' } = {}) {
   // ---- BGM ducking: the deepest request wins until it is over ----
   let duckEnd = 0, duckDepth = 1;
   function duck([d, hold, rel]) {
+    if (capture) return;
     const t = ctx.currentTime, target = db(d);
     if (t < duckEnd && target > duckDepth) return; // a deeper duck is running
     const g = duckG.gain;
@@ -196,14 +199,42 @@ export function createAudio({ base = 'audio/' } = {}) {
     if (v && (!on || v.name !== name)) { release(v, .05); v = chg[slot] = null; }
     if (!on) return;
     if (!buf[name] || ctx.state !== 'running' || muted) return;
-    if (!v) { v = chg[slot] = loopVoice(name, bus.sfx); v.lvl = -1; v.pan = 9; v.tier = null; v.src.playbackRate.value = CHARGE_PITCH[tier] ?? CHARGE_PITCH.s; } // start at the tier's pitch: no glide down from 1.0
+    if (!v) { // start at the tier's pitch: no glide down from 1.0
+      v = chg[slot] = loopVoice(name, bus.sfx); v.lvl = -1; v.pan = 9; v.tier = null; v.src.playbackRate.value = CHARGE_PITCH[tier] ?? CHARGE_PITCH.s;
+      v.pos = 0; v.rt = ctx.currentTime; v.rate = v.src.playbackRate.value; // where in the loop it is (s of buffer): chargeFail plays back from there
+    }
     const t = ctx.currentTime, l = clamp(level, 0, 1);
     if (Math.abs(l - v.lvl) < .01 && Math.abs(pan - v.pan) < .02 && tier === v.tier) return; // per-frame calls: skip unchanged
     if (tier === 'l' && v.tier !== 'l' && EL[element]?.full) voice(key('full', element), EL[element].full, { pan, gain: db(MIX.full) }); // 大 reached
+    if (tier !== v.tier) { v.pos += (t - v.rt) * v.rate; v.rt = t; v.rate = CHARGE_PITCH[tier] ?? CHARGE_PITCH.s; }
     v.lvl = l; v.pan = pan; v.tier = tier;
     v.g.gain.setTargetAtTime(db(MIX.charge + MIX.chargeSpan * l) * norm[name], t, .03);
     v.src.playbackRate.setTargetAtTime(CHARGE_PITCH[tier] ?? CHARGE_PITCH.s, t, .03); // a riser in steps: each tier is higher, the same tier keeps one pitch
     v.p.pan.setTargetAtTime(clamp(pan, -1, 1) * PAN_MAX, t, .05);
+  }
+  /** The charge broke off (failed, not fired): instead of a cut, the charge heard so far plays backwards, fast, fading
+   *  to silence over FAIL_REV.fade s. A reversed copy of the loop, started where the loop is now, runs back through it. */
+  const FAIL_REV = { fade: .3, span: .35, min: 1.8, max: 4 }; // speed: the last `span` s... of what was heard, squeezed into the fade (within min..max ×)
+  const rev = {};
+  function chargeFail(slot) {
+    const v = chg[slot]; if (!v) return;
+    chg[slot] = null;
+    const t = ctx.currentTime, b = v.src.buffer, heard = v.pos + (t - v.rt) * v.rate;
+    release(v, .01);
+    if (muted || ctx.state !== 'running' || heard < .05) return;
+    const r = rev[v.name] ??= (() => {
+      const o = ctx.createBuffer(b.numberOfChannels, b.length, b.sampleRate);
+      for (let c = 0; c < b.numberOfChannels; c++) { const s = b.getChannelData(c), d = o.getChannelData(c); for (let i = 0, n = s.length; i < n; i++) d[i] = s[n - 1 - i]; }
+      return o;
+    })();
+    const src = ctx.createBufferSource(), g = node(0), p = ctx.createStereoPanner(), g0 = v.g.gain.value;
+    src.buffer = r; src.loop = true; // runs back past the loop's start into the pass before it, as the forward loop did
+    src.playbackRate.value = v.rate * clamp(Math.min(heard, 3) / FAIL_REV.span, FAIL_REV.min, FAIL_REV.max);
+    p.pan.value = v.p.pan.value;
+    src.connect(g).connect(p).connect(bus.sfx);
+    g.gain.setValueAtTime(g0, t); g.gain.linearRampToValueAtTime(0, t + FAIL_REV.fade);
+    src.start(t, b.duration - (heard % b.duration)); src.stop(t + FAIL_REV.fade + .02);
+    src.onended = () => { src.disconnect(); g.disconnect(); p.disconnect(); };
   }
   /** One 3 s pass of a bed: plays from 0, full until BED.fadeAt, linearly down to silence at BED.end, then stops. The level
    *  (g, set by aura()) and this fade (f) are separate gains, so level changes never undo the fade. The voice stays in
@@ -277,6 +308,14 @@ export function createAudio({ base = 'audio/' } = {}) {
     voice(key('guard', kind), name, { pan, gain: db(kind === 'up' ? MIX.shot - 4 : MIX.hit - 2) });
   }
   function play(name, { gain = 1, pan = 0, rate = 1 } = {}) { return !!voice(key('play', name), name, { gain, pan, rate, vary: false }); }
+  /** The voices a game sound (shot / hit / special / guard) would start, without playing them: [{ name, gain (linear, incl.
+   *  loudness norm), rate, offset, dur, rel, fade }]. The players' phones play the same (app.js phoneSound). */
+  let capture = null;
+  function describe(kind, ...args) {
+    if (!['shot', 'hit', 'special', 'guard'].includes(kind)) return [];
+    capture = [];
+    try { ({ shot, hit, special, guard })[kind](...args); return capture; } finally { capture = null; }
+  }
 
   function setVolume(b, v) {
     if (!(b in vol)) return;
@@ -306,7 +345,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     load, unlock,
     get unlocked() { return ctx.state === 'running'; }, get loaded() { return loaded; },
     setVolume, get volumes() { return { ...vol }; }, setMuted, get muted() { return muted; },
-    bgm, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, aura, guard, play, stopAll, dispose,
+    bgm, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, chargeFail, describe, aura, guard, play, stopAll, dispose,
     peak, // output peak (linear) over the last ~43 ms, for meters / tests
     ctx,
   };
