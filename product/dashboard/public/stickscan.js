@@ -2,17 +2,19 @@
 // The phone (Scan button: Android Scan.kt, iOS Scan.swift) sends { type: 'scan', step, n, k, tags, jpg, w, h } packets:
 //   step 'stick' a picture of the stick lying on the sheets, tip toward T0 / -z; 'start' / 'done' / 'cancel' around them.
 //   stickui.js decodes the pictures and calls buildStick() here on 'done'.
-// Method: every picture's camera from the sheets' tags (extrinsics.js solveCamera); per picture a mask of what is neither the white paper
-// nor the black print (stickMask); a voxel hull above the floor carved from the masks (coarse,
+// Method: every picture's camera from the sheets' tags (extrinsics.js solveCamera); per picture a mask of the stick: where the printed
+// design (public/mahoujin-design.bin.gz, matched to the real, slightly distorted print) has no ink, whatever is not paper (designMask);
+// without the design, what is neither the white paper nor the black print (stickMask); a voxel hull above the floor carved from the masks (coarse,
 // then fine near the survivors); its largest blob seen from above turned into a tree (skeleton): the longest path is the stick, the
 // parts reaching off it are branches, so a Y-shaped branch stays a Y. Thickness is two numbers: at the grip and at the tip.
 // Plain JS, no deps: the page and node tests (test-stickscan.mjs) share it.
 import * as W from './world.js';
 import { solveCamera } from './extrinsics.js';
+import { RUNE, RUNE_IDS } from './runetag.js';
 
 export const SCAN = {
   radius: .6,    // the volume searched: inside this circle round the sheets' centre (the mahoujin paper; a brown floor outside stays out)
-  top: .07,      // and 0 < y < top (m)
+  top: .15,      // and 0 < y < top (m): a branched stick rests on its branches, its middle well off the floor
   coarse: .006, fine: .002, // voxel sides, m
   minY: .002,
   branchMin: .03, // skeleton: a part reaching this far past the wood it leaves is a branch (m)
@@ -20,8 +22,13 @@ export const SCAN = {
   gap: .025, minPiece: 20, // pieces of the hull this close to the stick join it (a thin branch breaks where a few views miss it); smaller ones (cells) are specks
   minViews: 6,
   miss: .12,     // a voxel stays though this share of the views that see it miss it in their mask (pose / mask errors)
+  minSeen: .25,  // and only when this share of all the views judge it (see it against the print)
   colour: .06,   // stickMask: coloured = chroma this much above the picture's usual (the paper's white balance)
   paper: .75, ink: .3, // stickMask: brighter than this x the paper's level is paper, darker than this x is ink (when without colour)
+  floorCell: .002, inkTol: 0, darker: .15, solid: .7, // designMask: grid (m); the print's darkest within this many cells (0: the matched print is close enough); the stick is this
+                 // much darker; on the tag patches design ink over solid (within one cell) is black
+  minTop: .005,  // skeleton: footprint cells lower than this are the floor misread (a print line), not wood (m)
+  alignTile: 40, alignSearch: 12, // floorModel: the print matched to the design in tiles of this many cells, up to this many cells off
 };
 
 /** A picture's camera from its tags (corners 0..1) and intrinsics k [fx/w, fy/h, cx/w, cy/h], for a w x h picture. null if < 2 sheets. */
@@ -53,16 +60,8 @@ function px(v, x, y, z) {
  * pale or dark patches), so: anything coloured, or any mid tone that is not an edge between paper and ink (a print line's blurred border).
  * Levels follow the picture's own exposure and white balance (most of it is paper). A stick as white as the paper is not found.
  */
-export function stickMask(img) {
-  const d = img.data, Wd = img.width, Ht = img.height, n = Wd * Ht;
-  const lum = new Float32Array(n), chr = new Float32Array(n), ls = [], cs = [];
-  for (let p = 0; p < n; p++) {
-    const r = d[4 * p], g = d[4 * p + 1], b = d[4 * p + 2], l = r + g + b;
-    lum[p] = l; chr[p] = (Math.max(r, g, b) - Math.min(r, g, b)) / (l + 30); // +30: dark pixels' colour is mostly noise
-    if ((p & 15) === 0) { ls.push(l); cs.push(chr[p]); }
-  }
-  ls.sort((a, b) => a - b); cs.sort((a, b) => a - b);
-  const paper = ls[Math.floor(.9 * ls.length)], cut = Math.max(.08, cs[cs.length >> 1] + SCAN.colour);
+export function stickMask(img, lv = levels(img)) {
+  const Wd = img.width, Ht = img.height, n = Wd * Ht, { lum, chr, paper, cut } = lv;
   const kind = new Uint8Array(n); // 0 mid tone, 1 paper, 2 ink (both without colour)
   for (let p = 0; p < n; p++) if (chr[p] <= cut) kind[p] = lum[p] > SCAN.paper * paper ? 1 : lum[p] < SCAN.ink * paper ? 2 : 0;
   const m = new Uint8Array(n);
@@ -80,28 +79,178 @@ export function stickMask(img) {
   return m;
 }
 
+/** A picture's brightness (r + g + b) and colour per pixel, its paper level (most of it is paper) and its colour cut (stickMask). */
+function levels(img) {
+  const d = img.data, n = img.width * img.height, lum = new Float32Array(n), chr = new Float32Array(n), ls = [], cs = [];
+  for (let p = 0; p < n; p++) {
+    const r = d[4 * p], g = d[4 * p + 1], b = d[4 * p + 2], l = r + g + b;
+    lum[p] = l; chr[p] = (Math.max(r, g, b) - Math.min(r, g, b)) / (l + 30); // +30: dark pixels' colour is mostly noise
+    if ((p & 15) === 0) { ls.push(l); cs.push(chr[p]); }
+  }
+  ls.sort((a, b) => a - b); cs.sort((a, b) => a - b);
+  return { lum, chr, paper: ls[Math.floor(.9 * ls.length)], cut: Math.max(.08, cs[cs.length >> 1] + SCAN.colour) };
+}
+
+// ---- the printed design: where the mahoujin has ink, a dark stick cannot be told from the print; everywhere else it can ----
+/**
+ * The design file's bytes, gunzipped (public/mahoujin-design.bin.gz, made by tools/build-mahoujin-design.py from the kit) ->
+ * { w, h, cx, cy, r, ink }: 1 mm per pixel, row 0 toward T0, centre (cx, cy), ink 0 paper .. 255 full, r the printed radius (mm).
+ */
+export function parseDesign(b) {
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength), w = dv.getUint16(0, true), h = dv.getUint16(2, true);
+  if (b.length !== 8 + w * h) throw new Error('mahoujin design: wrong size');
+  const cx = dv.getUint16(4, true), cy = dv.getUint16(6, true), ink = b.subarray(8);
+  let r2 = 0; for (let v = 0; v < h; v++) for (let u = 0; u < w; u++) if (ink[v * w + u] > 128) r2 = Math.max(r2, (u - cx) ** 2 + (v - cy) ** 2);
+  return { w, h, cx, cy, r: Math.sqrt(r2), ink };
+}
+// The design on the floor (world.js runeTagPos: T0 at -x, T1 clockwise from it seen from above): x = -up, z = -right, in mm x RUNE_SCALE.
+const designPx = (D, x, z, s) => [D.cx - z * 1000 / s, D.cy + x * 1000 / s];
+
+/**
+ * What the floor should look like, on a grid of SCAN.floorCell: how dark the print is there at most (E: 1 - brightness / the paper's,
+ * the darkest within SCAN.inkTol cells), so a pixel clearly darker than that is the stick, even a black one on the paper or a grey line. The real mahoujin is not the design exactly (sheets glued a little off,
+ * paper stretched or wrinkled, patches not quite on their tags): the cameras' average view of the floor is matched to the design tile by
+ * tile (SCAN.alignTile, up to SCAN.alignSearch off) and the design shifted by the smoothed field before use. Returns { n, g, R, E, shift }.
+ */
+export function floorModel(vs, D) {
+  const { floorCell: g, alignTile: T, alignSearch: S, inkTol } = SCAN, s = W.RUNE_SCALE;
+  const R = D.r * s / 1000, n = Math.ceil(2 * R / g), at = i => -R + (i + .5) * g, inside = (i, j) => at(i) ** 2 + at(j) ** 2 < R * R;
+  // the design on the grid (i along x, j along z): its mean ink over the cell
+  const P = new Float32Array(n * n), k = Math.max(1, Math.round(g * 1000 / s));
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const [u0, v0] = designPx(D, at(i), at(j), s); let sum = 0, cnt = 0;
+    for (let dv = 0; dv < k; dv++) for (let du = 0; du < k; du++) {
+      const u = Math.floor(u0 - k / 2 + du + .5), v = Math.floor(v0 - k / 2 + dv + .5);
+      if (u >= 0 && v >= 0 && u < D.w && v < D.h) { sum += D.ink[v * D.w + u]; cnt++; }
+    }
+    P[j * n + i] = cnt ? sum / cnt / 255 : 0;
+  }
+  // what the cameras saw there: darkness (1 - brightness / the picture's paper level), averaged over the views that see the cell
+  const F = new Float32Array(n * n), C = new Uint16Array(n * n);
+  for (const v of vs) {
+    const { lum, paper } = levels(v.img);
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      if (!inside(i, j)) continue;
+      const p = px(v, at(i), 0, at(j)); if (p < 0) continue;
+      F[j * n + i] += 1 - Math.min(1, lum[p] / paper); C[j * n + i]++;
+    }
+  }
+  for (let c = 0; c < n * n; c++) if (C[c]) F[c] /= C[c];
+  // per tile: the design shift (cells) that best matches F (normalised correlation), searched every 2 cells then refined
+  const nt = Math.ceil(n / T), sx = new Float32Array(nt * nt), sz = new Float32Array(nt * nt), ok = new Uint8Array(nt * nt);
+  const ncc = (i0, j0, dx, dz) => {
+    let n0 = 0, a = 0, b = 0, aa = 0, bb = 0, ab = 0;
+    for (let j = j0; j < Math.min(n, j0 + T); j++) for (let i = i0; i < Math.min(n, i0 + T); i++) {
+      const c = j * n + i; if (!C[c]) continue;
+      const ii = i + dx, jj = j + dz; if (ii < 0 || jj < 0 || ii >= n || jj >= n) continue;
+      const x = F[c], y = P[jj * n + ii]; n0++; a += x; b += y; aa += x * x; bb += y * y; ab += x * y;
+    }
+    if (n0 < T * T / 3) return { r: -1, vb: 0 };
+    const va = aa - a * a / n0, vb = bb - b * b / n0;
+    return { r: va > 0 && vb > 0 ? (ab - a * b / n0) / Math.sqrt(va * vb) : -1, vb: vb / n0 };
+  };
+  for (let tj = 0; tj < nt; tj++) for (let ti = 0; ti < nt; ti++) {
+    const i0 = ti * T, j0 = tj * T;
+    if (ncc(i0, j0, 0, 0).vb < .005) continue; // no print to match here (blank paper, or outside the circle)
+    let best = { r: -1 }, bx = 0, bz = 0;
+    for (let dz = -S; dz <= S; dz += 2) for (let dx = -S; dx <= S; dx += 2) { const q = ncc(i0, j0, dx, dz); if (q.r > best.r) { best = q; bx = dx; bz = dz; } }
+    for (const [ex, ez] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) { const q = ncc(i0, j0, bx + ex, bz + ez); if (q.r > best.r) { best = q; bx += ex; bz += ez; } }
+    if (best.r < .3) continue;
+    sx[tj * nt + ti] = bx; sz[tj * nt + ti] = bz; ok[tj * nt + ti] = 1;
+  }
+  // the field: outliers out (3 x 3 median over the matched tiles), gaps filled from their neighbours, then bilinear between tile centres
+  const med = a => { const t = []; for (let tj = 0; tj < nt; tj++) for (let ti = 0; ti < nt; ti++) {
+    const v = []; for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) { const q = (tj + b) * nt + ti + c; if (tj + b >= 0 && ti + c >= 0 && tj + b < nt && ti + c < nt && ok[q]) v.push(a[q]); }
+    t.push(v.length ? median(v) : 0);
+  } return Float32Array.from(t); };
+  const mx = med(sx), mz = med(sz), have = Uint8Array.from(ok, (o, q) => o || [-1, 1, -nt, nt].some(d => ok[q + d]) ? 1 : 0);
+  for (let pass = 0; pass < 2 * nt && have.includes(0); pass++) {
+    const nx = Float32Array.from(mx), nz = Float32Array.from(mz), nh = Uint8Array.from(have);
+    for (let q = 0; q < nt * nt; q++) {
+      if (have[q]) continue;
+      let cx = 0, cz = 0, c = 0; const ti = q % nt;
+      for (const d of [-1, 1, -nt, nt]) { const r = q + d; if (r < 0 || r >= nt * nt || (d === -1 && ti === 0) || (d === 1 && ti === nt - 1) || !have[r]) continue; cx += mx[r]; cz += mz[r]; c++; }
+      if (c) { nx[q] = cx / c; nz[q] = cz / c; nh[q] = 1; }
+    }
+    mx.set(nx); mz.set(nz); have.set(nh);
+  }
+  const field = (a, i, j) => { // bilinear between tile centres
+    const u = Math.min(nt - 1, Math.max(0, (i + .5) / T - .5)), w = Math.min(nt - 1, Math.max(0, (j + .5) / T - .5));
+    const u0 = Math.floor(u), w0 = Math.floor(w), u1 = Math.min(nt - 1, u0 + 1), w1 = Math.min(nt - 1, w0 + 1), fu = u - u0, fw = w - w0;
+    return (a[w0 * nt + u0] * (1 - fu) + a[w0 * nt + u1] * fu) * (1 - fw) + (a[w1 * nt + u0] * (1 - fu) + a[w1 * nt + u1] * fu) * fw;
+  };
+  // the print where it really is (the design shifted by the field), its darkest within inkTol cells (pose and field errors). E: the
+  // darkness to expect, as the cameras see the print on average (F ~ a + b x design ink, least squares). A near, sharp view sees black
+  // ink darker than that average. On the tag patches (glued on by hand, a few mm off the poster's own dots, so the field misses them)
+  // solid ink (design ink over SCAN.solid within one cell) is taken as black, or their dots pass for the stick. Elsewhere not: a
+  // dense band of letters would hide the stick crossing it. Flat misreads left over: skeleton minTop.
+  const Pw = new Float32Array(n * n);
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const ii = Math.round(i + field(mx, i, j)), jj = Math.round(j + field(mz, i, j));
+    if (ii >= 0 && jj >= 0 && ii < n && jj < n) Pw[j * n + i] = P[jj * n + ii];
+  }
+  let sn = 0, sp = 0, sf = 0, spp = 0, spf = 0;
+  for (let c = 0; c < n * n; c++) if (C[c]) { sn++; sp += Pw[c]; sf += F[c]; spp += Pw[c] * Pw[c]; spf += Pw[c] * F[c]; }
+  const fb = (spf - sp * sf / sn) / (spp - sp * sp / sn || 1), fa = (sf - fb * sp) / sn;
+  const E1 = new Float32Array(n * n), E = new Float32Array(n * n), solid = new Uint8Array(n * n);
+  const tags = RUNE_IDS.map(W.runeTagPos), patch = (RUNE.sheet / 2 * s) ** 2, onPatch = (i, j) => tags.some(t => (at(i) - t[0]) ** 2 + (at(j) - t[2]) ** 2 < patch);
+  for (let j = 1; j < n - 1; j++) for (let i = 1; i < n - 1; i++) {
+    if (!onPatch(i, j)) continue;
+    for (let d = 0; d < 9 && !solid[j * n + i]; d++) if (Pw[(j + (d / 3 | 0) - 1) * n + i + d % 3 - 1] > SCAN.solid) solid[j * n + i] = 1;
+  }
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { let v = 0; for (let d = -inkTol; d <= inkTol; d++) v = Math.max(v, Pw[j * n + Math.min(n - 1, Math.max(0, i + d))]); E1[j * n + i] = v; }
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { let v = 0; for (let d = -inkTol; d <= inkTol; d++) v = Math.max(v, E1[Math.min(n - 1, Math.max(0, j + d)) * n + i]); E[j * n + i] = solid[j * n + i] ? 1 : fa + fb * v; }
+  const matched = ok.reduce((a, b) => a + b, 0);
+  let worst = 0; for (let q = 0; q < nt * nt; q++) if (ok[q]) worst = Math.max(worst, Math.hypot(mx[q], mz[q]) * g);
+  return { n, g, R, E, paper: fa, shift: { tiles: matched, maxMm: +(worst * 1000).toFixed(1), at: (x, z) => { const i = (x + R) / g - .5, j = (z + R) / g - .5; return [field(mx, i, j) * g, field(mz, i, j) * g]; } } };
+}
+
+/**
+ * stickMask with the design: on the print (a pixel's ray meets the floor inside it) the stick is whatever is clearly darker than the
+ * print there (floorModel E), however dark or grey its bark, or coloured where the print is plain paper. Over black ink nothing is
+ * taken (the other views see the stick off it). Off the print (the floor round the mahoujin, or above the horizon) 2: unknown, the
+ * hull neither keeps nor carves by that view (the carpet looks like bark; taken as wood it kept empty space high near the edge).
+ */
+export function designMask(v, fm) {
+  const { lum, chr, paper, cut } = levels(v.img), { n, g, R, E } = fm, m = new Uint8Array(v.W * v.H);
+  const Rt = v.R, O = v.O, Rin = (R - .01) ** 2;
+  for (let y = 0; y < v.H; y++) for (let x = 0; x < v.W; x++) {
+    const a = (x + .5 - v.cx) / v.f, b = (y + .5 - v.cy) / v.f;
+    const p = y * v.W + x, dy = Rt[1] * a + Rt[4] * b + Rt[7]; if (dy >= 0) { m[p] = 2; continue; } // the ray (world) never meets the floor
+    const s = -O[1] / dy, X = O[0] + s * (Rt[0] * a + Rt[3] * b + Rt[6]), Z = O[2] + s * (Rt[2] * a + Rt[5] * b + Rt[8]);
+    if (X * X + Z * Z > Rin) { m[p] = 2; continue; }
+    const i = Math.floor((X + R) / g), j = Math.floor((Z + R) / g);
+    const e = E[j * n + i], o = 1 - lum[p] / paper; // expected and seen darkness
+    m[p] = o > Math.max(e + SCAN.darker, 1 - SCAN.paper) || (chr[p] > cut && e < fm.paper + SCAN.darker) ? 1 : 0; // colour only where the print is plain paper
+  }
+  return m;
+}
+
 /** Inside the hull at (x, y, z)? The stick in all views that see it there, but a few (pose / mask errors). */
 function inHull(vs, ms, x, y, z) {
   const allow = Math.max(1, Math.floor(SCAN.miss * vs.length));
   let seen = 0, out = 0;
   for (let i = 0; i < vs.length; i++) {
     const p = px(vs[i], x, y, z); if (p < 0) continue;
+    if (ms[i][p] === 2) continue; // designMask: this view sees only the floor round the print behind it
     seen++; if (!ms[i][p] && ++out > allow) return false;
   }
-  return seen >= 4;
+  // judged by enough views, and missed by few of them (a spot most views see against the carpet is not judged)
+  return seen >= Math.max(4, SCAN.minSeen * vs.length) && out <= Math.max(1, SCAN.miss * seen);
 }
 
 /**
- * buildStick(views) -> model, or throws an Error saying what is missing.
+ * buildStick(views, design?) -> model, or throws an Error saying what is missing.
  * views: { img: { data RGBA, width, height }, cam: viewCamera(...) }. The stick lies on the sheets with its tip toward -z (T0).
+ * design: parseDesign(...) of the mahoujin's print; with it a stick as dark as the print is found too (designMask), without it stickMask.
  * model: { v: 3, length (m), r: [grip, tip] radius (m), nodes: [[side, along]] (m; along -length/2 at the grip .. +length/2 at the tip,
  *          side across it, lying flat), edges: [[i, j]] node pairs joined by wood, tip: the tip's node (nodes 0..tip are the stick's own
  *          line, grip to tip; the rest are branches), views }
  */
-export function buildStick(views) {
+export function buildStick(views, design = null) {
   const vs = views.filter(v => v.cam).map(prep);
   if (vs.length < SCAN.minViews) throw new Error(`棒の写真が足りません（${vs.length} / ${SCAN.minViews}）`);
-  const ms = vs.map(v => stickMask(v.img));
+  const fm = design && floorModel(vs, design), ms = vs.map(v => fm ? designMask(v, fm) : stickMask(v.img));
   const { radius: RAD, top, coarse, fine, minY } = SCAN, half = RAD;
 
   // coarse carve over the whole volume
@@ -127,7 +276,7 @@ export function buildStick(views) {
   const P = [];
   for (let id = 0; id < keepF.length; id++) if (keepF[id]) { const fk = id % fn, fj = ((id / fn) | 0) % fy, fi = (id / fn / fy) | 0; P.push([-half + (fi + .5) * fine, (fj + .5) * fine, -half + (fk + .5) * fine]); }
   if (P.length < 50) throw new Error('棒が見つかりません（魔法陣の白黒以外のものが写っていない）');
-  return { ...skeleton(P), views: vs.length };
+  return { ...skeleton(P), views: vs.length, ...(fm && { printShiftMm: fm.shift.maxMm }) };
 }
 
 const smooth = (a, k) => a.map((_, i) => { let s = 0, n = 0; for (let d = -k; d <= k; d++) if (a[i + d] !== undefined) { s += a[i + d]; n++; } return s / n; });
@@ -147,6 +296,7 @@ function skeleton(P) {
   const xz = c => [x0 + (c % gw - 1) * fine, z0 + (((c / gw) | 0) - 1) * fine];
   const top = new Float32Array(gw * gh); // highest voxel's top, 0 = empty
   for (const p of P) { const c = cell(p); top[c] = Math.max(top[c], p[1] + fine / 2); }
+  for (let c = 0; c < top.length; c++) if (top[c] < SCAN.minTop) top[c] = 0;
   const NB = [-1, 1, -gw, gw, -gw - 1, -gw + 1, gw - 1, gw + 1];
   // the footprint's pieces: the biggest is the stick; the others within SCAN.gap of what is kept join it along a bridge, the rest go
   const piece = new Int32Array(gw * gh).fill(-1), size = [];

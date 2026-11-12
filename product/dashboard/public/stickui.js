@@ -3,7 +3,7 @@
 // createStickScan(hub, onText): collects one scan per slot; onText(slot, text) says how far it got.
 // createStickView(canvas): the model turning slowly, for the connection screen.
 import * as THREE from 'three';
-import { buildStick, viewCamera } from './stickscan.js';
+import { buildStick, viewCamera, parseDesign } from './stickscan.js';
 import { stickGeometry, STICK_COLOR } from './stickmesh.js';
 
 async function decode(jpg) {
@@ -12,6 +12,13 @@ async function decode(jpg) {
   g.drawImage(bmp, 0, 0); bmp.close();
   return g.getImageData(0, 0, c.width, c.height);
 }
+
+// the mahoujin's print (stickscan.js designMask: a stick as dark as the print is still found), fetched once; null: build without it
+let designJob = null;
+const loadDesign = () => designJob ??= fetch('mahoujin-design.bin.gz')
+  .then(r => r.ok ? new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer() : Promise.reject(new Error(r.status)))
+  .then(b => parseDesign(new Uint8Array(b)))
+  .catch(e => { console.warn('mahoujin design', e); return null; });
 
 export function createStickScan(hub, onText) {
   const scans = {}; // slot -> { views: [], jobs: [], noPose: 0 }
@@ -37,7 +44,7 @@ export function createStickScan(hub, onText) {
         await new Promise(r => setTimeout(r, 30)); // let the text show: the build holds this thread for ~1 s
         try {
           // shortcut: runs on the page's thread (~1 s per scan); move to a worker if it stutters a match
-          const model = buildStick(s.views);
+          const model = buildStick(s.views, await loadDesign());
           hub.send({ type: 'setStick', slot, model });
           const ends = model.nodes.filter((_, i) => model.edges.filter(e => e.includes(i)).length === 1).length; // grip, tip and one per branch
           onText(slot, `作成しました：長さ ${(model.length * 100).toFixed(0)} cm、枝分かれ ${ends - 2} 本、太さ 根元 ${(2000 * model.r[0]).toFixed(0)} mm・先 ${(2000 * model.r[1]).toFixed(0)} mm（${model.views} 方向から）`);
