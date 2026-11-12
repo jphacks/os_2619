@@ -2,15 +2,20 @@
 // Pure logic, no DOM: the dashboard and test-actions.mjs both use it.
 // Stick direction: `axis` is the IMU sensor axis along the stick: +Y, pointing to the tip (fixed in the product),
 // rotated into the IMU world (z up) by the WitMotion euler angles. Heading is relative to the IMU yaw at the last Calibrate.
-import { cross, dot, norm, qrot } from './map.js';
+import { dot, norm, qrot } from './map.js';
 
 const D = Math.PI / 180;
 const CHARGE_RMS = { start: 120, keep: 90 }; // °/s: see the gyro charge below
-const DODGE_ACC = 3.5, DODGE_V = .25, DODGE_DT = .08; // m/s², m/s, s: see Dodge below (11/13: lowered from 6 m/s², 0.4 m/s for a lighter sidestep)
+// Dodge (11/13, tuned on recordings of one player's dodges and of moves that must not dodge: test-data/dodge-*.jsonl.gz): the chest moves
+// `dist` m sideways (across where it faced as the move began) within `win` s, mostly sideways (forward under `ratio` of it), turning
+// under `turn`, from nearly still (under `still` m in the `pre` s before); one per `cool` s. Every setting near these caught all 9 dodges
+// and none of the 20 other moves (side-walking, turning, stepping on): the old test, a 0.16 s acceleration spike, read ARCore's bursty
+// samples (10 a second, gaps up to 0.33 s) and caught 4 of the 9 while firing on walking.
+const DODGE = { win: .3, dist: .35, ratio: .7, turn: 30 * D, still: .25, pre: .35, cool: .8 };
 export const ACTIONS = [
   { name: 'Charge', how: 'only while the stick is raised 45° or more; gyro only: starts when the stick moved 120°/s RMS over the last second and changed its turning direction 4+ times (stick circled or shaken at the base), then keeps going at 90°/s and 3+ times; slower than a swing' },
   { name: 'Swing', how: 'stick turns faster than 300°/s through more than 60° and stops dead (from over 250°/s to under 100°/s within 0.12 s); direction plus start and stop position' },
-  { name: 'Dodge', how: 'a spike of the chest phone\'s sideways acceleration (across where it faces) over 3.5 m/s², moving that way; left / right' },
+  { name: 'Dodge', how: 'the chest phone moves 0.35 m or more sideways within 0.3 s, from nearly still, mostly sideways and without turning; left / right' },
   { name: 'Guard', how: 'stick within 45° of horizontal (above or below) and still (under 60°/s) for 1 s; held upright it does nothing' },
 ];
 
@@ -28,7 +33,7 @@ const where = s => `elev ${deg(s.el)}°, heading ${deg(s.hd)}°`;
 
 export function createActions() {
   const P = {};
-  const st = s => P[s] ??= { yaw0: 0, last: null, ring: [], rev: [], sign: [0, 0, 0], chargeOn: false, spinCool: 0, still: null, sw: null, guard: null, guarded: false, ar: [], dodging: false };
+  const st = s => P[s] ??= { yaw0: 0, last: null, ring: [], rev: [], sign: [0, 0, 0], chargeOn: false, spinCool: 0, still: null, sw: null, guard: null, guarded: false, ar: [], dodgeAt: null };
 
   /** Feeds one packet; returns the actions it completes as { t, slot, name, detail, ...data }.
    *  Swing adds dir ('down-left' ...) and power 0..1 (stick speed, 1 at 1000°/s); Dodge adds dir and speed (m/s). */
@@ -105,22 +110,20 @@ export function createActions() {
     }
 
     if (k.type === 'ar' && k.tracking === 'TRACKING' && k.wp) {
-      // Dodge: a spike of the chest's sideways acceleration (across where the chest camera faces), from its horizontal velocity now and
-      // DODGE_DT s ago (each over DODGE_DT s, which smooths ARCore's jitter), while it already moves that way. Walking, even fast, does
-      // not do it (steady sideways speed, small acceleration); a quick sidestep does.
-      S.ar.push({ t: k.t, p: k.wp });
-      while (S.ar.length > 1 && S.ar[1].t <= k.t - 3 * DODGE_DT) S.ar.shift();
+      // Dodge (DODGE above): how far the chest went in the last `win` s, measured in the frame it faced at the start of it
+      const f = qrot(k.wq, [0, 0, -1]), fw = norm([f[0], 0, f[2]]);
+      S.ar.push({ t: k.t, x: k.wp[0], z: k.wp[2], fw });
+      while (S.ar.length > 1 && S.ar[0].t < k.t - DODGE.win - DODGE.pre - .2) S.ar.shift();
       const at = t => S.ar.reduce((b, s) => Math.abs(s.t - t) < Math.abs(b.t - t) ? s : b);
-      const a0 = at(k.t - 2 * DODGE_DT), a1 = at(k.t - DODGE_DT), d1 = a1.t - a0.t, d2 = k.t - a1.t;
-      if (d1 > DODGE_DT / 2 && d2 > DODGE_DT / 2 && k.t - a0.t < 4 * DODGE_DT) {
-        const f = qrot(k.wq, [0, 0, -1]), fwd = norm([f[0], 0, f[2]]), right = cross(fwd, [0, 1, 0]);
-        const side = p => (p[0] * right[0] + p[2] * right[2]);
-        const v1 = (side(a1.p) - side(a0.p)) / d1, v2 = (side(k.wp) - side(a1.p)) / d2, acc = (v2 - v1) / ((d1 + d2) / 2);
-        if (!S.dodging && Math.abs(acc) > DODGE_ACC && Math.sign(acc) === Math.sign(v2) && Math.abs(v2) > DODGE_V) {
-          const dir = acc > 0 ? 'right' : 'left';
-          emit('Dodge', `${dir}, ${Math.abs(acc).toFixed(1)} m/s²`, k.t, { dir, side: Math.sign(acc), acc: Math.abs(acc), speed: Math.abs(v2) });
-          S.dodging = true; S.dodgeAt = k.t;
-        } else if (S.dodging && k.t - S.dodgeAt > .5 && Math.abs(acc) < DODGE_ACC / 3) S.dodging = false; // one dodge per sidestep
+      const a = at(k.t - DODGE.win), b = at(k.t - DODGE.win - DODGE.pre);
+      if (k.t - a.t >= DODGE.win * .6 && a.t - b.t >= DODGE.pre * .5 && k.t - (S.dodgeAt ?? -Infinity) > DODGE.cool) { // enough history (no gap)
+        const rt = [-a.fw[2], a.fw[0]], dx = k.wp[0] - a.x, dz = k.wp[2] - a.z; // right of where it faced: (x, z) -> (-z, x)
+        const side = dx * rt[0] + dz * rt[1], fwd = dx * a.fw[0] + dz * a.fw[2], turn = Math.acos(Math.max(-1, Math.min(1, dot(a.fw, fw))));
+        if (Math.abs(side) >= DODGE.dist && Math.abs(fwd) < DODGE.ratio * Math.abs(side) && turn < DODGE.turn && Math.hypot(a.x - b.x, a.z - b.z) < DODGE.still) {
+          const dir = side > 0 ? 'right' : 'left', dist = Math.abs(side);
+          emit('Dodge', `${dir}, ${dist.toFixed(2)} m in ${(k.t - a.t).toFixed(2)} s`, k.t, { dir, side: Math.sign(side), dist, speed: dist / (k.t - a.t) });
+          S.dodgeAt = k.t;
+        }
       }
     }
     return out;

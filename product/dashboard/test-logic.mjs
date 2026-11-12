@@ -72,15 +72,24 @@ import { STICK } from './public/world.js';
 
   console.log('charge on the move ok: a shake counts while turning, footsteps do not');
 
-  { // a quick sidestep (10 m/s² for 0.15 s, then stopping) is one dodge to that side; walking sideways at 1 m/s was none
+  { // a quick sidestep from standing (12 m/s² for 0.2 s, then stopping: 0.48 m in 0.4 s) is one dodge to that side; walking sideways at 1 m/s was none
     const D = createActions(), out = []; let tt = 900, xx = 0, v = 0;
-    for (let i = 0; i < 100; i++, tt += .01) {
-      v = i < 15 ? v - .1 : i < 30 ? Math.min(0, v + .1) : 0; xx += v * .01; // to the left (-x): the chest faces -z, so its right is +x
+    for (let i = 0; i < 180; i++, tt += .01) {
+      const j = i - 80; v = j < 0 ? 0 : j < 20 ? v - .12 : j < 40 ? Math.min(0, v + .12) : 0; xx += v * .01; // to the left (-x): the chest faces -z, so its right is +x
       out.push(...D.ingest({ type: 'ar', slot: 'A', t: tt, tracking: 'TRACKING', wp: [xx, 1.3, 0], wq: [0, 0, 0, 1] }));
     }
     const d = out.filter(e => e.name === 'Dodge');
     assert.equal(d.length, 1, `sidestep: ${d.length} dodges`); assert.equal(d[0].dir, 'left'); assert.equal(d[0].side, -1);
-    console.log(`dodge ok: a sidestep dodges ${d[0].dir} (${d[0].acc.toFixed(1)} m/s²), walking does not`);
+    console.log(`dodge ok: a sidestep dodges ${d[0].dir} (${d[0].dist.toFixed(2)} m), walking does not`);
+  }
+  { // one player's recorded moves (11/13, the chest phone's ARCore pose): 9 dodges in the good take, none in the two bad ones
+    // (side-walking back and forth, turning, stepping on)
+    const take = n => gunzipSync(readFileSync(new URL(`./test-data/dodge-${n}.jsonl.gz`, import.meta.url))).toString().trim().split('\n').map(x => ({ type: 'ar', slot: 'A', ...JSON.parse(x) }));
+    const dodges = n => { const D = createActions(); return take(n).flatMap(k => D.ingest(k)).filter(e => e.name === 'Dodge'); };
+    const good = dodges('good');
+    assert.deepEqual(good.map(e => e.dir[0].toUpperCase()).join(''), 'RLRLRLRLL', `good take: ${good.map(e => `${e.t.toFixed(2)}${e.dir}`).join(' ')}`);
+    for (const n of ['bad-1', 'bad-2']) assert.equal(dodges(n).length, 0, `${n}: ${dodges(n).map(e => `${e.t.toFixed(2)}${e.dir}`).join(' ')}`);
+    console.log('dodge recordings ok: 9 / 9 dodges, 0 in the moves that are not');
   }
 
   // walking does not raise the bar: a smaller shake keeps the charge through a step and a long walk; and a running charge survives the stick dipping to 40°
