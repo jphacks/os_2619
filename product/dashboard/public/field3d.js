@@ -106,31 +106,22 @@ float gridAt(vec2 p, float s) { vec2 q = p / s, g = abs(fract(q - .5) - .5) / fw
 float ring(vec2 p, vec2 c, float r, float w) { float d = abs(length(p - c) - r); return 1. - smoothstep(w * .5, w * .5 + fwidth(d) * 1.5, d); }
 // The mahoujin's depth (runeCarve below: 0 the ground, 1 the bottom of a groove) at q, m in the design's frame. The print is
 // sampled at its measured millimetre scale (uRuneScale: mm per texel), with T0 toward -x.
-float runeDepth(vec2 q) {
+float runeDepth(vec2 q, float blur) { // blur: mip bias, 0 sharp; more reads a wider, softer version of the same marks
   vec2 uv = (uRuneImage.xy + vec2(-q.y, q.x) * 1000. / uRuneScale) / uRuneImage.zw;
   // sampled everywhere and masked after: a texture read behind an if gets no mip level at the edge of the if (a thin box round the print)
   vec2 inside = step(vec2(0.), uv) * step(uv, vec2(1.));
-  return texture2D(uRuneInk, clamp(uv, 0., 1.)).r * inside.x * inside.y;
+  return texture2D(uRuneInk, clamp(uv, 0., 1.), blur).r * inside.x * inside.y;
 }
-// Dug into the ground like a crop circle: grooves RUNE_DEPTH deep with walls lit and shaded by the sun, their bottoms the grass
-// pressed flat (paler, laid in a swirl round the centre).
-const float RUNE_DEPTH = .05;
+// Burnt into the grass: the lines charred near black, a wider patch round them singed yellow-brown. Plain darkening, not light and
+// shade: from the game camera the lines are thinner than a pixel, and a darker tone still shows where shading would average away.
 vec3 engravedRune(vec2 p, vec3 ground) {
   if (uRuneReady < .5) return ground;
   float co = cos(uRunePose.z), si = sin(uRunePose.z);
-  mat2 turn = mat2(co, -si, si, co);
-  vec2 q = turn * (p - uRunePose.xy), sun2 = turn * uBodySun.xz;
-  float h = runeDepth(q), e = uRuneScale / 1000.;
-  vec2 g = vec2(runeDepth(q + vec2(e, 0.)) - runeDepth(q - vec2(e, 0.)), runeDepth(q + vec2(0., e)) - runeDepth(q - vec2(0., e))) / (2. * e);
-  if (h < .003 && dot(g, g) < 1e-4) return ground;
-  vec3 n = normalize(vec3(RUNE_DEPTH * g.x, 1., RUNE_DEPTH * g.y)), sun = normalize(vec3(sun2.x, uBodySun.y, sun2.y));
-  float lit = clamp((max(dot(n, sun), 0.) + .3) / (max(sun.y, 0.) + .3), .2, 1.8); // against the flat ground's light: flat ground is exactly 1
-  float bed = smoothstep(.2, .75, h);
-  float a = atan(q.y, q.x) * 40. + length(q) * 55., aw = fwidth(a); // the laid grass: streaks round the centre, faded where they would shimmer
-  float streak = sin(a) * (1. - smoothstep(.8, 2.5, aw));
-  vec3 pressed = mix(ground, vec3(dot(ground, vec3(.3, .59, .11))) * vec3(1.3, 1.2, .78), .5) * (1.18 + .1 * streak);
-  vec3 c = mix(ground, pressed, bed) * lit;
-  return c * (1. - .3 * h * (1. - bed)); // the bottom of the walls in their own shadow
+  vec2 q = mat2(co, -si, si, co) * (p - uRunePose.xy);
+  float h = runeDepth(q, 0.), halo = runeDepth(q, 2.5);
+  if (h < .003 && halo < .003) return ground;
+  vec3 c = mix(ground, ground * vec3(.6, .47, .28), clamp(halo * 1.8, 0., .85)); // singed
+  return mix(c, vec3(.04, .028, .02), smoothstep(.04, .5, h) * .95);             // charred
 }
 float sdPoly(vec2 p) { // signed distance to the outline, < 0 inside (any simple polygon, either winding)
   vec2 a = uPoly[uN - 1]; float d = 1e9, s = 1.;
