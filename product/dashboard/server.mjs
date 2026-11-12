@@ -95,11 +95,13 @@ function stopRecording() {
   const { label, file, n, out, timer } = rec; rec = null; clearTimeout(timer);
   out.end(() => { log(`recording: ${n} packets in recordings/${file}`); toDashboards(JSON.stringify({ type: 'recording', on: false, label, file, n })); });
 }
+const lastCalib = {}; // slot -> its phone's last { type: 'calib' } (Calibrate button), written at the head of every recording
 function startRecording(label, sec) {
   if (rec || !RECORD_LABELS.includes(label)) return;
   const s = Math.min(Math.max(+sec || 20, 1), 120), dir = join(root, 'recordings'), file = `${label}-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`;
   mkdirSync(dir, { recursive: true });
   rec = { label, file, n: 0, out: createWriteStream(join(dir, file)), timer: setTimeout(stopRecording, s * 1000) };
+  for (const c of Object.values(lastCalib)) rec.out.write(JSON.stringify({ ...c, rx: Date.now() / 1000 }) + '\n'); // each phone's last Calibrate first: a replay needs it to know where 'forward' is
   toDashboards(JSON.stringify({ type: 'recording', on: true, label, sec: s }));
 }
 // The floor sheets' marker, one choice for every page and phone (public/marker.js): saved in settings.json, served as /marker.js,
@@ -232,7 +234,7 @@ wss.on('connection', (ws, req) => {
       }
       return send(ws, { type: 'stickList', current: db.assign[p.slot], sticks: db.sticks.slice().reverse().map(s => ({ id: s.id, name: s.name, element: s.element, stats: withStats(s).stats, image: s.snap ?? s.image ?? null })) });
     }
-    if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); if (rec && (k.type === 'imu' || k.type === 'ar')) { rec.out.write(JSON.stringify({ ...k, rx: Date.now() / 1000 }) + '\n'); rec.n++; } }
+    if (role === 'phone' && p && p.ws === ws) { alive(p); p.n.msg++; p.n.bytes += data.length; k.slot = p.slot; toDashboards(JSON.stringify(k)); if (k.type === 'calib') lastCalib[p.slot] = k; if (rec && (k.type === 'imu' || k.type === 'ar' || k.type === 'calib')) { rec.out.write(JSON.stringify({ ...k, rx: Date.now() / 1000 }) + '\n'); rec.n++; } }
   });
   ws.on('close', (code, reason) => {
     dashboards.delete(ws);
