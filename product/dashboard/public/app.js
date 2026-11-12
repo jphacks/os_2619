@@ -11,7 +11,7 @@ import { createMap } from './map.js';
 import { createActions } from './actions.js';
 import { createVideoSource } from './video.js';
 import { createStage, DRONE_JA } from './stage.js';
-import { POSE } from './field3d.js';
+import { POSE, CHARAS } from './field3d.js';
 import { mountSticks } from './sticks.js';
 import { createGame, PHASE_JA, POS_JA, ELEMENT_JA, RULES, TIER_JA } from './game.js';
 import { createSmashStyle } from './fx-smash.js';
@@ -37,10 +37,11 @@ const DEFAULTS = {
   minimap: true, debug: false, pip: false, mirrorX: false, mirrorY: false, swordFlip: false, fovC: 40, viewVer: 2, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
   matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 7, fxStyle: 'smash', backdrop: 'court', timeOfDay: DEFAULT_HOUR,
   zoom: { fixed: 1, auto: 1, orbit: 1, chaseA: 1, chaseB: 1, top: 1, side: 1 }, // game screen: zoom per camera mode (free: the mouse wheel)
+  chara: { A: 'wizard', B: 'wizard' }, // who each player is drawn as (field3d.js CHARAS): the wizard, or the special character チャオベン
   mimic: true, // the avatars copy the poses MediaPipe finds in phone C's picture (screen 3, and the small 3D window of screen 4)
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
-const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen }, zoom: { ...DEFAULTS.zoom, ...saved.zoom } };
+const cfg = { ...DEFAULTS, ...saved, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen }, zoom: { ...DEFAULTS.zoom, ...saved.zoom }, chara: { ...DEFAULTS.chara, ...saved.chara } };
 if ((saved.viewVer ?? 0) < 2) { cfg.mirrorX = cfg.mirrorY = cfg.swordFlip = false; cfg.viewVer = 2; } // the left-right / up-down guesses are off until a measured need: the alignment is solved from the tags now
 cfg.visOn = false; // picture recognition (MediaPipe) is off at every start: nothing is loaded or run until it is switched on in the final bar
 if ((saved.rulesVer ?? 0) < 1) cfg.matchSec = 60; // the 10/17 rules: 60 s matches
@@ -149,6 +150,8 @@ gameCtrl.innerHTML = `
       <div class="facts"></div>
       <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="2.5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
   </div>
+  <h3>キャラクター</h3>
+  <div id="charas">${['A', 'B'].map(s => `<div class="row" style="align-items:center;gap:6px"><b style="color:var(--${s});width:1.2em">${s}</b><div class="seg">${Object.entries(CHARAS).map(([k, v]) => `<button data-chara="${k}" data-s="${s}">${v}</button>`).join('')}</div></div>`).join('')}</div>
   <h3>プレイヤーの動き（ダミー映像）</h3>
   <div id="playGame"></div>
   <h3>ゲームの数値（試遊で調整）</h3>
@@ -208,6 +211,9 @@ for (const i of ruleIns) i.onchange = () => {
 };
 for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.onclick = () => { cfg.fxStyle = b.dataset.fxstyle; save(); stage.fx.setStyle(cfg.fxStyle); };
 for (const b of gameCtrl.querySelectorAll('[data-backdrop]')) b.onclick = () => { cfg.backdrop = b.dataset.backdrop; save(); };
+const showCharas = () => { for (const s of ['A', 'B']) stage.field.setChara(s, cfg.chara[s]); };
+for (const b of gameCtrl.querySelectorAll('[data-chara]')) b.onclick = () => { cfg.chara[b.dataset.s] = b.dataset.chara; save(); showCharas(); b.blur(); };
+showCharas();
 $('#todAuto').onclick = () => { cfg.todAuto = !cfg.todAuto; save(); };
 for (const b of gameCtrl.querySelectorAll('[data-todspeed]')) b.onclick = () => { cfg.todSpeed = +b.dataset.todspeed; save(); };
 const todIn = $('#tod'); // the clock: stage.js hands cfg.timeOfDay to the field every frame, the field bakes the shadows again once it settles
@@ -407,6 +413,7 @@ function updateSlowUi() {
   syncZoom();
   for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.classList.toggle('on', b.dataset.fxstyle === stage.fx.style);
   for (const b of gameCtrl.querySelectorAll('[data-backdrop]')) b.classList.toggle('on', b.dataset.backdrop === cfg.backdrop);
+  for (const b of gameCtrl.querySelectorAll('[data-chara]')) b.classList.toggle('on', b.dataset.chara === cfg.chara[b.dataset.s]);
   const plain = cfg.backdrop === 'plain'; todIn.disabled = plain; // the plain arena has no sky
   $('#todAuto').classList.toggle('on', !!cfg.todAuto); $('#todAuto').disabled = plain;
   for (const b of gameCtrl.querySelectorAll('[data-todspeed]')) { b.disabled = plain || !cfg.todAuto; b.classList.toggle('on', +b.dataset.todspeed === (cfg.todSpeed ?? TOD_SPEEDS[1][1])); }

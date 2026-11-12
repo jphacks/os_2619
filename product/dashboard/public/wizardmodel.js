@@ -20,13 +20,13 @@ const _d = V(), _n = V(), _e1 = V(), _e2 = V(), _e3 = V(), _f1 = V(), _f2 = V(),
 const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4();
 
 /** The turn taking the frame (a1, a2) to (b1, b2), each pair unit and at right angles. */
-function turn(q, a1, a2, b1, b2) {
+export function turn(q, a1, a2, b1, b2) {
   _e3.crossVectors(a1, a2); _f3.crossVectors(b1, b2);
   _m1.makeBasis(a1, a2, _e3); _m2.makeBasis(b1, b2, _f3);
   return q.setFromRotationMatrix(_m2.multiply(_m1.transpose()));
 }
 /** Joint between a and b, bones l1 and l2, bending toward pole. */
-function jointFor(out, a, b, l1, l2, pole) {
+export function jointFor(out, a, b, l1, l2, pole) {
   _d.subVectors(b, a); const d = Math.max(_d.length(), 1e-4); _d.divideScalar(d);
   _n.copy(pole).addScaledVector(_d, -pole.dot(_d)); if (_n.lengthSq() < 1e-6) _n.set(0, -1, 0); _n.normalize();
   const reach = l1 + l2, k = d >= reach ? d : reach, x = d >= reach ? d * l1 / reach : (d * d + l1 * l1 - l2 * l2) / (2 * d), h = d >= reach ? 0 : Math.sqrt(Math.max(0, l1 * l1 - x * x));

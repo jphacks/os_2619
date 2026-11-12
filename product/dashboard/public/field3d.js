@@ -10,6 +10,7 @@ import { createCourtyard, LAWN_GLSL } from './courtyard.js';
 import { TOD_GLSL, todUniforms, DEFAULT_HOUR } from './sky.js';
 import { makeWizard } from './wizard.js';
 import { makeWizardModel } from './wizardmodel.js';
+import { makeChaobenModel } from './chaobenmodel.js';
 import { stickGeometry, STICK_COLOR } from './stickmesh.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -256,16 +257,24 @@ export const POSE = { show: true };
 const legLen = tall => (tall + HIP[1] - .04) * .97; // hip to sole, standing: a little short, so a standing knee stays straight through the breathing bob (3 % longer bent it ~28°, which read as half-crouched)
 
 // The rig of the body: a human skeleton (three.js's Xbot, a Mixamo rig), loaded once and cloned per avatar. Its bones aim at the points
-// the avatar code below computes (those primitive meshes stay hidden). What is drawn is the wizard on its points, not the model's own skin: the artist's model (wizardmodel.js), or with ?avatar=simple or if it fails to load, the one built in code (wizard.js).
+// the avatar code below computes (those primitive meshes stay hidden). What is drawn is the player's character on its points, not the model's own skin (CHARAS):
+// the wizard, the artist's model (wizardmodel.js), or with ?avatar=simple or if it fails to load, the one built in code (wizard.js); or チャオベン (chaobenmodel.js).
+// FIG resolves to make(mat, root, cloth, chara) -> Promise of the pose function; each model is loaded once, the first time it is asked for.
+export const CHARAS = { wizard: '魔法使い', chaoben: 'チャオベン' };
 const FIG = Promise.all([import('three/addons/loaders/GLTFLoader.js'), import('three/addons/utils/SkeletonUtils.js')])
   .then(([{ GLTFLoader }, SU]) => {
-    const loader = new GLTFLoader(), url = n => new URL('./assets/models/' + n, import.meta.url).href;
-    const model = /[?&]avatar=simple/.test(location.search) ? null : loader.loadAsync(url('wizard.glb')).catch(e => { console.warn('wizard model:', e); return null; });
-    return Promise.all([loader.loadAsync(url('Xbot.glb')), model]).then(([g, w]) => (mat, root, cloth) => makeFig(SU.clone(g.scene), mat, root, cloth, w && SU.clone(w.scene)));
+    const loader = new GLTFLoader(), url = n => new URL('./assets/models/' + n, import.meta.url).href, loaded = {};
+    const load = (n, fallback = null) => loaded[n] ??= loader.loadAsync(url(n + '.glb')).catch(e => { console.warn(n + ' model:', e); return fallback; });
+    const simple = /[?&]avatar=simple/.test(location.search);
+    return load('Xbot').then(g => {
+      if (!g) throw new Error('no Xbot');
+      return (mat, root, cloth, chara) => (chara === 'chaoben' ? load('chaoben') : simple ? Promise.resolve(null) : load('wizard'))
+        .then(m => makeFig(SU.clone(g.scene), mat, root, cloth, m && SU.clone(m.scene), m ? chara : 'wizard'));
+    });
   })
   .catch(e => { if (typeof window.fetch === 'function' && document.body) console.warn('avatar model:', e); return null; });
 const AIM = ['RightArm', 'RightForeArm', 'LeftArm', 'LeftForeArm', 'RightUpLeg', 'RightLeg', 'RightFoot', 'LeftUpLeg', 'LeftLeg', 'LeftFoot'];
-function makeFig(obj, mat, root, cloth, model) {
+function makeFig(obj, mat, root, cloth, model, chara) {
   const b = {};
   obj.traverse(o => { if (o.isBone) b[o.name.replace(/^mixamorig:?/, '')] = o; if (o.isMesh) { o.material = mat; o.frustumCulled = false; o.visible = false; } });
   obj.updateMatrixWorld(true);
@@ -286,7 +295,7 @@ function makeFig(obj, mat, root, cloth, model) {
     bone.quaternion.copy(pq.invert().multiply(dq.multiply(wq)));
     bone.updateMatrixWorld(true);
   }
-  const spineBind = b.Spine.quaternion.clone(), lq = new THREE.Quaternion(), rq = new THREE.Quaternion(), wizard = model ? makeWizardModel(root, cloth, model) : makeWizard(root, cloth);
+  const spineBind = b.Spine.quaternion.clone(), lq = new THREE.Quaternion(), rq = new THREE.Quaternion(), wizard = !model ? makeWizard(root, cloth) : chara === 'chaoben' ? makeChaobenModel(root, model) : makeWizardModel(root, cloth, model);
   return function pose(r) { // r: root-frame points of the rig, headQ the head's turn in the body frame
     // size: r.leg (the standing leg, fixed per player: a crouch bends the knees instead of shrinking the body), else the rig's
     // own leg bones (the camera pose: the person's measured bones, which a crouch does not shorten either)
@@ -355,8 +364,24 @@ function makeAvatar(slot) {
   root.traverse(o => { if (o.isMesh) o.visible = false; }); // the rig: only the wireframe figure is drawn
   const wire = new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: .55, depthWrite: false });
   const clothC = clothColor(color), cloth = new THREE.MeshStandardMaterial({ color: clothC, roughness: .85, metalness: 0, emissive: clothC, emissiveIntensity: .1, side: THREE.DoubleSide }); // all the wizard wears: one colour, the player's hue, connected or not
-  let fig = null;
-  FIG.then(f => { if (f) fig = f(wire, root, cloth); });
+  let fig = null, figParts = [], chara = null, asked = 0;
+  /** The character drawn on the rig (CHARAS); the old one stays until the new one is loaded. Shared geometry: the old one is only taken off. */
+  function setChara(c) {
+    c = CHARAS[c] ? c : 'wizard';
+    if (c === chara) return;
+    chara = c; const n = ++asked;
+    FIG.then(f => {
+      if (!f || n !== asked) return;
+      const before = new Set(root.children);
+      return f(wire, root, cloth, c).then(pose => {
+        const added = root.children.filter(o => !before.has(o));
+        if (n !== asked) { for (const o of added) root.remove(o); return; } // asked again meanwhile
+        for (const o of figParts) root.remove(o);
+        fig = pose; figParts = added;
+      });
+    });
+  }
+  setChara('wizard');
   // floating HP bar
   const hpCanvas = Object.assign(document.createElement('canvas'), { width: 320, height: 104 }), hpCtx = hpCanvas.getContext('2d');
   const hpTex = new THREE.CanvasTexture(hpCanvas); hpTex.colorSpace = THREE.SRGBColorSpace;
@@ -479,7 +504,7 @@ function makeAvatar(slot) {
 
 
   return {
-    root, world, slot, setStick,
+    root, world, slot, setStick, setChara, get chara() { return chara; },
     update(dt, p) {
       const vis = !!p?.body;
       root.visible = vis && !p.hideBody; world.visible = vis; // hideBody: the real skeleton from the camera is drawn instead
@@ -649,6 +674,8 @@ export function createField(scene, opts = {}) {
     },
     /** slot's stick drawn as the scanned model m (stickscan.js), or the plain rod with null */
     setStick(slot, m) { avatars[slot]?.setStick(m); },
+    /** slot's character: 'wizard' | 'chaoben' (CHARAS) */
+    setChara(slot, c) { avatars[slot]?.setChara(c); },
     setLayoutDebug(on) { debug.visible = on; for (const a of Object.values(avatars)) a.ax.visible = on; },
     /** For a darkened background (effects.js), in this order: 'back' the look, floor and letters; 'front' the avatars, their HP bars and HP arcs; null all of it. */
     setPass(pass) {
