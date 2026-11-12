@@ -6,16 +6,15 @@ export const STATS = ['power', 'speed'];
 export const STAT_RANGE = [.5, 2]; // what the admin may set by hand
 
 /**
- * Attribute from a v3 scan's tree. Two or more branch tips take priority (thunder).
+ * Attribute from a v3 scan's tree. A large branch takes priority (thunder): one at least BIG_BRANCH of the stick's length (and
+ * BIG_BRANCH_MIN m) from where it leaves the main line to its tip. Small twigs, however many, do not count.
  * For the main path, sample by arc length and measure its side offset from the end-to-end line.
  * Two significant changes of bend direction mean a winding stick (water); one broad bend is wind;
  * a nearly straight stick is fire. The 15-20 mm dead bands ignore small skeleton/pose noise.
  */
+export const BIG_BRANCH = .1, BIG_BRANCH_MIN = .08;
 export function elementFromShape(m) {
-  const degree = new Uint16Array(m.nodes.length);
-  for (const [i, j] of m.edges) { degree[i]++; degree[j]++; }
-  const branches = degree.slice(m.tip + 1).filter(d => d === 1).length;
-  if (branches >= 2) return 'thunder';
+  if (longestBranch(m) >= Math.max(BIG_BRANCH_MIN, BIG_BRANCH * m.length)) return 'thunder';
 
   const main = m.nodes.slice(0, m.tip + 1);
   if (main.length < 3) return 'fire';
@@ -47,6 +46,23 @@ export function elementFromShape(m) {
   }
   if (reversals >= 2) return 'water';
   return Math.max(...smooth.map(Math.abs)) >= bow ? 'wind' : 'fire';
+}
+
+/** The longest branch (m): from each branch tip (nodes after m.tip with one edge) back along the edges to the main line (nodes 0..tip). */
+export function longestBranch(m) {
+  const near = m.nodes.map(() => []), len = (i, j) => Math.hypot(m.nodes[i][0] - m.nodes[j][0], m.nodes[i][1] - m.nodes[j][1]);
+  for (const [i, j] of m.edges) { near[i].push(j); near[j].push(i); }
+  let best = 0;
+  for (let leaf = m.tip + 1; leaf < m.nodes.length; leaf++) {
+    if (near[leaf].length !== 1) continue;
+    let at = leaf, from = -1, d = 0, steps = 0;
+    while (at > m.tip && steps++ < m.nodes.length) { // walk toward the main line; a fork on the way keeps the way back (the first other node)
+      const next = near[at].find(k => k !== from); if (next === undefined) break;
+      d += len(at, next); from = at; at = next;
+    }
+    if (at <= m.tip) best = Math.max(best, d);
+  }
+  return best;
 }
 
 /** Wood volume (m³) of a scanned model (stickscan.js v 3): a cone frustum per edge, its radius tapering from the grip to the tip. */

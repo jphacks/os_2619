@@ -122,11 +122,16 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             setBackgroundColor(Color.BLACK); visibility = View.GONE
             isClickable = true; setOnClickListener { closeHp() } // consume touches even when closing is disabled during the match
             addView(hpBar, FrameLayout.LayoutParams(-1, 0, Gravity.TOP)) // the top half: sized once the screen's height is known
+            addView(hpClose, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = (48 * resources.displayMetrics.density).toInt() })
         }
     }
+    // the way out, low on the screen like iOS's Close; hidden while a match runs (it could not close then)
+    private val hpClose by lazy { Button(this).apply { text = "Close"; textSize = 18f; setTextColor(Color.GRAY); setBackgroundColor(0xFF1A1A1A.toInt()); setOnClickListener { closeHp() } } }
+    private fun syncHpClose() { hpClose.visibility = if (link.phase == "countdown" || link.phase == "fight") View.GONE else View.VISIBLE }
     private fun openHp() {
         if (hpScreen.visibility == View.VISIBLE) return
         hpScreen.visibility = View.VISIBLE; overlay.visibility = View.INVISIBLE // nothing draws the picture under it
+        syncHpClose()
         window.attributes = window.attributes.apply { screenBrightness = 1f } // as bright as it goes
     }
     private fun closeHp() {
@@ -161,7 +166,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         link.onChargeFail = { chargeSound.fail() }
         hitSound; chargeSound; gameSound // load the sounds now, so the first hit / charge is not silent
         link.onHp = { info -> runOnUiThread { hpBar.info = info } }
-        link.onPhase = { p -> runOnUiThread { if (p == "countdown" || p == "fight") openHp() else if (p == "setup") closeHp() } } // a match starts / is over
+        link.onPhase = { p -> runOnUiThread { syncHpClose(); if (p == "countdown" || p == "fight") openHp() else if (p == "setup") closeHp() } } // a match starts / is over
         link.onFlash = { ms ->
             torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + ms) // another hit can only make it last longer
             if (ms > 0) { hitSound.play(); vibe.hit() }
@@ -578,7 +583,7 @@ class HpBar(a: Activity) : View(a) {
         val bx = x0 + size + w * .04f
         box.set(bx, cy - bh / 2, w * .95f, cy + bh / 2)
         drawSlashBar(c, box, share(info.foeHp, info.foeMax),
-            if (slot == "A") 0xFFFF6600.toInt() else 0xFF0078FF.toInt()) // field3d.js TEAM
+            if (slot == "A") 0xFFFFD9BF.toInt() else 0xFFBFDDFF.toInt()) // field3d.js TEAM, near white: the phone gives off more light (iOS the same)
     }
 
     private fun drawMine(c: Canvas, w: Float, h: Float) {
@@ -593,9 +598,9 @@ class HpBar(a: Activity) : View(a) {
         c.drawText("あなた", gx + gh * .15f, gy - gh * .3f, p)
         box.set(gx, gy, gx + gw, gy + gh)
         val color = when {
-            remaining > .5f -> 0xFF22D046.toInt()
-            remaining > .25f -> 0xFFFFC21A.toInt()
-            else -> 0xFFFF2A2A.toInt()
+            remaining > .5f -> 0xFFD4FFDC.toInt() // near-white green: the phone gives off more light (iOS the same)
+            remaining > .25f -> 0xFFFFF0B8.toInt()
+            else -> 0xFFFFC4C4.toInt()
         }
         drawSlashBar(c, box, remaining, color)
     }
