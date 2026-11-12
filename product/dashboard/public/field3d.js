@@ -108,8 +108,9 @@ float ring(vec2 p, vec2 c, float r, float w) { float d = abs(length(p - c) - r);
 // sampled at its measured millimetre scale (uRuneScale: mm per texel), with T0 toward -x.
 float runeDepth(vec2 q) {
   vec2 uv = (uRuneImage.xy + vec2(-q.y, q.x) * 1000. / uRuneScale) / uRuneImage.zw;
-  if (any(lessThan(uv, vec2(0.))) || any(greaterThan(uv, vec2(1.)))) return 0.;
-  return texture2D(uRuneInk, uv).r;
+  // sampled everywhere and masked after: a texture read behind an if gets no mip level at the edge of the if (a thin box round the print)
+  vec2 inside = step(vec2(0.), uv) * step(uv, vec2(1.));
+  return texture2D(uRuneInk, clamp(uv, 0., 1.)).r * inside.x * inside.y;
 }
 // Dug into the ground like a crop circle: grooves RUNE_DEPTH deep with walls lit and shaded by the sun, their bottoms the grass
 // pressed flat (paler, laid in a swirl round the centre).
