@@ -26,9 +26,10 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     @Published var inMatch = false   // a match runs on the PC: 枝 is greyed out
     @Published var lanUp = false
     @Published var found: [ImuDevice] = []
-    /// A hit: the whole screen red (ContentView), as long as the torch, then fading out
+    /// A hit: the whole screen blinks pure #FF0000 (ContentView) for as long as the hit lasts
     @Published var hitRed = 0.0
-    private var hitGen = 0
+    private var hitRedUntil = Date.distantPast
+    private var hitTimer: Timer?
     @Published var scanning = false
 
     let link: Link
@@ -99,17 +100,23 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.refresh() }
     }
 
-    /// A hit: the screen red for `ms`, then a 0.3 s fade. A newer hit restarts it (the older one's fade is skipped).
+    /// A hit: the screen blinks pure red (on 60 ms / off 40 ms) until `ms` from now; a newer hit only makes it last longer.
     private func redScreen(ms: Int) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.hitGen += 1
-            let g = self.hitGen
-            self.hitRed = 0.65
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ms)) { [weak self] in
-                guard let self = self, self.hitGen == g else { return }
-                withAnimation(.easeOut(duration: 0.3)) { self.hitRed = 0 }
+            self.hitRedUntil = max(self.hitRedUntil, Date().addingTimeInterval(Double(ms) / 1000))
+            guard self.hitTimer == nil else { return } // already blinking: it just goes on longer
+            let start = Date()
+            let tick: (Timer) -> Void = { [weak self] t in
+                guard let self = self else { t.invalidate(); return }
+                let now = Date()
+                if now >= self.hitRedUntil { self.hitRed = 0; t.invalidate(); self.hitTimer = nil; return }
+                self.hitRed = now.timeIntervalSince(start).truncatingRemainder(dividingBy: 0.1) < 0.06 ? 1 : 0
             }
+            let timer = Timer(timeInterval: 0.02, repeats: true, block: tick)
+            RunLoop.main.add(timer, forMode: .common)
+            self.hitTimer = timer
+            tick(timer)
         }
     }
 
