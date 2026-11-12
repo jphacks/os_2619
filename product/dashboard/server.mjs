@@ -88,7 +88,7 @@ const phoneList = () => [...phones.values()].map(({ slot, name, addr }) => ({ sl
 const status = () => toDashboards(JSON.stringify({ type: 'phones', list: phoneList() }));
 // Sensor recording (to tune the charge detector on real motion): a dashboard's { type: 'record', label, sec } writes every phone's imu and ar packets, one JSON a line with the
 // server's receive time rx, to recordings/<label>-<time>.jsonl (not in git) for sec s; { type: 'record' } stops early. Dashboards hear { type: 'recording', on, label, sec | file, n }.
-const RECORD_LABELS = ['walk', 'walk-circle', 'still-circle'];
+const RECORD_LABELS = ['walk', 'walk-circle', 'still-circle', 'dodge-good', 'dodge-bad']; // dodge-*: examples for the Dodge detector (actions.js): moves that should / should not dodge
 let rec = null;
 function stopRecording() {
   if (!rec) return;
