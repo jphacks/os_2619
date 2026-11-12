@@ -38,8 +38,8 @@ class Link(private val id: String, private val name: String) {
     @Volatile var phase = "setup"; private set
     /** The PC says this phone's player was hit: light the torch for this many ms. Called on OkHttp's thread. */
     @Volatile var onFlash: ((Int) -> Unit)? = null
-    /** This player's HP and the most it can be (`hp`, dashboard app.js), for the HP screen. Called on OkHttp's thread. */
-    @Volatile var onHp: ((Double, Double) -> Unit)? = null
+    /** This player's HP, the opponent's and how far it is (`hp`, dashboard app.js), for the HP screen. Called on OkHttp's thread. */
+    @Volatile var onHp: ((HpInfo) -> Unit)? = null
     /** The game phase changed (setup / countdown / fight / result): the HP screen opens when a match starts. OkHttp's thread. */
     @Volatile var onPhase: ((String) -> Unit)? = null
     /** The PC's vibration word: charge, win or off (Vibe.kt). Called on OkHttp's thread. */
@@ -103,7 +103,9 @@ class Link(private val id: String, private val name: String) {
                 "welcome" -> { slot = k.optString("slot", "-"); marker = k.optString("marker", "april"); status = "connected" }
                 "marker" -> marker = k.optString("marker", marker)
                 "match" -> { val p = k.optString("phase", phase); if (p != phase) { phase = p; onPhase?.invoke(p) } }
-                "hp" -> onHp?.invoke(k.optDouble("hp", 100.0), k.optDouble("max", 100.0))
+                "hp" -> onHp?.invoke(HpInfo(k.optDouble("hp", 100.0), k.optDouble("max", 100.0),
+                    k.optString("foeSlot").takeIf { it == "A" || it == "B" }, k.optString("foeChara", "wizard"),
+                    k.optDouble("foeHp", 100.0), k.optDouble("foeMax", 100.0), k.optDouble("dist", 0.0)))
                 "flash" -> onFlash?.invoke(k.optInt("ms"))
                 "sfx" -> if (k.optString("kind") == "chargeFail") onChargeFail?.invoke() else k.optJSONArray("voices")?.let { onSound?.invoke(it) }
                 "vibrate" -> {
@@ -161,3 +163,6 @@ class Link(private val id: String, private val name: String) {
             Socket().tune().apply { bind(InetSocketAddress(local, localPort)); connect(InetSocketAddress(address, port)) }
     }
 }
+
+/** The `hp` message: this player's HP and its most; the opponent (foeSlot null: a PC too old to tell), its HP and character; their distance along the floor, m. */
+data class HpInfo(val hp: Double, val max: Double, val foeSlot: String?, val foeChara: String, val foeHp: Double, val foeMax: Double, val dist: Double)
