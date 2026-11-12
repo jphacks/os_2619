@@ -1,7 +1,7 @@
 // 新しい枝 (screen 6): the show while a phone scans a new stick (stickui.js 'stickscan' page events).
 //  - waiting: the mahoujin, black lines on a white disc, in the dark
 //  - scanning: gold motes spring up all around and are drawn into a hurricane over the middle: a funnel turning round the centre,
-//    fastest at its eye, the motes climbing it; more motes, a taller, wider, faster storm with every picture taken; a hum swells with it
+//    fastest at its eye, the motes climbing it; more motes, a taller, wider, faster storm with every picture taken; a climbing run of bell notes speeds up with it
 //  - building (the phone's 送信): the storm winds up, wider and faster, while the model is made (in a worker)
 //  - built: the motes pull back, snap all at once into one point (a whoosh) and at once explode, the screen shakes and the stick is
 //    there; gold and silver sparks dance round it, the mahoujin turns
@@ -102,21 +102,47 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
   holder.visible = false;
   holder.visible = sparks.visible = true; renderer.compile(scene, cam); holder.visible = sparks.visible = false; // their shaders now, not at the boom
 
-  // ---- sound (synthesised): a hum while scanning, a whoosh into the point, a boom and a chime as the stick appears ----
+  // ---- sound (synthesised): rising blips while scanning, a whoosh into the point, a boom and a chime as the stick appears ----
   let ac = null, humV = null;
   const audio = () => { try { ac ??= new AudioContext(); if (ac.state === 'suspended') ac.resume(); return ac.state === 'running' ? ac : null; } catch { return null; } };
-  function hum(level) { // level 0..1: louder and a little higher the more pictures there are; 0 fades it out
+  // the scanning music: soft bell notes rising a semitone at a time, four to a group, each group starting a semitone above the last
+  // (C C# D D#, C# D D# E, D D# E F, ...), for ever: every note is a Shepard tone (the same note in five octaves, the middle ones loudest), so the
+  // climb never runs out of range. A bell, not a chip: sines, with the slightly out-of-tune partials of a celesta that sparkle and die first, and an
+  // echo that leaves them hanging in the air. level 0..1: the more pictures, the faster and louder; 0 lets the last notes ring out and stops
+  const ARP = { base: 220, centre: 520, width: 1.0, step: [.3, .2], gain: .07, decay: 1.1, echo: { time: .21, feedback: .42, mix: .55, tone: 3200 } };
+  const BELL = [[1, 1, 1], [2.01, .32, .55], [3.98, .12, .3], [5.43, .07, .18]]; // partial × the note, its level, its life (× decay): the high ones go first
+  function hum(level) {
     const c = level > 0 ? audio() : ac; if (!c) return;
     if (!humV && level > 0) {
-      const out = c.createGain(), lp = c.createBiquadFilter(); out.gain.value = 0; lp.type = 'lowpass'; lp.frequency.value = 500; lp.Q.value = 4;
-      const os = [55, 55.7, 110.4].map(f => { const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.connect(lp); o.start(); return o; });
-      lp.connect(out).connect(c.destination); humV = { out, lp, os };
+      const out = c.createGain(), dl = c.createDelay(1), fb = c.createGain(), tone = c.createBiquadFilter(), wet = c.createGain();
+      out.gain.value = 1; dl.delayTime.value = ARP.echo.time; fb.gain.value = ARP.echo.feedback; tone.type = 'lowpass'; tone.frequency.value = ARP.echo.tone; wet.gain.value = ARP.echo.mix;
+      out.connect(c.destination); out.connect(dl); dl.connect(tone).connect(fb).connect(dl); tone.connect(wet).connect(c.destination); // dry, and an echo darkening as it repeats
+      humV = { out, wet, n: 0, next: c.currentTime + .05 };
     }
     if (!humV) return;
-    const t = c.currentTime;
-    humV.out.gain.setTargetAtTime(.12 * level, t, .2); humV.lp.frequency.setTargetAtTime(350 + 900 * level, t, .3);
-    humV.os.forEach((o, i) => o.frequency.setTargetAtTime([55, 55.7, 110.4][i] * (1 + .25 * level), t, .3));
-    if (level === 0 && humV.out.gain.value < .002) { humV.os.forEach(o => o.stop()); humV.out.disconnect(); humV = null; }
+    if (level === 0) { // stop scheduling, fade, and let go once the last blip has rung out
+      humV.stopAt ??= c.currentTime; humV.out.gain.setTargetAtTime(0, c.currentTime, .15);
+      if (c.currentTime > humV.stopAt + ARP.decay + 1.5) { humV.out.disconnect(); humV.wet.disconnect(); humV = null; } // the echo has died away too
+      return;
+    }
+    if (humV.stopAt != null) { humV.stopAt = null; humV.next = c.currentTime + .02; } // back again before it had stopped
+    const step = ARP.step[0] + (ARP.step[1] - ARP.step[0]) * level, vol = ARP.gain * (.45 + .55 * level);
+    while (humV.next < c.currentTime + .12) { // schedule a little ahead, so the frame rate does not jitter the beat
+      const t = Math.max(humV.next, c.currentTime), n = humV.n++, semi = Math.floor(n / 4) + n % 4, pitch = ((semi % 12) + 12) % 12;
+      for (let k = -2; k <= 2; k++) {
+        const f = ARP.base * 2 ** (pitch / 12 + k), w = Math.exp(-((Math.log2(f / ARP.centre)) ** 2) / (2 * ARP.width * ARP.width)); // loudest near the centre
+        if (w < .02) continue;
+        for (const [mul, lv, life] of BELL) {
+          const fp = f * mul; if (fp > 9000) continue;
+          const o = c.createOscillator(), g = c.createGain(), d = ARP.decay * life, a = vol * w * lv * (n % 4 === 0 ? 1.2 : 1); // the group's first a little louder
+          o.type = 'sine'; o.frequency.value = fp; o.detune.value = (Math.random() - .5) * 6; // a breath of chorus
+          g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(a, t + .012); g.gain.exponentialRampToValueAtTime(.0003, t + d);
+          o.connect(g).connect(humV.out); o.start(t); o.stop(t + d + .02);
+        }
+      }
+      humV.next = t + step;
+    }
+    humV.out.gain.setTargetAtTime(1, c.currentTime, .1);
   }
   const noise = (c, sec) => { const b = c.createBuffer(1, c.sampleRate * sec, c.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; const n = c.createBufferSource(); n.buffer = b; return n; };
   function whoosh() { // noise swept up through a band-pass, peaking as the motes meet
