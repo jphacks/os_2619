@@ -225,6 +225,8 @@ ${['s', 'm', 'l'].map(t => `<label title="${TIER_JA[t]}の弾の速さ。1 が�
     <label>小のダメージ <input data-rule="dmg.s" type="number" min="0" max="100" step="1"></label>
     <label>中のダメージ <input data-rule="dmg.m" type="number" min="0" max="100" step="1"></label>
     <label>大のダメージ <input data-rule="dmg.l" type="number" min="0" max="100" step="1"></label>
+    <label title="棒を水平からこの角度まで上下に傾けても、ガードになる">ガードの傾きの許容 <input data-rule="guardLevel" type="number" min="5" max="85" step="1"> °</label>
+    <label title="棒が体の左右の向きからこの角度まで前後を向いても、ガードになる">ガードの向きの許容 <input data-rule="guardSide" type="number" min="5" max="85" step="1"> °</label>
     <label title="ガードで跳ね返した小が当たったときのダメージ。小のダメージ × この倍率">反射のダメージ倍率 <input data-rule="reflectMul" type="number" min="0" max="10" step="0.1"> 倍</label>
     <label>小の連打の間隔 <input data-rule="rapid" type="number" min="0" max="3" step="0.05"> 秒</label>
     <label title="1 が今の大きさ。見た目と当たりの大きさが一緒に変わる">小の玉の大きさ <input data-rule="size.s" type="number" min="0.2" max="4" step="0.1"> 倍</label>
