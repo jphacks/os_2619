@@ -2,9 +2,9 @@
 //  - waiting: the mahoujin, black lines on a white disc, in the dark
 //  - scanning: gold motes spring up all around and are drawn into a hurricane over the middle: a funnel turning round the centre,
 //    fastest at its eye, the motes climbing it; more motes, a taller, wider, faster storm with every picture taken; a hum swells with it
-//  - building (the phone's 送信): the motes pull back, then snap all at once into one point over the middle (a whoosh) and wait
-//    there as a ball of light
-//  - built: the ball explodes, the screen shakes and the stick is there; gold and silver sparks dance round it, the mahoujin turns
+//  - building (the phone's 送信): the storm winds up, wider and faster, while the model is made (in a worker)
+//  - built: the motes pull back, snap all at once into one point (a whoosh) and at once explode, the screen shakes and the stick is
+//    there; gold and silver sparks dance round it, the mahoujin turns
 //    gold, the camera closes in on the stick, "New Stick" and then an OK button fade in (a boom and a bright chime). OK goes back to
 //    the game screen (onOk). The sounds are synthesised here (Web Audio, no files); the stick's entrance is an organ fanfare.
 // mountScanFx(section, { onOk }) -> { setActive(on) }; it draws only while its screen is shown.
@@ -16,7 +16,7 @@ import * as W from './world.js';
 const N = 3000, SPARKS = 700, FULL_AT = 30, FIRST = 400; // motes; sparks after the build; pictures until every mote is out; motes at once when a scan starts
 const GOLD = new THREE.Color(0xd9a520), SILVER = new THREE.Color(0xc9d3de), BLACK = new THREE.Color(0x111111);
 const STICK_Y = .32; // m: the new stick floats this high over the mahoujin
-const PULL = .35, SNAP = .4; // s: the pull back before the rush, the rush into one point
+const PULL = .35, SNAP = .3; // s: the pull back before the rush, the rush into one point (it explodes the moment they meet)
 const ease = x => (x = Math.min(1, Math.max(0, x)), x * x * (3 - 2 * x));
 const outCubic = x => 1 - (1 - Math.min(1, Math.max(0, x))) ** 3;
 
@@ -153,7 +153,7 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
 
   // ---- state ----
   let phase = 'idle', t = 0, phaseAt = 0, pictures = 0, rec = null, active = false, okShown = false, level = 0;
-  const storm = { h: .5, top: .3, spin: 2, rise: .06 }; // the hurricane's height (m), its width at the top (m), turn and climb speeds
+  const storm = { h: .4, eye: .25, top: .7, spin: 1.5, rise: .06 }; // the hurricane's height, its eye's and top's radius (m), turn and climb speeds
   const go = p => { phase = p; phaseAt = t; };
   function reset() {
     go('idle'); pictures = 0; level = 0; rec = null; came.fill(-1); sparks.visible = false; holder.visible = false; stickMat.emissiveIntensity = 0;
@@ -180,12 +180,12 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
     if (k.step === 'start') { reset(); go('scan'); $('msg').textContent = 'スキャン中… 枝のまわりを歩いて撮影してください'; }
     if (k.step === 'picture' && phase === 'scan') { pictures = k.n; $('msg').textContent = `スキャン中… 写真 ${k.n} 枚`; }
     if (k.step === 'cancel') reset();
-    if (k.step === 'building' && phase !== 'rush') rush();
+    if (k.step === 'building' && phase === 'scan') { go('charge'); $('msg').textContent = '棒を作っています…'; }
     if (k.step === 'built') {
       rec = k.rec; const g = stickGeometry(rec.model);
       stick.geometry.dispose(); stick.geometry = g || new THREE.BufferGeometry(); stick.scale.set(1, rec.model.length, 1);
       $('name').textContent = `${rec.name}・${{ fire: '炎', thunder: '雷', water: '水', wind: '風' }[rec.element] ?? rec.element}`;
-      if (phase !== 'rush') rush(); // explodes once the motes have met (frame)
+      if (phase !== 'rush' && phase !== 'boom') rush(); // they meet and explode at once (frame)
     }
     if (k.step === 'failed') { reset(); $('msg').textContent = '棒を作れませんでした：' + k.error; }
   });
@@ -196,17 +196,18 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
   const p = V(), o = V();
   function frame(dt) {
     t += dt; const T = t - phaseAt, pos = motes.geometry.attributes.position, al = motes.geometry.attributes.alpha;
-    if (phase === 'rush' && rec && T >= PULL + SNAP + .1) explode();
+    if (phase === 'rush' && T >= PULL + SNAP) explode();
     // motes
+    const storming = phase === 'scan' || phase === 'charge';
     const want = phase === 'idle' ? 0 : phase === 'scan' ? FIRST + (N - FIRST) * Math.min(1, pictures / FULL_AT) : N;
-    hum(phase === 'scan' ? .25 + .75 * Math.min(1, pictures / FULL_AT) : 0);
-    level += ((phase === 'scan' ? Math.min(1, pictures / FULL_AT) : 0) - level) * Math.min(1, dt * 1.5); // eased: the storm grows smoothly
-    storm.h = .35 + .55 * level; storm.top = .25 + .45 * level; // up to 0.9 m: the whole storm stays in view storm.spin = 2 + 5 * level; storm.rise = .06 + .14 * level;
+    hum(phase === 'scan' ? .25 + .75 * Math.min(1, pictures / FULL_AT) : phase === 'charge' ? 1 : 0);
+    level += ((phase === 'charge' ? 1.35 : phase === 'scan' ? Math.min(1, pictures / FULL_AT) : 0) - level) * Math.min(1, dt * 1.5); // eased: the storm grows smoothly
+    storm.h = .4 + .5 * level; storm.eye = .25 + .1 * level; storm.top = .7 + .8 * level; storm.spin = 1.5 + 3.5 * level; storm.rise = .06 + .12 * level; // wide: over the whole mahoujin and past it
     for (let i = 0; i < N; i++) {
-      if (came[i] < 0) { if (phase === 'scan' && i < want) came[i] = t; else { al.setX(i, 0); continue; } }
-      if (phase === 'scan' || phase === 'idle') { // the hurricane: a funnel widening upward, turning faster nearer its eye, the motes climbing it
-        const hy = (orbit[4 * i + 2] / .52 + storm.rise * t) % 1, R = (.06 + storm.top * hy ** 1.4) * (.75 + .5 * (orbit[4 * i] - .15) / .75);
-        ang[i] += dt * storm.spin * .35 / (R + .1);
+      if (came[i] < 0) { if (storming && i < want) came[i] = t; else { al.setX(i, 0); continue; } }
+      if (storming || phase === 'idle') { // the hurricane: a wide funnel widening upward, turning faster nearer its eye, the motes climbing it
+        const hy = (orbit[4 * i + 2] / .52 + storm.rise * t) % 1, R = (storm.eye + storm.top * hy ** 1.2) * (.6 + .8 * (orbit[4 * i] - .15) / .75);
+        ang[i] += dt * storm.spin * .6 / (R + .2);
         o.set(R * Math.cos(ang[i]), .02 + hy * storm.h, R * Math.sin(ang[i]));
         const k = ease((t - came[i] - .6) / 2.5); // it springs up where it is, then is sucked in
         p.fromArray(from, 3 * i).lerp(o, k); p.y += .05 * Math.sin(2 * t + i) * (1 - k);
