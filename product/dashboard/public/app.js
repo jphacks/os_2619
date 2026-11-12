@@ -178,6 +178,7 @@ function flash(el) {
 
 let screen = null, sticksUi = null;
 const sentPhase = { ph: null, at: 0 }; // the game phase told to the server (phones grey out 枝 in a match)
+const sentHp = { A: { hp: null, max: null, at: -9 }, B: { hp: null, max: null, at: -9 } }; // what the phones were last told (their HP screen)
 function show(name) {
   if (!['connect', 'space', 'game', 'final', 'sticks'].includes(name)) name = 'connect';
   screen = name; cfg.screen = name; save();
@@ -496,7 +497,7 @@ function updateHud() {
     // the try-out button fills it as well, as far as a real charge of that length would (game.js effects())
     const { t1, t2 } = cfg.rules, pv = p.preview ? performance.now() / 1000 - p.preview : null, level = pv !== null ? Math.min(1, pv / t2) : p.charging ? p.charge : 0;
     h.gauge.set(level, pv !== null ? (pv < t1 ? 's' : pv < t2 ? 'm' : 'l') : p.charging ? p.tier : null);
-    setText(h.el.querySelector('.name small'), p.element ?? ''); // the element only, in English (fire / thunder / water / wind); the stick's name and stars are not shown
+    // the name line is only the slot letter (A / B): no element, no stick name or stars (11/12)
   }
   const showTimer = m.phase === 'fight' || m.phase === 'result';
   setText(hud.querySelector('.timer'), showTimer ? String(Math.ceil(m.left)) : '');
@@ -611,6 +612,10 @@ function frame(ts) {
   vsrc.dummy?.render(t, dummyPicture);
   game.step(dt, raw, est, { sensorOnly: screen === 'final' });
   if (game.match.phase !== sentPhase.ph || t - sentPhase.at > 2) { sentPhase.ph = game.match.phase; sentPhase.at = t; hub.send?.({ type: 'match', phase: sentPhase.ph }); }
+  for (const p of Object.values(game.players)) { // each phone's big HP bar (SensorLink's HP screen): on every change, and once a second
+    const h = sentHp[p.slot], hp = Math.max(0, Math.round(p.hp)), max = Math.max(1, Math.round(p.hpMax || 100));
+    if (h.hp !== hp || h.max !== max || t - h.at > 1) { h.hp = hp; h.max = max; h.at = t; hub.send?.({ type: 'hp', slot: p.slot, hp, max }); }
+  }
   if (screen === 'final') finalControls.step(t);
   // MediaPipe runs for the avatars (pose only) and/or the final screen's layers (also the masks and the stick search)
   const live = !!(video.videoWidth || video.__dummy);

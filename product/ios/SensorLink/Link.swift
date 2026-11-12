@@ -37,6 +37,10 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
     var phase: String { lock.lock(); defer { lock.unlock() }; return _phase }
     /// The PC says this phone's player was hit: light the torch for this many ms. Set before connect; called on the socket's queue.
     var onFlash: ((Int) -> Void)?
+    /// This player's HP and the most it can be (`hp`, dashboard app.js), for the HP screen. The socket's queue.
+    var onHp: ((Double, Double) -> Void)?
+    /// The game phase changed (setup / countdown / fight / result): the HP screen opens when a match starts. The socket's queue.
+    var onPhase: ((String) -> Void)?
     /// The PC's vibration word: charge, win or off (Vibe.swift). Set before connect; called on the socket's queue.
     var onVibrate: ((String) -> Void)?
     /// A `vibrate` charge packet also says what the PC's charge sound is doing: element, tier (s / m / l), level 0...1.
@@ -144,7 +148,9 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
         case "marker":
             if let m = k["marker"] as? String { lock.lock(); _marker = m; lock.unlock() }
         case "match":
-            if let p = k["phase"] as? String { lock.lock(); _phase = p; lock.unlock() }
+            if let p = k["phase"] as? String { lock.lock(); let was = _phase; _phase = p; lock.unlock(); if p != was { onPhase?(p) } }
+        case "hp":
+            if let hp = (k["hp"] as? NSNumber)?.doubleValue, let mx = (k["max"] as? NSNumber)?.doubleValue { onHp?(hp, mx) }
         case "flash":
             if let ms = (k["ms"] as? NSNumber)?.intValue { onFlash?(ms) }
         case "sfx":
