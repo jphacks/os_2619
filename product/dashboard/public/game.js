@@ -120,7 +120,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   // Dodge (actions.js: a spike of the chest's sideways acceleration): the character leaps DODGE.dist m to that side in DODGE.out s,
   // leaning into it (p.lean, rad: field3d.js tilts the figure), then drifts back to where the player really is over DODGE.back s.
   // Shots hit it where it is drawn, so a dodge in time gets out of a shot's way.
-  const DODGE = { dist: .5, out: .15, back: 1.2, lean: 22 * Math.PI / 180 };
+  const DODGE = { dist: 2.5, out: .25, back: 1.2, lean: 22 * Math.PI / 180 }; // 11/13: a big leap, 2.5 m (was 0.5 m in 0.15 s)
   function dodgeOffset(p) {
     const d = p.dodge, t = d ? now() - d.t0 : Infinity;
     if (t > DODGE.out + DODGE.back) { p.dodge = null; p.lean = 0; return; }
