@@ -6,7 +6,7 @@
 //   Charge (circle the stick) → charging; Swing releases it: under t1 s 小, t1..t2 s 中, t2 s and more 大 (special move)
 //   the player may walk while charging; a charging player cannot guard
 //   every tier is a projectile along the aim: dodging is just moving out of its way (no invulnerable dodge)
-//   guard (10/18): the stick held still, lying sideways (within 45° of horizontal), for guardHold s (not while charging, not right after a swing), or the guard button: a 小 that
+//   guard (10/18): the stick held still, lying sideways (within 30° of horizontal and 30° of the body's left-right line), for guardHold s (not while charging, not right after a swing), or the guard button: a 小 that
 //   reaches the guard bounces back at its shooter; 中 and 大 go through it (full damage)
 //   aim 'motion' (default): where the stick tip was travelling just before it stopped (GAME_DESIGN.md); 'stick': where the
 //   stick points; 'eye': from the eyes through the tip. Buttons / keys (no swing) fall back to 'stick'.
@@ -141,13 +141,16 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   // guardHold s; not while charging, not right after a swing (the stop is the swing's shot). Not frame to frame: sensor packets and frames tick at different rates, so a still stick's dir moves
   // in 1-2° steps that read as tens of °/s over one frame (a held stick failed to guard). 7° / 0.3 s: above a still
   // stick's jitter, below a ±17° 1.5 Hz wobble even at its turning point (9.7°)
-  const GUARD_STILL = 7 * Math.PI / 180, GUARD_LEVEL = Math.PI / 4, AFTER_SWING = .8;
+  const GUARD_STILL = 7 * Math.PI / 180, GUARD_LEVEL = Math.PI / 6, GUARD_SIDE = Math.PI / 6, AFTER_SWING = .8;
+  // 11/12: sideways = within GUARD_LEVEL (30°) of horizontal, and on the level within GUARD_SIDE (30°) of the body's left-right line (pointing more to the front or back is not sideways)
+  const sideways = p => { const f = W.app3(p.body.R, [1, 0, 0]), fh = Math.hypot(f[0], f[2]) || 1, dh = Math.hypot(p.dir.x, p.dir.z) || 1;
+    return Math.abs(p.dir.y) < Math.sin(GUARD_LEVEL) && Math.abs((p.dir.x * f[0] + p.dir.z * f[2]) / (fh * dh)) < Math.sin(GUARD_SIDE); };
   function stepGuard() {
     for (const p of Object.values(players)) {
       const t = now(), win = rules().guardHold, h = p.guardHist ??= [];
       h.push({ t, dir: p.dir.clone() }); while (h.length > 2 && h[1].t <= t - win) h.shift();
       const dev = Math.max(...h.map(x => p.dir.angleTo(x.dir))); // the furthest any sample in the window is from now: a wobble's turning point is not still
-      const level = Math.abs(p.dir.y) < Math.sin(GUARD_LEVEL); // 10/18: only a stick lying sideways (within 45° above / below horizontal) guards; held upright it does nothing
+      const level = sideways(p); // only a stick lying sideways guards; held upright or pointed forward it does nothing
       const still = level && t - h[0].t >= win - 1e-6 && dev < GUARD_STILL && t - (p.swingAt ?? -9) > AFTER_SWING; // held still for the whole hold
       const on = canAct() && !p.charging && (p.guardKey ?? still); // a keyboard player says so itself (playable.js); a real stick guards by being held still
       if (on && !p.guarding) { showAct(p, 'ガード'); log(p.slot, 'guard', 'ガード'); sfx()?.guard('up', panOf(p.chest)); }
