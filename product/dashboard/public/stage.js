@@ -22,7 +22,7 @@ const now = () => performance.now() / 1000;
 const toMat = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
 // where phone C should go: 3.5 m in front of the centre, 1.7 m up or higher, tilted down a little (camera before a scan)
 export const GUIDE_CAM = { x: 0, y: 1.7, z: 3.5, yaw: 0, pitch: -16, roll: 0, fov: 45 };
-const CRT_LINES = 360; // the CRT look's lines, about (cfg.crt)
+const CRT_LINES = 480; // the CRT look's lines, about (cfg.crt)
 export const DRONE_JA = { fixed: '定点（最終映像と同じ）', auto: '自動演出', orbit: '周回', chaseA: 'A の肩越し', chaseB: 'B の肩越し', top: '真上', side: '真横', free: '自由操作' };
 
 const RK = W.MARKER === 'rune' ? '-mahoujinA' + W.RUNE_SCALE : ''; // a scan belongs to the sheets it saw: the mahoujin (T0 on A's side, at its scale) or the AprilTag square
