@@ -4,9 +4,20 @@
 // createStickScan(onText, onBuilt): collects one scan per slot; onText(slot, text) says how far it got, onBuilt(slot, record) gives the saved stick.
 // createStickView(canvas): the model turning slowly, for the connection screen.
 import * as THREE from 'three';
-import { buildStick, viewCamera, parseDesign } from './stickscan.js';
+import { viewCamera, parseDesign } from './stickscan.js';
 import { stickGeometry, STICK_COLOR } from './stickmesh.js';
-import { stickSnapshot } from './stickshot.js';
+import { stickSnapshot, warmSnapshot } from './stickshot.js';
+
+// the build runs in a worker (stickbuild-worker.js): on this thread it froze every animation for about a second. One at a time.
+let builder = null;
+function buildInWorker(views, design) {
+  builder ??= new Worker(new URL('./stickbuild-worker.js', import.meta.url), { type: 'module' });
+  return new Promise((ok, no) => {
+    builder.onmessage = e => e.data.error ? no(new Error(e.data.error)) : ok(e.data.model);
+    builder.onerror = e => { e.preventDefault(); builder.terminate(); builder = null; no(new Error(e.message || 'worker')); };
+    builder.postMessage({ views, design }, views.map(v => v.img.data.buffer)); // the pictures move over: not needed here after
+  });
+}
 
 async function decode(jpg) {
   const blob = await (await fetch('data:image/jpeg;base64,' + jpg)).blob(), bmp = await createImageBitmap(blob);
@@ -47,10 +58,8 @@ export function createStickScan(onText, onBuilt = () => {}) {
       if (k.step === 'done') {
         await Promise.all(s.jobs);
         onText(slot, `モデルを作成中…（写真 ${s.views.length} 枚）`); tell(slot, 'building');
-        await new Promise(r => setTimeout(r, 30)); // let the text show: the build holds this thread for ~1 s
         try {
-          // shortcut: runs on the page's thread (~1 s per scan); move to a worker if it stutters a match
-          const model = buildStick(s.views, await loadDesign());
+          const model = await buildInWorker(s.views, await loadDesign());
           const ends = model.nodes.filter((_, i) => model.edges.filter(e => e.includes(i)).length === 1).length; // grip, tip and one per branch
           const shape = `長さ ${(model.length * 100).toFixed(0)} cm、枝分かれ ${ends - 2} 本、太さ 根元 ${(2000 * model.r[0]).toFixed(0)} mm・先 ${(2000 * model.r[1]).toFixed(0)} mm（${model.views} 方向から）`;
           const image = 'data:image/jpeg;base64,' + s.jpgs[s.jpgs.length >> 1]; // a picture from the middle of the walk round
@@ -72,6 +81,7 @@ export function createStickScan(onText, onBuilt = () => {}) {
 
 /** Sticks saved before the model's picture existed (no snap): render it here and give it to the server, once per page load. */
 export async function backfillSnaps() {
+  warmSnapshot(); // its WebGL context and shader made now, not in the middle of the 新しい枝 show
   try {
     for (const s of await (await fetch('/sticks', { cache: 'no-store' })).json()) {
       const snap = !s.snap && s.model && stickSnapshot(s.model);

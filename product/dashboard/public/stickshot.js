@@ -8,6 +8,9 @@ import { stickGeometry, STICK_COLOR } from './stickmesh.js';
 const W = 640, H = 320, TILT = .45; // px; rad the stick is tipped back toward the viewer
 let r = null;
 
+/** Make the renderer and compile its shader now (page load), so the first real picture does not stall the page mid-show. */
+export function warmSnapshot() { stickSnapshot({ v: 3, length: .5, r: [.01, .01], tip: 1, nodes: [[0, -.25], [0, .25]], edges: [[0, 1]] }); }
+
 /** JPEG data URL of the model, or null for one stickmesh.js cannot draw. */
 export function stickSnapshot(m) {
   const g = stickGeometry(m); if (!g) return null;

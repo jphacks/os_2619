@@ -98,6 +98,7 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
   const stick = new THREE.Mesh(new THREE.BufferGeometry(), stickMat), holder = new THREE.Group();
   holder.add(stick); holder.position.copy(CENTRE); holder.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(V(0, 0, 1), V(1, 0, 0), V(0, 1, 0))); scene.add(holder);
   holder.visible = false;
+  holder.visible = sparks.visible = true; renderer.compile(scene, cam); holder.visible = sparks.visible = false; // their shaders now, not at the boom
 
   // ---- sound (synthesised): a hum while scanning, a whoosh into the point, a boom and a chime as the stick appears ----
   let ac = null, humV = null;
