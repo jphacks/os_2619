@@ -8,7 +8,7 @@
 //  /marker.js  the floor sheets' marker (april | rune), saved in settings.json;  /info  JSON for the dashboard;  /ca.crt /ca.pem  the local CA phone C trusts once (trust.html)
 //  /cdn/npm/<pkg>@<x.y.z>/<file>  cdn.jsdelivr.net cached in vendor/cdn/ (works offline once fetched)
 //  /cdn/mp-models/<path>.task      MediaPipe's models (storage.googleapis.com/mediapipe-models), cached the same way
-// Env: PORT (8000), OPENSSL (path to openssl). Without openssl only plain http runs: everything but phone C's page works.
+// Env: PORT (8000), LAN_IP (preferred phone-facing address), OPENSSL (path to openssl). Without openssl only plain http runs: everything but phone C's page works.
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
@@ -26,8 +26,12 @@ const PORT = +process.env.PORT || 8000;
 const root = fileURLToPath(new URL('.', import.meta.url));
 const pub = join(root, 'public'), cdnCache = join(root, 'vendor', 'cdn');
 const lan = ip => /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip);
-const ips = () => Object.values(os.networkInterfaces()).flat().filter(i => i.family === 'IPv4' && !i.internal).map(i => i.address)
-  .sort((a, b) => lan(b) - lan(a)); // Wi-Fi/LAN address first: that is the one phones can reach
+const preferredIP = process.env.LAN_IP;
+const ips = () => Object.entries(os.networkInterfaces()).flatMap(([name, interfaces]) =>
+  interfaces.filter(i => i.family === 'IPv4' && !i.internal).map(i => ({ name, address: i.address })))
+  .sort((a, b) => (b.address === preferredIP ? 3 : b.name.startsWith('Wi-Fi') ? 2 : lan(b.address) ? 1 : 0) -
+                  (a.address === preferredIP ? 3 : a.name.startsWith('Wi-Fi') ? 2 : lan(a.address) ? 1 : 0))
+  .map(i => i.address); // LAN_IP selects the network used by phones (for example, a Windows hotspot).
 
 // ---- certificates: one CA per machine (phone C trusts it once), a server cert re-issued whenever the IPs change ----
 const certDir = join(root, 'cert'), cf = n => join(certDir, n);
