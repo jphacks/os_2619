@@ -81,9 +81,10 @@ import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const 
  *  same files cut / pitched / faded as here (audio.js describe), sent through the server ({ type: 'sfx' }).
  *  The phone plays at gain × PHONE_REF: the loudest sound (大's hit, MIX.special +3 dB) at full scale.
  *  The shooter's phone has its own sounds (11/12), apart from what the one hit hears: myShot = 小 fired (my_shot), myLaunch =
- *  中 / 大 fired (my_launch, 大 lower), landed = a 中 / 大 of theirs hit: the same as the one hit hears (the hit + damage). */
+ *  中 / 大 fired (my_launch, 大 lower), landed = a 中 / 大 of theirs hit: the same as the one hit hears (the hit + damage), hitConfirm = any
+ *  shot of theirs hit the opponent (pikon: a bright "ピコーン", generated, in the apps). */
 const PHONE_REF = Math.pow(10, -3 / 20), PHONE_FILE = { guardUp: 'guard', guardReflect: 'guard_reflect' };
-const PHONE_OWN = { myShot: () => [{ file: 'my_shot', gain: .8, rate: 1 }], myLaunch: tier => [{ file: 'my_launch', gain: tier === 'l' ? 1 : .8, rate: tier === 'l' ? .8 : 1 }] };
+const PHONE_OWN = { myShot: () => [{ file: 'my_shot', gain: .8, rate: 1 }], myLaunch: tier => [{ file: 'my_launch', gain: tier === 'l' ? 1 : .8, rate: tier === 'l' ? .8 : 1 }], hitConfirm: () => [{ file: 'pikon', gain: .9, rate: 1 }] };
 function phoneSound(slots, kind, ...args) {
   if (!sfx || sfx.muted) return;
   if (PHONE_OWN[kind]) { for (const slot of new Set(slots)) hub.send?.({ type: 'sfx', slot, voices: PHONE_OWN[kind](...args) }); return; }

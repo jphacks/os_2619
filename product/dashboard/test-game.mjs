@@ -22,8 +22,8 @@ function setup({ rules = {}, matchSec = 60, test = false, dummy = false, sfx = n
   // dummy: the dummy room's frame (app.js getDummyFrame), players where the script puts them, as the dummy room draws them
   const frame = () => ({ players: Object.fromEntries(['A', 'B'].map(sl => { const [x, z] = pos[sl], sg = sl === 'A' ? 1 : -1;
     return [sl, { chest: [x, 1.3, z], yaw: sl === 'A' ? 0 : Math.PI, base: [x + .2 * sg, 1.2, z], tip: [x + 1 * sg, 1.2, z], dir: [sg, 0, 0] }]; })) });
-  const flashes = [], vibes = [];
-  const g = createGame({ fx, drone: null, sfx: () => sfx, cfg, clock: () => t, onHit: (slot, ms) => flashes.push([slot, ms]), onVibrate: (slot, kind) => vibes.push(slot + ' ' + kind), ...(dummy && { getDummyFrame: frame }) });
+  const flashes = [], vibes = [], phone = []; // phone: the sounds sent to the players' phones (app.js phoneSound), 'slot kind'
+  const g = createGame({ fx, drone: null, sfx: () => sfx, cfg, clock: () => t, onHit: (slot, ms) => flashes.push([slot, ms]), onVibrate: (slot, kind) => vibes.push(slot + ' ' + kind), onSound: (slots, kind) => phone.push(slots.join() + ' ' + kind), ...(dummy && { getDummyFrame: frame }) });
   const put = (slot, x, z) => { // chest 1.3 m up, stick held at the chest pointing straight at the other start mark
     pos[slot] = [x, z];
     const s = slot === 'A' ? 1 : -1;
@@ -38,7 +38,7 @@ function setup({ rules = {}, matchSec = 60, test = false, dummy = false, sfx = n
   const run = sec => { for (let i = 0; i < Math.round(sec / DT); i++) { t += DT; for (const sl of ['A', 'B']) if (wob[sl]) bob(sl); g.step(DT, DT, null); } };
   g.command({ cmd: 'matchSec', value: matchSec });
   const S = {
-    g, cfg, run, put, wob, flashes, vibes,
+    g, cfg, run, put, wob, flashes, vibes, phone,
     get A() { return g.players.A; }, get B() { return g.players.B; },
     fight() { g.command({ cmd: 'phase', phase: 'fight' }); run(3.05); },
     swing: slot => g.onSensed({ slot, name: 'Swing', power: .7 }),
@@ -98,6 +98,7 @@ scenario('一時停止中は時間が止まり、振っても撃てない', () =
 scenario('溜めなしで振ると小が飛び、当たると5ダメージ', () => {
   const S = setup(); S.fight(); S.swing('A'); S.run(1);
   eq(S.A.shots, 1, '発射数'); eq(S.B.hp, 95, 'B の HP');
+  eq(S.phone.filter(s => s.endsWith('hitConfirm')).join(), 'A hitConfirm', '当てた人のスマホのピコーン');
 });
 scenario('小の連打は0.25秒おきまで。速すぎる振りは無視される', () => {
   const S = setup(); S.fight();
