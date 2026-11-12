@@ -151,12 +151,19 @@ struct SavedScansSheet: View {
                     if files.isEmpty { Text("No saved scans yet") }
                     ForEach(files, id: \.self) { u in
                         Button(model.scan.label(u)) { model.resendScan(u); dismiss() }
+                    }
                     .onDelete { idx in
                         for i in idx { try? FileManager.default.removeItem(at: files[i]) }
                         files = model.scan.saved()
+                    }
+                }
+            }
             .navigationTitle("Saved scans")
             .navigationBarItems(trailing: Button("Close") { dismiss() })
             .onAppear { files = model.scan.saved() }
+        }
+    }
+}
 
 struct LanSheet: View {
     @EnvironmentObject var model: Model
@@ -185,12 +192,5 @@ struct LanSheet: View {
             .navigationBarItems(trailing: Button("Close") { dismiss() })
         }
         .onAppear { host = model.host; port = String(model.port) }
-    }
-}
-                }
-            }
-        }
-    }
-}
     }
 }
