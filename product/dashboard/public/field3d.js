@@ -130,10 +130,8 @@ void main() {
   c += inside * vec3(.07, .08, .11) * gridAt(p, 1.);
   if (uRock > .5) { // the canyon or the courtyard: the same ground as outside the floor, the lines below are painted on it
     c = uRock > 2.5 ? theaterColor(p) : uRock > 1.5 ? lawnColor(p) : sandColor(p);
-    // no border line round the field (taken out on request): the centre line and the start rings mark it
-    float dash = step(.45, fract(p.y * 2.5 + uTime * .3));
-    c = mix(c, vec3(.97, .93, .84), inside * aline(abs(p.x) / fwidth(p.x), 1.4) * dash * .8);
-    c = mix(c, vec3(.97, .93, .84), inside * ring(p, vec2(0.), .6, .02) * .7);
+    // no boundary line on the ground (11/12): the field's outline is not drawn
+    // no white centre line or centre circle (11/12)
     c *= 1. - .26 * (ring(p, uSA, .32, .06) + ring(p, uSB, .32, .06)); // a dark edge: a green ring must read on the green lawn too
     c = mix(c, uCA, ring(p, uSA, .32, .03) * .9);
     c = mix(c, uCB, ring(p, uSB, .32, .03) * .9);
@@ -153,10 +151,8 @@ void main() {
     gl_FragColor = vec4(c, 1. - smoothstep(uR + 1.4, uR + 5.7, r));
     return;
   }
-  // centre line (dashed, x = 0 runs across the field between the A and B halves) and circle
-  float dash = step(.45, fract(p.y * 2.5 + uTime * .3));
-  c += inside * vec3(.55, .6, .7) * aline(abs(p.x) / fwidth(p.x), .7) * dash * .5;
-  c += inside * vec3(.35, .4, .5) * ring(p, vec2(0.), .6, .008) * .5;
+  // no boundary line (11/12): the field's outline is not drawn, only the floor's lighter inside shows it
+  // no centre line or centre circle (11/12)
   // start rings
   c += uCA * ring(p, uSA, .32, .01) * .8;
   c += uCB * ring(p, uSB, .32, .01) * .8;
@@ -244,6 +240,7 @@ const between = (m, a, b) => { // unit-height y-axis mesh from a to b
   m.quaternion.setFromUnitVectors(UP, d.multiplyScalar(1 / L));
 };
 const CYL = new THREE.CylinderGeometry(1, 1, 1, 6); // scaled per limb
+const STICK_IN = .025; // m the stick's end reaches behind the fist's centre: inside the fist, not out past the little finger
 const JOINT = new THREE.IcosahedronGeometry(1, 0);
 const UPPER = .3, FORE = .3, SHOULDER = [-.1, .07, .21], HIP = [-.1, -.5, .1];
 // Standing chest height (m, the phone's mount) sets the body's size; a lower chest is a crouch, never a smaller body.
@@ -365,7 +362,7 @@ function makeAvatar(slot) {
   root.traverse(o => { if (o.isMesh) o.visible = false; }); // the rig: only the wireframe figure is drawn
   const wire = new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: .55, depthWrite: false });
   const clothC = clothColor(color), cloth = new THREE.MeshStandardMaterial({ color: clothC, roughness: .85, metalness: 0, emissive: clothC, emissiveIntensity: .1, side: THREE.DoubleSide }); // all the wizard wears: one colour, the player's hue, connected or not
-  let fig = null, figParts = [], chara = null, asked = 0;
+  let fig = null, figParts = [], figPose = null, chara = null, asked = 0;
   /** The character drawn on the rig (CHARAS); the old one stays until the new one is loaded. Shared geometry: the old one is only taken off. */
   function setChara(c) {
     c = CHARAS[c] ? c : 'wizard';
@@ -378,7 +375,7 @@ function makeAvatar(slot) {
         const added = root.children.filter(o => !before.has(o));
         if (n !== asked) { for (const o of added) root.remove(o); return; } // asked again meanwhile
         for (const o of figParts) root.remove(o);
-        fig = pose; figParts = added;
+        fig = pose; figParts = added; figPose = null; for (const o of added) o.traverse(q => { if (q.userData.pose?.hands) figPose = q.userData.pose; }); // the posed fists, to draw the stick from
       });
     });
   }
@@ -417,14 +414,22 @@ function makeAvatar(slot) {
   function stickIn(p, inv, hand, dt) {
     st.grip = Math.max(0, Math.min(1, st.grip + (p.charging ? 8 : -8) * dt));
     if (!p.base || !p.tip) return null;
-    const base = p.base.clone().applyMatrix4(inv), tip = p.tip.clone().applyMatrix4(inv);
-    return { base, dir: tip.sub(base).normalize(), grip: st.grip, hand };
+    const base = p.base.clone().applyMatrix4(inv), tip = p.tip.clone().applyMatrix4(inv), dir = tip.clone().sub(base).normalize();
+    return { base, dir, grip: st.grip, hand }; // the figures reach the fist with their own arms (armik.js)
   }
   // the stick (world space), the team colour and the HP bar: the same for both ways of posing the body
+  /** The stick as drawn: from the figure's own fist (its arm bones turned to world.js armAt's angles), the game's direction and length.
+   *  The game puts its stick base at the same fist for a 1.3 m chest; a taller or shorter player's figure is that much bigger, so this keeps hand and stick together. */
+  function inFist(p, hand) {
+    const f = figPose?.hands?.[hand === 'L' ? 1 : 0];
+    if (!f || !p.base || !p.tip) return [p.base, p.tip];
+    const b = f.clone().applyMatrix4(root.matrix); // root.matrix: the body's pose, set directly (root frame -> the holder's unscaled world)
+    return [b, b.clone().add(p.tip.clone().sub(p.base))];
+  }
   function finish(p, base, tipP) {
     if (base && tipP) {
       const d = V().subVectors(tipP, base).normalize(); // held in both hands, more of it shows below them
-      between(stick, base.clone().addScaledVector(d, -.08 - .22 * st.grip), tipP); stick.scale.x = stick.scale.z = stick.userData.r * st.thick; // thick: the holder shrinks it by the character's size, the stick is W.STICK_SCALE
+      between(stick, base.clone().addScaledVector(d, -STICK_IN - (figPose?.handsApart ?? .22) * st.grip), tipP); stick.scale.x = stick.scale.z = stick.userData.r * st.thick; // the stick's end inside the fist (in the back hand's while both hold it); thick: the holder shrinks it by the character's size, the stick is W.STICK_SCALE
       if (stick.userData.scanned && p.up) { // a scanned model also turns with the stick's roll: its up as it lay when scanned (z) along the IMU's up across the stick
         _up.set(p.up.x, p.up.y, p.up.z).addScaledVector(d, -_up.set(p.up.x, p.up.y, p.up.z).dot(d));
         if (_up.lengthSq() > 1e-6) { _up.normalize(); stick.quaternion.setFromRotationMatrix(_basis.makeBasis(_side.crossVectors(d, _up), d, _up)); } // x = side = along × up (stickscan.js)
@@ -500,7 +505,7 @@ function makeAvatar(slot) {
     const hf = loc(0).sub(loc(7).add(loc(8)).multiplyScalar(.5));
     headG.rotation.set(0, Math.max(-1.3, Math.min(1.3, Math.atan2(-hf.z, hf.x))), Math.max(-.9, Math.min(.9, Math.atan2(hf.y, Math.hypot(hf.x, hf.z)))), 'YZX');
     fig?.({ sR, eR, hR, sL, eL, hL, legs: legs.map(l => l.p), headQ: headG.quaternion, time: st.time, down: st.ko, stick: stickIn(p, bodyInv, stickHand, dt) });
-    finish(p, p.base, p.tip);
+    finish(p, ...inFist(p, stickHand));
     facing.copy(fs);
     const head = loc(0).applyMatrix4(bodyM);
     hpSprite.position.set(p.body.t[0], Math.max(head.y + .38, 1.2), p.body.t[2]);
@@ -586,7 +591,7 @@ function makeAvatar(slot) {
         lg.p = { hip, knee, foot, toe: foot.clone().add(V(.16, -.03, 0)) };
       }
       fig?.({ sR: S, eR: E, hR: Hn, sL: so, eL: Eo, hL: ho, legs: legs.map(l => l.p), headQ: headG.quaternion, leg: legLen(tall), hip: hip0, lean, time: st.time, down: st.ko, stick: stickIn(p, new THREE.Matrix4().copy(M).invert(), 'R', dt) });
-      finish(p, p.base, p.tip);
+      finish(p, ...inFist(p, 'R'));
       facing.set(f[0], 0, f[2]).normalize();
       hpSprite.position.set(bp.t[0], Math.max(ch + .5, legLen(tall) * (2.65 - .5 * Math.max(crouch, st.ko))) + .02 * Math.sin(st.time * 1.7), bp.t[2]); // kneeling, still over the hat
       return { x: bp.t[0], z: bp.t[2], hp: (p.hp ?? 100) / (p.hpMax || 100), vis: p.online !== false ? 1 : .5 };

@@ -492,7 +492,7 @@ function updateHud() {
     // the try-out button fills it as well, as far as a real charge of that length would (game.js effects())
     const { t1, t2 } = cfg.rules, pv = p.preview ? performance.now() / 1000 - p.preview : null, level = pv !== null ? Math.min(1, pv / t2) : p.charging ? p.charge : 0;
     h.gauge.set(level, pv !== null ? (pv < t1 ? 's' : pv < t2 ? 'm' : 'l') : p.charging ? p.tier : null);
-    setText(h.el.querySelector('.name small'), p.element ?? ''); // the element only, in English (fire / thunder / water / wind); the stick's name and stars are not shown
+    // the name line is only the slot letter (A / B): no element, no stick name or stars (11/12)
   }
   const showTimer = m.phase === 'fight' || m.phase === 'result';
   setText(hud.querySelector('.timer'), showTimer ? String(Math.ceil(m.left)) : '');

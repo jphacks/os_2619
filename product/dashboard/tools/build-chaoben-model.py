@@ -1,8 +1,8 @@
 # Builds public/assets/models/chaoben.glb (チャオベン, the special character) from AccuRig's chaoben_rigged.fbx and the photo the model was made from (chaoben_body.jpg).
 #   blender --background --factory-startup --python tools/build-chaoben-model.py -- <dir with the sources> <out.glb> [triangles]
 # The source: 97 k triangles in an A-pose (the photo's), 101 bones from AccuRig, no texture (its image was not kept). What the game uses:
-#   - welded (the three crumbs dropped) and decimated, scaled to H tall, soles at 0.
-#   - AccuRig's skeleton cut to about 20 bones, named as in wizard.glb (Hip, Waist, Spine01, Spine02, Neck, Head, L_/R_ Clavicle Upperarm Forearm Hand
+#   - welded (the three crumbs dropped) and decimated, scaled to H tall, soles at 0; the hands made fists (the model's are open).
+#   - AccuRig's skeleton cut to about 20 bones (and L_/R_ Grip, GripEnd: unweighted markers of the fists' holes), named as in wizard.glb (Hip, Waist, Spine01, Spine02, Neck, Head, L_/R_ Clavicle Upperarm Forearm Hand
 #     Thigh Calf Foot); the weights of the bones dropped (twists, fingers, toes, face, breasts) go to the nearest kept one up the chain. The head and the
 #     hair on it are put on the head alone, so the hair does not stretch with the neck.
 #   - the look is the photo itself, projected from the front (the mesh was made from it and matches its silhouette): 'body' (the whole photo, half size),
@@ -35,6 +35,66 @@ z0 = min(v.co.z for v in me.vertices); k = H / (max(v.co.z for v in me.vertices)
 arm.scale = (k, k, k); arm.location.z = -z0 * k; bpy.context.view_layer.update(); apply()
 while me.uv_layers: me.uv_layers.remove(me.uv_layers[0])
 me.materials.clear()
+
+# ---- the hands as fists, as round a stick (the model's are open). Its finger weights do not follow its fingers' shape (bending the finger bones
+#      tears spikes out of them), so the fingers are bent as one sheet instead: past the knuckles, rolled toward the palm about the knuckle line, the
+#      thumb turned over them. The finger bones are merged into the hand below, as before, so the fist moves with the hand.
+import math
+from mathutils import Matrix
+GRIP_AT = {}
+ROLL = 3.3        # rad the fingertips end turned through (~190°: back against the palm)
+THUMB_OVER = 2.0  # how far toward the palm side the thumb lies (× the roll's radius): across the curled fingers' front
+THUMB_LEN = .8    # the thumb shortened along itself
+for side in 'LR':
+    bn = lambda n: arm.data.bones[f'CC_Base_{side}_{n}']
+    hand = bn('Hand'); K = bn('Mid1').head_local.copy(); a_ = (K - hand.head_local).normalized()
+    idx = (bn('Index1').head_local - bn('Pinky1').head_local).normalized(); n_ = a_.cross(idx).normalized() # idx: toward the index finger
+    if n_.x * (-hand.head_local.x) < 0: n_ = -n_ # the palm faces the body (the thigh, in the A-pose)
+    c_ = n_.cross(a_).normalized()
+    if c_.dot(idx) < 0: c_ = -c_ # toward the thumb and the index finger: the stick's tip comes out of the fist on that side
+    F = (bn('Mid3').tail_local - K).length * 1.15 # the fingers' length (the last bone ends short of the tip)
+    r = F / ROLL                                   # the roll's radius: the whole length goes round ROLL
+    names = {g.index: g.name for g in ob.vertex_groups}
+    def w(v, test): return sum(g.weight for g in v.groups if test(names[g.group]))
+    mine = lambda nm: nm.startswith(f'CC_Base_{side}_') and any(k in nm for k in ('Hand', 'Index', 'Mid', 'Ring', 'Pinky', 'Thumb'))
+    thumb = lambda nm: nm in (f'CC_Base_{side}_Thumb1', f'CC_Base_{side}_Thumb2', f'CC_Base_{side}_Thumb3') # the whole thumb (this mesh weights much of it to Thumb1)
+    # the thumb: turned about its root so it points at the rolled fingers' front, a little to the index side (it lies over them)
+    t1 = bn('Thumb1'); tdir = (bn('Thumb3').tail_local - t1.head_local).normalized(); W = (bn('Index1').head_local - bn('Pinky1').head_local).length
+    L = (K - hand.head_local).length; aim = (K - a_ * (.15 * L) + n_ * (r * THUMB_OVER) + idx * (.2 * W) - t1.head_local).normalized()
+    Rq = tdir.rotation_difference(aim).to_matrix().to_4x4(); Sq = Matrix.Scale(THUMB_LEN, 4, aim) # this model's thumb is long: it would reach past the fist
+    Rt = Matrix.Translation(t1.head_local) @ Sq @ Rq @ Matrix.Translation(-t1.head_local)
+    moved = 0
+    for v in me.vertices:
+        if w(v, mine) < .5: continue
+        if w(v, thumb) > .5: v.co = Rt @ v.co; moved += 1; continue
+        d = v.co - K; t = d.dot(a_)
+        if t <= 0 or abs(d.dot(c_)) > .8 * F: continue
+        h = d.dot(n_); th = min(t / r, ROLL + .4); O = K + n_ * r
+        v.co = O + (-n_ * math.cos(th) + a_ * math.sin(th)) * (r - h) + c_ * d.dot(c_); moved += 1
+    GRIP_AT[side] = (K + n_ * r, c_.copy()) # the fist's hole: the roll's axis, where the stick goes through
+    print('fist', side, 'moved', moved, 'verts, roll radius', round(r, 4))
+
+# ---- weld (4 islands: the body and three crumbs, dropped), decimate
+bpy.ops.object.select_all(action='DESELECT'); ob.select_set(True); bpy.context.view_layer.objects.active = ob
+bm = bmesh.new(); bm.from_mesh(me); bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
+bm.verts.ensure_lookup_table(); seen, islands = set(), []
+for v in bm.verts:
+    if v.index in seen: continue
+    st, isl = [v], [v]; seen.add(v.index)
+    while st:
+        a = st.pop()
+        for e in a.link_edges:
+            b = e.other_vert(a)
+            if b.index not in seen: seen.add(b.index); st.append(b); isl.append(b)
+    islands.append(isl)
+for isl in islands:
+    if len(isl) < 1000: bmesh.ops.delete(bm, geom=isl, context='VERTS')
+bm.to_mesh(me); bm.free()
+dm = ob.modifiers.new('d', 'DECIMATE'); dm.ratio = min(1, TRIS / sum(len(p.vertices) - 2 for p in me.polygons))
+ob.modifiers.move(ob.modifiers.find('d'), 0)
+bpy.ops.object.modifier_apply(modifier='d')
+bm = bmesh.new(); bm.from_mesh(me); bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 3]); bm.to_mesh(me); bm.free()
+print('decimated', len(me.vertices), 'verts', len(me.polygons), 'tris')
 
 # ---- the bones: only those that move something; the weights of the rest go up the chain
 KEEP = {'CC_Base_Hip': 'Hip', 'CC_Base_Waist': 'Waist', 'CC_Base_Spine01': 'Spine01', 'CC_Base_Spine02': 'Spine02', 'CC_Base_NeckTwist01': 'Neck', 'CC_Base_Head': 'Head'}
@@ -70,32 +130,16 @@ for b in list(eb):
 for b in list(eb):
     if b.name not in KEEP: eb.remove(b)
 for b in eb: b.name = KEEP[b.name]
+for side, (o, ax) in GRIP_AT.items(): # markers (no weights): the fist's hole and its direction, for chaobenmodel.js to put the stick through
+    for nm, at in ((f'{side}_Grip', o), (f'{side}_GripEnd', o + ax * .05)):
+        g = eb.new(nm); g.head = at; g.tail = at + ax * .03; g.parent = eb[f'{side}_Hand']
 bpy.ops.object.mode_set(mode='OBJECT')
 print('bones', [b.name for b in arm.data.bones])
 
-# ---- weld (4 islands: the body and three crumbs, dropped), decimate
+
 bpy.ops.object.select_all(action='DESELECT'); ob.select_set(True); bpy.context.view_layer.objects.active = ob
-bm = bmesh.new(); bm.from_mesh(me); bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
-bm.verts.ensure_lookup_table(); seen, islands = set(), []
-for v in bm.verts:
-    if v.index in seen: continue
-    st, isl = [v], [v]; seen.add(v.index)
-    while st:
-        a = st.pop()
-        for e in a.link_edges:
-            b = e.other_vert(a)
-            if b.index not in seen: seen.add(b.index); st.append(b); isl.append(b)
-    islands.append(isl)
-for isl in islands:
-    if len(isl) < 1000: bmesh.ops.delete(bm, geom=isl, context='VERTS')
-bm.to_mesh(me); bm.free()
-dm = ob.modifiers.new('d', 'DECIMATE'); dm.ratio = min(1, TRIS / sum(len(p.vertices) - 2 for p in me.polygons))
-ob.modifiers.move(ob.modifiers.find('d'), 0)
-bpy.ops.object.modifier_apply(modifier='d')
-bm = bmesh.new(); bm.from_mesh(me); bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 3]); bm.to_mesh(me); bm.free()
 bpy.ops.object.vertex_group_limit_total(group_select_mode='ALL', limit=4)
 bpy.ops.object.vertex_group_normalize_all(lock_active=False)
-print('decimated', len(me.vertices), 'verts', len(me.polygons), 'tris')
 
 # ---- the look: the photo, projected from the front onto everything but the hair at the head's sides and back
 #   'body': the whole photo (its background filled with the nearest body colour, so a face at the silhouette's edge takes the body's, not the wall's)

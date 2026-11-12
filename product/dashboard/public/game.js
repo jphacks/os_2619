@@ -90,6 +90,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       p.body = W.bodyPose(dummy.chest, dummy.yaw, dummy.chest[1]);
       p.chest.fromArray(dummy.chest); p.base.fromArray(dummy.base);
       p.tip.fromArray(dummy.tip); p.dir.fromArray(dummy.dir);
+      ownHand(p, p.base.distanceTo(p.tip));
       p.src = 'dummy'; p.stickSrc = 'ダミー映像と同じ座標';
       return shrink(p);
     }
@@ -110,8 +111,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       p.up = v3(W.app3(R, inBody(rotQ(p.imu.q, W.STICK.up))));
       p.stickSrc = 'IMU';
     } else { p.dir.copy(v3(W.app3(p.body.R, [1, 0, 0]))); p.stickSrc = 'IMU なし（前向き）'; }
-    p.base.copy(v3(W.handAt(p.body, p.dir.toArray()))); // the hand swings with the stick, the arm turning at the shoulder
-    if (T && cfg.useTruth) { p.base.copy(v3(T.base)); p.dir.copy(v3(T.dir)); }
+    p.base.copy(v3(W.handAt(p.body, p.dir.toArray(), armOf(p)))); // the hand swings with the stick, the arm turning at the shoulder: this character's arm (the drawn fist)
+    if (T && cfg.useTruth) { p.base.copy(v3(T.base)); p.dir.copy(v3(T.dir)); ownHand(p); }
     p.tip.copy(p.base).addScaledVector(p.dir, cfg.stickLen?.[p.slot] ?? W.STICK.len);
     dodgeOffset(p);
     shrink(p);
@@ -132,6 +133,13 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   /** The player's character is smaller than a person (W.CHARA_SCALE, cfg.chara): the chest and the hand are drawn in toward the floor
    *  under the chest by its scale, the stick shortened to W.STICK_SCALE, so hits, shots and the drawn figure all agree. p.body stays the person's (full size): field3d.js poses the figure
    *  from it and shrinks the drawing by p.scale about the same point. The stick keeps its direction. */
+  const armOf = p => W.ARM_OF[cfg.chara?.[p.slot]] ?? W.ARM_OF.person;
+  /** With a character chosen, the dummy room's / a script's stick base is replaced by that character's fist (its own arm, as drawn); len: keep the tip that far out. */
+  function ownHand(p, len = null) {
+    if (!W.ARM_OF[cfg.chara?.[p.slot]]) return;
+    p.base.copy(v3(W.handAt(p.body, p.dir.toArray(), armOf(p))));
+    if (len != null) p.tip.copy(p.base).addScaledVector(p.dir, len);
+  }
   function shrink(p) {
     const k = p.scale = W.CHARA_SCALE[cfg.chara?.[p.slot]] ?? 1;
     if (k === 1) return;

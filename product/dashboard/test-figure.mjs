@@ -44,7 +44,7 @@ player.skel = null; field.update(.016, { A: player }); // the sensors-only pose 
 // sensors only, the chest lowered: a crouch bends the knees and leans the back; the body keeps its size and its feet on the floor
 const bendDeg = () => { const k = at('LeftLeg'); return 180 - at('LeftUpLeg').sub(k).angleTo(at('LeftFoot').sub(k)) * 180 / Math.PI; }; // knee bend, 0 = straight
 const stand = () => { scene.updateMatrixWorld(true); return { thigh: at('LeftUpLeg').distanceTo(at('LeftLeg')), head: at('Head').y, foot: Math.min(at('LeftFoot').y, at('RightFoot').y), knee: at('LeftLeg').x - at('LeftUpLeg').x, bend: bendDeg() }; };
-const pose = h => { player.body = W.bodyPose([0, h, 0], 0, h); player.base = new THREE.Vector3(.3, h + .1, .2); player.tip = new THREE.Vector3(1.3, h + .1, .2); for (let i = 0; i < 30; i++) field.update(.016, { A: player }); return stand(); };
+const pose = h => { player.body = W.bodyPose([0, h, 0], 0, h); player.base = new THREE.Vector3(...W.handAt(player.body, [1, 0, 0], W.ARM_OF.wizard)); player.tip = player.base.clone().add(new THREE.Vector3(1, 0, 0)); /* the game's stick base: the wizard's fist (world.js armAt) */ for (let i = 0; i < 30; i++) field.update(.016, { A: player }); return stand(); };
 const fmt = o => JSON.stringify(o, (k, v) => typeof v === 'number' ? +v.toFixed(2) : v);
 const up = pose(1.35), low = pose(.9);
 console.log('standing', fmt(up), 'crouched', fmt(low));
@@ -71,10 +71,10 @@ POSE.show = true; player.skel = null; player.body = null; field.update(.016, { A
 const wiz = scene.getObjectByName('wizard').userData.pose, hands = () => wiz.hands.map(h => h.clone());
 const standWiz = pose(1.35); scene.updateMatrixWorld(true);
 const stickBase = () => scene.getObjectByName('wizard').parent.worldToLocal(player.base.clone());
-assert.ok(hands()[0].distanceTo(stickBase()) < .01, 'the right hand on the stick');
+assert.ok(hands()[0].distanceTo(stickBase()) < .06, 'the right hand on the stick (its own arm, turned to the armAt angles: within a few cm, the figure is sized to this player): ' + hands()[0].distanceTo(stickBase()).toFixed(3));
 assert.ok(hands()[1].distanceTo(stickBase()) > .3, 'the left hand free while not charging');
 player.charging = true; player.charge = .5; pose(1.35);
-assert.ok(hands()[0].distanceTo(stickBase()) < .01 && hands()[1].distanceTo(stickBase()) < .25, 'both hands on the stick while charging');
+assert.ok(hands()[0].distanceTo(stickBase()) < .06 && hands()[1].distanceTo(stickBase()) < .25, 'both hands on the stick while charging');
 player.charging = false; pose(1.35);
 assert.ok(hands()[1].distanceTo(stickBase()) > .3, 'and the left hand lets go after it');
 assert.ok(wiz.low < .05, 'standing: not kneeling');
