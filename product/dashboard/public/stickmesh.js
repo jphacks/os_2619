@@ -6,7 +6,9 @@ import * as THREE from 'three';
 
 export const STICK_COLOR = 0x7a4f2c; // brown
 
+/** The geometry, or null for a model this cannot draw (an older format a server still holding one sends, or a broken one). */
 export function stickGeometry(m) {
+  if (m?.v !== 3 || !Array.isArray(m.nodes) || !Array.isArray(m.edges) || !(m.length > 0)) return null;
   const L = m.length, rAt = a => m.r[0] + (m.r[1] - m.r[0]) * Math.min(1, Math.max(0, a / L + .5)); // thickness by how far toward the tip
   const P = m.nodes.map(([s, a]) => new THREE.Vector3(s, a, 0)); // built in metres, y squeezed to the unit length at the end
   const pos = [], idx = [], mat = new THREE.Matrix4(), q = new THREE.Quaternion(), Y = new THREE.Vector3(0, 1, 0), one = new THREE.Vector3(1, 1, 1);

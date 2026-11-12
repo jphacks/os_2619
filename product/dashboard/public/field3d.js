@@ -1,4 +1,4 @@
-// Stylized arena for the 3D / drone views: floor, boundary line painted along FIELD.poly, start rings, the tags with their real images,
+// Stylized arena for the 3D / drone views: floor (no border line: FIELD.poly only bounds the floor), start rings, the tags with their real images,
 // two team-coloured avatars posed from the players' body / stick, and a 2D top-down minimap.
 // Everything lives in one group the integrator shows only in 3D views; effects.js renders on top (no depth test).
 // World frame and layout: world.js (metres, y up, origin floor centre). Body frame: x forward, y up, z right.
@@ -12,6 +12,7 @@ import { makeWizard } from './wizard.js';
 import { makeWizardModel } from './wizardmodel.js';
 import { makeChaobenModel } from './chaobenmodel.js';
 import { stickGeometry, STICK_COLOR } from './stickmesh.js';
+import { createBattleMotes } from './battle-motes.js';
 import { createShatter } from './ko-shatter.js';
 import { createChaobenStage, THEATER_GLSL } from './chaoben-stage.js';
 
@@ -85,7 +86,7 @@ export function fieldSig() {
   return h;
 }
 
-// ---- floor: one quad, everything analytic (grid, boundary glow, centre line, start rings, player shadows + HP arcs) ----
+// ---- floor: one quad, everything analytic (grid, centre line, start rings, player shadows + HP arcs) ----
 const FLOOR_VS = `
 varying vec2 vP;
 void main() { vec4 w = modelMatrix * vec4(position, 1.); vP = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }`;
@@ -123,17 +124,13 @@ void main() {
     }
     discard;
   }
-  vec3 team = p.x < 0. ? uCA : uCB;
   vec3 c = mix(vec3(.028, .034, .052), vec3(.05, .06, .09), inside);
   c += inside * vec3(.035, .04, .06) * exp(-r * r / 5.);                                           // soft centre spot
   c += mix(vec3(.04, .05, .08), vec3(.10, .12, .17), inside) * gridAt(p, .5) * (inside > .5 ? 1. : exp(-d * .8));
   c += inside * vec3(.07, .08, .11) * gridAt(p, 1.);
   if (uRock > .5) { // the canyon or the courtyard: the same ground as outside the floor, the lines below are painted on it
     c = uRock > 2.5 ? theaterColor(p) : uRock > 1.5 ? lawnColor(p) : sandColor(p);
-    float lines = 1. - smoothstep(.1, .15, abs(d));
-    c *= 1. - .5 * lines; // a dark edge, so a team colour reads on the orange stone
-    float wide = 1. - smoothstep(.055, .055 + fwidth(d) * 1.5, abs(d));
-    c = mix(c, team, wide);
+    // no border line round the field (taken out on request): the centre line and the start rings mark it
     float dash = step(.45, fract(p.y * 2.5 + uTime * .3));
     c = mix(c, vec3(.97, .93, .84), inside * aline(abs(p.x) / fwidth(p.x), 1.4) * dash * .8);
     c = mix(c, vec3(.97, .93, .84), inside * ring(p, vec2(0.), .6, .02) * .7);
@@ -156,8 +153,6 @@ void main() {
     gl_FragColor = vec4(c, 1. - smoothstep(uR + 1.4, uR + 5.7, r));
     return;
   }
-  // boundary: a line painted on the floor, 6 cm wide (no wall, no posts)
-  c += team * (1. - smoothstep(.03, .03 + fwidth(d) * 1.5, abs(d)));
   // centre line (dashed, x = 0 runs across the field between the A and B halves) and circle
   float dash = step(.45, fract(p.y * 2.5 + uTime * .3));
   c += inside * vec3(.55, .6, .7) * aline(abs(p.x) / fwidth(p.x), .7) * dash * .5;
@@ -508,7 +503,7 @@ function makeAvatar(slot) {
   }
 
 
-  const _P0 = V(), _m = new THREE.Matrix4(), _s = new THREE.Matrix4();
+  const _P0 = V(), _f = V(), _m = new THREE.Matrix4(), _s = new THREE.Matrix4(), _r = new THREE.Matrix4();
   return {
     root, world, holder, hud, slot, setStick, setChara, get chara() { return chara; }, broken: false, // broken: blown to pieces at a KO (ko-shatter.js), hidden until the next match
     /** p.base / p.tip come in at the character's size (game.js shrink); the figure is posed at a person's size and the holder shrinks the drawing. */
@@ -520,7 +515,10 @@ function makeAvatar(slot) {
         const up = v => v && v.clone().sub(_P0).divideScalar(k).add(_P0);
         p = { ...p, base: up(p.base), tip: up(p.tip) };
       }
-      holder.matrix.makeTranslation(_P0.x, 0, _P0.z).multiply(_s.makeScale(k, k, k)).multiply(_m.makeTranslation(-_P0.x, 0, -_P0.z)); holder.matrixWorldNeedsUpdate = true;
+      if (p?.body) _P0.set(p.body.t[0], 0, p.body.t[2]);
+      // a dodge (game.js): the whole figure and its stick lean to that side, about the floor under the chest
+      if (p?.lean) _r.makeRotationAxis(_f.set(p.body.R[0], 0, p.body.R[6]).normalize(), p.lean); else _r.identity();
+      holder.matrix.makeTranslation(_P0.x, 0, _P0.z).multiply(_r).multiply(_s.makeScale(k, k, k)).multiply(_m.makeTranslation(-_P0.x, 0, -_P0.z)); holder.matrixWorldNeedsUpdate = true;
       const r = this.pose(dt, p);
       hud.visible = world.visible;
       if (k !== 1) hpSprite.position.y = hpSprite.position.y * k + .15; // over the small head
@@ -685,11 +683,16 @@ export function createField(scene, opts = {}) {
   });
 
   scene.add(group);
+  let motes = null, motesSig = null, battle = false; // embers and magic over the field during a fight (battle-motes.js), remade with the field
   return {
     group, background, rebuild,
+    /** a fight is running: the battle motes fade in (and out after it) */
+    setBattle(on) { battle = !!on; },
     update(dt, players = {}, fxDt = dt) {
       if (fieldSig() !== sig) rebuild();
       shatter.step(fxDt); // the pieces keep the KO's slow motion (ko-show.js)
+      if (motesSig !== sig) { if (motes) { group.remove(motes.points); motes.dispose(); } motes = createBattleMotes(fieldExtent()); group.add(motes.points); motesSig = sig; }
+      motes.update(fxDt, battle);
       uniforms.uTime.value += dt; if (activeLook) built[activeLook].update(dt);
       if (activeLook) built[activeLook].watch?.(['A', 'B'].map(s => players[s]?.body && V(players[s].body.t[0], 1.3, players[s].body.t[2]))); // チャオベン劇場's giant head
       ['A', 'B'].forEach((s, i) => {
@@ -719,6 +722,7 @@ export function createField(scene, opts = {}) {
       }
       shatter.group.visible = pass !== 'back'; // the pieces fly in front of the KO backdrop
       if (arena) arena.visible = pass !== 'front';
+      if (motes) motes.points.visible = pass !== 'front' && motes.shown; // once, with the background (they are not in front of the players)
       if (activeLook) built[activeLook].group.visible = pass !== 'front';
       uniforms.uHpOnly.value = pass === 'front' ? 1 : 0;
     },

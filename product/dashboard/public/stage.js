@@ -3,6 +3,10 @@
 //  final: phone C's untouched picture as the background, the Three.js camera placed where the tag scan put phone C
 //         (extrinsics.js / fieldmap.js), and only effects at sensor-world positions projected over that picture.
 //         Optionally a chest phone's own picture instead (A / B view), or the drone view as a picture-in-picture.
+// Both can look like an old CRT screen (cfg.crt): a pass that makes the frame about CRT_LINES lines (each line the average of its rows, so
+// fine distant detail does not shimmer as rendering at that size would), smears each line sideways a little and lets the bright parts
+// glow; a soft vignette over everything, the HUD too (index.html .stage.crt blurs and glows the HUD); 30 fps (app.js). About 18 texture
+// reads a pixel: light enough for a laptop GPU.
 // The tag scan (K) measures the floor sheets and phone C's pose at once; the result is kept in localStorage.
 // Ported from kawashima/app.js (renderer, guide, scan, skeletons).
 import * as THREE from 'three';
@@ -18,6 +22,7 @@ const now = () => performance.now() / 1000;
 const toMat = p => new THREE.Matrix4().set(p.R[0], p.R[1], p.R[2], p.t[0], p.R[3], p.R[4], p.R[5], p.t[1], p.R[6], p.R[7], p.R[8], p.t[2], 0, 0, 0, 1);
 // where phone C should go: 3.5 m in front of the centre, 1.7 m up or higher, tilted down a little (camera before a scan)
 export const GUIDE_CAM = { x: 0, y: 1.7, z: 3.5, yaw: 0, pitch: -16, roll: 0, fov: 45 };
+const CRT_LINES = 270; // the CRT look's lines, about (cfg.crt)
 export const DRONE_JA = { fixed: '定点（最終映像と同じ）', auto: '自動演出', orbit: '周回', chaseA: 'A の肩越し', chaseB: 'B の肩越し', top: '真上', side: '真横', free: '自由操作' };
 
 const RK = W.MARKER === 'rune' ? '-mahoujinA' + W.RUNE_SCALE : ''; // a scan belongs to the sheets it saw: the mahoujin (T0 on A's side, at its scale) or the AprilTag square
@@ -26,7 +31,9 @@ const FIELD_KEY = 'pd-field-fixed3-' + W.LAYOUT + RK, CAM_KEY = 'pd-tagcam-fixed
 export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay = null }) { // overlay.compose(src, w, h, dt): the picture with the recognition layers (visionfx.js) or null
   const el = document.createElement('div'); el.className = 'stage';
   const canvas = document.createElement('canvas'), guideCanvas = Object.assign(document.createElement('canvas'), { className: 'guide2d' }), gctx = guideCanvas.getContext('2d');
-  el.append(canvas, guideCanvas);
+  const crtVeil = Object.assign(document.createElement('div'), { className: 'crtveil' }); // the vignette (resize)
+  crtVeil.style.cssText = 'position:absolute;inset:0;pointer-events:none;display:none;z-index:5'; // over the HUD (app.js puts it in el later)
+  el.append(canvas, guideCanvas, crtVeil);
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   const scene = new THREE.Scene();
@@ -232,6 +239,11 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     el.style.width = w + 'px'; el.style.height = h + 'px';
     const srcW = S.mode === 'final' ? (fpv ? w * devicePixelRatio : video.videoWidth || 1920) : w * devicePixelRatio;
     renderer.setPixelRatio(Math.min(devicePixelRatio, Math.max(1, srcW / w))); // no more pixels than the picture
+    // the CRT look: a whole number of device pixels per line (so the scanlines don't beat with the screen's pixels), about CRT_LINES lines
+    S.crt = !!cfg.crt; el.classList.toggle('crt', S.crt); crtVeil.style.display = S.crt ? '' : 'none';
+    const pitch = Math.max(2, Math.round(h * devicePixelRatio / CRT_LINES)) / devicePixelRatio; // css px per line
+    S.crtLines = h / pitch;
+    if (S.crt) crtVeil.style.background = 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.45) 100%)'; // no scanline stripes (taken out on request)
     fx.setSize(w, h);
     S.w = w; S.h = h;
     if (minimap) minimap.canvas.width = minimap.canvas.height = Math.round(Math.min(w, h) * .26 * devicePixelRatio);
@@ -253,7 +265,37 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     return { x: (q.x / q.w + 1) / 2 * S.w, y: (1 - q.y / q.w) / 2 * S.h };
   }
 
-  /** Render one frame. In final mode the base scene is strictly camera pixels; only fx is projected over it. */
+  // ---- the CRT pass: the finished frame copied, then drawn again over itself with a sideways smear and a glow of its bright parts ----
+  const crtMat = new THREE.ShaderMaterial({
+    uniforms: { tFrame: { value: null }, uLines: { value: 540 }, uAspect: { value: 16 / 9 } },
+    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
+    fragmentShader: `uniform sampler2D tFrame; uniform float uLines, uAspect; varying vec2 vUv;
+      // one line of the CRT at x (in line heights): two linear taps half a line apart average the line's rows, so it does not shimmer
+      vec3 line(float x) { float lh = 1. / uLines; vec2 p = vec2(vUv.x + x * lh / uAspect, (floor(vUv.y * uLines) + .5) * lh);
+        return (texture2D(tFrame, p - vec2(0., lh * .25)).rgb + texture2D(tFrame, p + vec2(0., lh * .25)).rgb) * .5; }
+      void main() {
+        vec3 l0 = line(0.), lm = line(-.7), lp = line(.7), c = l0 * .3 + (lm + lp) * .2 + (line(-1.6) + line(1.6)) * .15; // the beam bleeds along its line
+        c.r = mix(c.r, lp.r, .35); c.b = mix(c.b, lm.b, .35); // the three guns a little out of line
+        vec3 g = vec3(0.); float r = 4. / uLines;
+        for (int i = 0; i < 8; i++) { float a = float(i) * .7854; g += max(texture2D(tFrame, vUv + vec2(cos(a) * r / uAspect, sin(a) * r)).rgb - .5, 0.); } // only what is bright glows
+        gl_FragColor = vec4(c + g * (1.1 / 8.), 1.);
+      }`,
+    depthTest: false, depthWrite: false,
+  });
+  const crtQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), crtMat), crtScene = new THREE.Scene(), crtCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  crtQuad.frustumCulled = false; crtScene.add(crtQuad);
+  let crtTex = null; const crtSize = new THREE.Vector2(), origin = new THREE.Vector2();
+  function crtPass() {
+    renderer.getDrawingBufferSize(crtSize);
+    if (!crtTex || crtTex.image.width !== crtSize.x || crtTex.image.height !== crtSize.y) {
+      crtTex?.dispose(); crtTex = new THREE.FramebufferTexture(crtSize.x, crtSize.y); crtTex.minFilter = crtTex.magFilter = THREE.LinearFilter;
+    }
+    renderer.setRenderTarget(null); renderer.setScissorTest(false); renderer.setViewport(0, 0, S.w, S.h);
+    renderer.copyFramebufferToTexture(origin, crtTex);
+    crtMat.uniforms.tFrame.value = crtTex; crtMat.uniforms.uLines.value = S.crtLines; crtMat.uniforms.uAspect.value = S.w / S.h;
+    const ac = renderer.autoClear; renderer.autoClear = false; renderer.render(crtScene, crtCam); renderer.autoClear = ac;
+  }
+
   // The end-of-match show (ko-show.js): its state this frame, set by render(). It slows the effects and the flying pieces, rushes the camera in
   // on a player (an off-centre window of the same view: works for every camera mode) and puts its backdrop between the arena and the players.
   let koS = null;
@@ -273,7 +315,14 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
   }
   function koRender(cam) { const off = koView(cam); koBackdrop(cam); fx.render(field.setPass); if (off) { cam.clearViewOffset(); cam.updateMatrixWorld(); } }
 
+  /** Render one frame (with the CRT look when cfg.crt). */
   function render(dt, game, est, ko = null) {
+    if (S.crt !== !!cfg.crt) resize();
+    draw(dt, game, est, ko);
+    if (S.crt) crtPass();
+  }
+  /** One frame. In final mode the base scene is strictly camera pixels; only fx is projected over it. */
+  function draw(dt, game, est, ko = null) {
     const P = game.players, setup = game.match.phase === 'setup';
     koS = ko; const fdt = dt * (ko?.scale ?? 1); // the show's slow motion (0 during the hit stop)
     const yawOf = b => Math.atan2(-b.R[6], b.R[0]); // body x axis = forward
@@ -281,7 +330,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     if (needArena) {
       drone.update(dt, Object.fromEntries(Object.values(P).map(p => [p.slot, { chest: p.chest, yaw: yawOf(p.body), tip: p.tip }])));
       field.update(fdt, Object.fromEntries(Object.values(P).map(p => [p.slot,
-        { body: p.body, base: p.base, tip: p.tip, scale: p.scale ?? 1, hp: p.hp, hpMax: p.hpMax, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, skel: p.skel, calibAt: p.calibAt, lost: game.match.phase === 'result' && !!game.winner && game.winner !== p }])), fdt);
+        { body: p.body, lean: p.lean ?? 0, base: p.base, tip: p.tip, scale: p.scale ?? 1, hp: p.hp, hpMax: p.hpMax, element: p.element, charging: p.charging, charge: p.charge, online: p.online || !!p.imu, skel: p.skel, calibAt: p.calibAt, lost: game.match.phase === 'result' && !!game.winner && game.winner !== p }])), fdt);
     }
     fx.step(fdt);
     if (minimap) { const on = S.mode === 'game' && cfg.minimap && !setup; minimap.canvas.style.display = on ? '' : 'none'; if (on) minimap.draw(P, game.shots); }
@@ -292,6 +341,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
 
     renderer.setScissorTest(false);
     field.setLook(cfg.backdrop, !!cfg.debug);
+    field.setBattle(game.match.phase === 'fight');
     field.setTime(cfg.timeOfDay);
     if (S.mode === 'game') {
       canvas.style.transform = '';

@@ -1,22 +1,9 @@
-/* 棒設定 (screen 5 of the dashboard, and sticks.html on a phone). Uses the dashboard's tokens and parts: .card, h3, .row, button.go. */
+/* 棒設定 (screen 5 of the dashboard). Uses the dashboard's tokens and parts: .card, h3, .row, button.go. */
 .stk { display: grid; grid-template-columns: minmax(0, 1fr) 340px; height: 100%; overflow: hidden; }
 .stk > .main { overflow: auto; padding: 14px 16px; display: grid; gap: 12px; align-content: start; }
 .stk > aside { overflow: auto; padding: 14px 16px 14px 0; display: grid; gap: 12px; align-content: start; }
 
-/* scan: the photo well (like the phone videos on screen 1) beside the result */
-.stk .scan { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; }
-.stk .well { background: #000; border-radius: 8px; height: clamp(220px, 42vh, 380px); display: grid; place-items: center; overflow: hidden; color: var(--muted); font-size: 12px; }
-.stk .well img { width: 100%; height: 100%; object-fit: contain; }
-.stk .res { display: grid; gap: 10px; align-content: start; }
-.stk .res .why { color: var(--text-2); font-size: 12px; margin: 0; }
-.stk .shot { display: inline-flex; justify-content: center; padding: 10px 14px; font-weight: 600; }
-.stk .res input[type=text] { width: 100%; padding: 6px 8px; }
-
-/* the result: name, stars, element, four meters */
-.stk .who { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.stk .who b { font-size: 18px; font-weight: 700; letter-spacing: .02em; }
-.stk .stars { color: var(--C); letter-spacing: .12em; font-size: 15px; white-space: nowrap; }
-.stk .stars i { color: #2c3242; font-style: normal; }
+/* a stick: element, two meters */
 .stk .el { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); }
 .stk .el::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--el); box-shadow: 0 0 6px var(--el); }
 .stk .stats { display: grid; grid-template-columns: 2.6em minmax(0, 1fr) 3.4em; gap: 6px 10px; align-items: center; font-size: 12px; color: var(--text-2); }
@@ -39,7 +26,8 @@
 .stk .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
 .stk .tile { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: grid; background: var(--bg); }
 .stk .tile.inuse { border-color: var(--text-2); }
-.stk .tile img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #000; display: block; }
+.stk .tile img, .stk .tile .noimg { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #000; display: block; }
+.stk .tile .noimg { display: grid; place-items: center; color: var(--muted); font-size: 12px; }
 .stk .tile .body { padding: 8px 10px 10px; display: grid; gap: 6px; }
 .stk .tile .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stk .tile .tag { font-size: 11px; color: var(--text-2); }
@@ -47,7 +35,7 @@
 .stk .tile .del { background: transparent; border-color: transparent; color: var(--muted); padding: 3px 6px; flex: 0; }
 .stk .tile .del:hover { color: var(--bad); border-color: var(--line); }
 
-/* editing a stick by hand: a <dialog> styled as a .card; label left, control right, like the rarityMul rows */
+/* editing a stick by hand: a <dialog> styled as a .card; label left, control right */
 .stk .stkdlg { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius, 10px); padding: 14px 16px; width: min(340px, calc(100vw - 32px)); }
 .stk .stkdlg::backdrop { background: rgba(0, 0, 0, .55); }
 .stk .stkdlg h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
@@ -58,14 +46,9 @@
 .stk .edit .use { margin-top: 4px; }
 .stk select { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
 
-/* rarityMul */
-.stk .mul { display: grid; gap: 4px; }
-.stk .mul label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-2); }
-.stk .mul input { width: 72px; }
 .stk .msg { color: var(--muted); font-size: 12px; min-height: 1.5em; margin: 0; }
 
 @media (max-width: 1100px) {
   .stk { grid-template-columns: 1fr; overflow: auto; height: auto; }
   .stk > aside { padding: 0 16px 16px; }
-  .stk .scan { grid-template-columns: 1fr; }
 }

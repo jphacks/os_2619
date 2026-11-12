@@ -1,9 +1,9 @@
-// A scanned stick's element, rarity and stats, all pure functions of its seed (a random uint32 made at every scan).
-// Shared by server.mjs (records) and the pages (game, admin). Stats are multipliers: 1 = the game's global value.
+// A scanned stick's element and stats. Shared by server.mjs (records) and the pages (game, 棒設定).
+// Stats are multipliers, 1 = the game's global value: power (damage) and speed (ball speed). HP and charge time are the same for every
+// stick (game.js RULES: hp 100, t2 3 s).
 export const ELEMENTS = ['fire', 'thunder', 'water', 'wind'];
-export const STATS = ['hp', 'power', 'speed', 'charge'];
-export const RARITY_MUL = [1, 1, 1, 1, 1]; // default rules.rarityMul: mean stat multiplier for ★1..★5
-const LO = .7, HI = 1.3;
+export const STATS = ['power', 'speed'];
+export const STAT_RANGE = [.5, 2]; // what the admin may set by hand
 
 // mulberry32: tiny seeded PRNG, uniform floats in [0, 1)
 export function mulberry32(a) {
@@ -14,32 +14,24 @@ export function mulberry32(a) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-// each use gets its own stream, so the element, the luck and the stats don't depend on each other
-const rng = (seed, salt) => mulberry32((seed ^ salt) >>> 0);
+export const stickElement = seed => ELEMENTS[Math.floor(mulberry32((seed ^ 0x9E3779B9) >>> 0)() * 4)];
 
-export const stickElement = seed => ELEMENTS[Math.floor(rng(seed, 0x9E3779B9)() * 4)];
-
-/** Rarity ★1..5: from the shape (shapeScore 0..1, stick-analyze.js), then the seed's luck of -1 / 0 / +1. */
-export function baseRarity(shapeScore) {
-  const s = +shapeScore || 0;
-  return s < .15 ? 1 : s < .3 ? 2 : s < .5 ? 3 : s < .7 ? 4 : 5;
+/** Wood volume (m³) of a scanned model (stickscan.js v 3): a cone frustum per edge, its radius tapering from the grip to the tip. */
+export function stickVolume(m) {
+  const L = m.length, rAt = a => m.r[0] + (m.r[1] - m.r[0]) * Math.min(1, Math.max(0, a / L + .5));
+  let v = 0;
+  for (const [i, j] of m.edges) {
+    const a = m.nodes[i], b = m.nodes[j], l = Math.hypot(a[0] - b[0], a[1] - b[1]), r1 = rAt(a[1]), r2 = rAt(b[1]);
+    v += Math.PI / 3 * l * (r1 * r1 + r1 * r2 + r2 * r2);
+  }
+  return v;
 }
-export function stickLuck(seed) { const r = rng(seed, 0x85EBCA6B)(); return r < .25 ? -1 : r >= .75 ? 1 : 0; }
-export const stickRarity = (seed, shapeScore) => Math.max(1, Math.min(5, baseRarity(shapeScore) + stickLuck(seed)));
 
-const clampMul = v => Number.isFinite(+v) ? Math.max(LO, Math.min(HI, +v)) : 1;
-/** rules.rarityMul cleaned up: 5 numbers in [0.7, 1.3] (anything else falls back to 1). */
-export const cleanRarityMul = m => RARITY_MUL.map((d, i) => Array.isArray(m) ? clampMul(m[i] ?? d) : d);
-
-/** {hp, power, speed, charge}: each in [0.7, 1.3], their mean exactly rarityMul[rarity-1]. */
-export function stickStats(seed, rarity, rarityMul = RARITY_MUL) {
-  const m = cleanRarityMul(rarityMul)[Math.max(1, Math.min(5, Math.round(rarity) || 1)) - 1];
-  const r = rng(seed, 0xC2B2AE35);
-  let d = STATS.map(() => r() * 2 - 1);
-  const avg = d.reduce((a, b) => a + b) / 4; d = d.map(x => x - avg); // zero mean: the mean stays m
-  const big = Math.max(...d.map(Math.abs)) || 1; d = d.map(x => x / big); // largest deviation = 1
-  // spread 0.1..0.3, shrunk so the largest stat still fits in [0.7, 1.3]
-  let s = .1 + .2 * r();
-  for (const x of d) if (x > 0) s = Math.min(s, (HI - m) / x); else if (x < 0) s = Math.min(s, (LO - m) / x);
-  return Object.fromEntries(STATS.map((k, i) => [k, Math.max(LO, Math.min(HI, m + s * d[i]))]));
+// Balance: a bigger stick hits harder and throws a little slower. With k = volume / REF_VOLUME, power = k^0.3 and speed = k^-0.15, so
+// power x speed² stays 1: a slower ball is easier to dodge, roughly by its speed squared (shortcut: a guess, tune on play tests).
+// k is held to [1/4, 4] (power 0.66..1.52, speed 1.23..0.81). REF_VOLUME: the middle of the first real scans (235-573 cm³).
+export const REF_VOLUME = 350e-6; // m³
+export function statsFromVolume(v) {
+  const k = Math.min(4, Math.max(.25, (+v || REF_VOLUME) / REF_VOLUME));
+  return { power: +(k ** .3).toFixed(2), speed: +(k ** -.15).toFixed(2) };
 }

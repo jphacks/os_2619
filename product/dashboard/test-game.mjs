@@ -179,10 +179,10 @@ scenario('ボタンで撃つとき（棒が動いていない）は、小は体�
 });
 
 // ---- 溜めのリスク ----
-scenario('今の溜め時間は 1 秒で中、2.5 秒で大', () => {
-  eq(RULES.t1, 1, '中になる秒数'); eq(RULES.t2, 2.5, '大になる秒数');
+scenario('今の溜め時間は 0.7 秒で中、2 秒で大（どの棒も同じ）', () => {
+  eq(RULES.t1, .7, '中になる秒数'); eq(RULES.t2, 2, '大になる秒数');
   const S = setup({ rules: { t1: RULES.t1, t2: RULES.t2 } }); S.fight(); S.charge('A');
-  S.run(.9); eq(S.A.tier, 's', '0.9 秒'); S.run(.2); eq(S.A.tier, 'm', '1.1 秒'); S.run(1.5); eq(S.A.tier, 'l', '2.6 秒'); eq(S.A.charge, 1, 'メーター');
+  S.run(.6); eq(S.A.tier, 's', '0.6 秒'); S.run(.2); eq(S.A.tier, 'm', '0.8 秒'); S.run(1.1); eq(S.A.tier, 'm', '1.9 秒'); S.run(.2); eq(S.A.tier, 'l', '2.1 秒'); eq(S.A.charge, 1, 'メーター');
 });
 scenario('歩きながら棒を回し続けると、3m 動いても溜めは続き、中を撃てる', () => {
   const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); S.charge('A');
@@ -253,11 +253,26 @@ scenario('棒が水平より下で回しても溜まらず、上なら溜まる�
   aim(-.3); for (let i = 0; i < 4; i++) { S.charge('A'); S.run(.5); }
   eq(S.A.charging, false, '溜め中に下向きで回し続けたあと');
 });
-scenario('回避とガードのセンサー判定だけでは何も起きない（ガードは棒の姿勢で決まる）', () => {
+scenario('ガードのセンサー判定だけでは何も起きない（ガードは棒の姿勢で決まる）', () => {
   const S = setup(); S.fight();
-  S.g.onSensed({ slot: 'B', name: 'Guard' }); S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'left', speed: 1.5 });
+  S.g.onSensed({ slot: 'B', name: 'Guard' });
   S.swing('A'); S.run(1);
-  eq(S.B.hp, 95, 'B の HP（無敵なし）');
+  eq(S.B.hp, 95, 'B の HP');
+});
+scenario('回避（横の加速度）でキャラが横へ素早く飛んで傾き、ゆっくり元の位置へ戻る', () => {
+  const S = setup(); S.fight(); S.run(.1);
+  const x0 = S.B.chest.clone();
+  S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'right', side: 1, acc: 9 });
+  S.run(.16); const d = S.B.chest.distanceTo(x0);
+  if (!(d > .3 && d < .6)) throw new Error(`0.16 秒後のずれ ${d.toFixed(2)} m`);
+  if (!(S.B.lean > .2)) throw new Error(`傾き ${S.B.lean}`);
+  S.run(.7); const mid = S.B.chest.distanceTo(x0); if (!(mid > .05 && mid < d)) throw new Error(`戻る途中 ${mid.toFixed(2)} m`);
+  S.run(.8); if (!(S.B.chest.distanceTo(x0) < .01 && !S.B.lean)) throw new Error('元の位置に戻らない');
+});
+scenario('回避で弾の通り道から外れると当たらない', () => {
+  const S = setup(); S.fight();
+  S.swing('A'); S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'left', side: -1, acc: 9 }); S.run(1.5);
+  eq(S.B.hp, 100, 'B の HP（よけた）');
 });
 // B holds the stick level across the body (真一文字): pointing along z, square to the facing (-x)
 const guardB = S => (S.wob.B = false, S.g.ingest)({ type: 'truth', slot: 'B', chest: [1.2, 1.3, 0], yaw: Math.PI, base: [1, 1.2, -.4], dir: [0, 0, 1] });
@@ -503,36 +518,39 @@ scenario('回すのをやめると溜めはその量で止まって保持され�
 });
 
 // ---- 割り当てた棒（server.mjs 'sticks'）: 倍率 1 = 今のルール ----
-const stick = (element, stats = {}) => ({ id: 'x', name: 'テスト棒', seed: 1, rarity: 3, element, stats: { hp: 1, power: 1, speed: 1, charge: 1, ...stats }, image: '' });
+const stick = (element, stats = {}) => ({ id: 'x', name: 'テスト棒', seed: 1, element, stats: { power: 1, speed: 1, ...stats }, image: '' });
+// how long after a 小 the other player's HP drops (s), stepping 0.02 s
+const hitAfter = S => { S.swing('A'); const hp = S.B.hp; for (let t = 0; t < 3; t += .02) { S.run(.02); if (S.B.hp < hp) return t; } return Infinity; };
 scenario('棒なし（null）なら今までどおり（HP100・小5・属性は炎と雷）', () => {
   const S = setup(); S.g.setSticks({ A: null, B: null }); S.fight(); S.swing('A'); S.run(1);
   eq(S.A.hpMax, 100, 'A の最大HP'); eq(S.B.hp, 95, 'B の HP'); eq(S.A.element, 'fire', 'A の属性'); eq(S.B.element, 'thunder', 'B の属性');
 });
-scenario('HP 1.3倍の棒なら最大HPが130になる（準備中にすぐ反映）', () => {
+scenario('HP はどの棒でも 100（古い記録に hp の倍率が残っていても効かない）', () => {
   const S = setup(); S.g.setSticks({ A: stick('fire', { hp: 1.3 }), B: null }); S.run(.1);
-  eq(S.A.hpMax, 130, '準備中の A の最大HP'); S.fight();
-  eq(S.A.hp, 130, '試合開始の A の HP'); eq(S.B.hpMax, 100, 'B の最大HP');
+  eq(S.A.hpMax, 100, '準備中の A の最大HP'); S.fight(); eq(S.A.hp, 100, '試合開始の A の HP');
 });
-scenario('攻撃 1.2倍の棒なら、中が24ダメージになる', () => {
+scenario('威力 1.2倍の棒なら、中が24ダメージになる', () => {
   const S = setup(); S.g.setSticks({ A: stick('fire', { power: 1.2 }) }); S.fight(); S.chargeShot('A', 3);
   eq(S.B.hp, 76, 'B の HP');
 });
-scenario('速さ 2倍の棒なら、小の連打の間隔が半分（0.125秒）になる', () => {
+scenario('弾速 2倍の棒なら弾が早く届く。小の連打の間隔は変わらない', () => {
+  const F = setup(); F.g.setSticks({ A: stick('fire', { speed: 2 }) }); F.fight();
+  const N = setup(); N.fight();
+  const fast = hitAfter(F), slow = hitAfter(N);
+  if (!(fast < slow * .7)) throw new Error(`弾速2倍で ${fast.toFixed(2)} 秒、棒なしで ${slow.toFixed(2)} 秒`);
   const S = setup(); S.g.setSticks({ A: stick('fire', { speed: 2 }) }); S.fight();
   for (let i = 0; i < 4; i++) { S.swing('A'); S.run(.15); }
-  const N = setup(); N.fight();
-  for (let i = 0; i < 4; i++) { N.swing('A'); N.run(.15); }
-  eq(S.A.shots, 4, '速さ2倍で0.15秒おき4回の発射数'); eq(N.A.shots, 2, '棒なしの発射数');
+  eq(S.A.shots, 2, '弾速2倍でも0.15秒おき4回のうち撃てるのは2回');
 });
-scenario('溜め時間は棒の溜めの能力によらず決まっている（溜め 2倍の棒でも 3 秒では中）', () => {
-  const S = setup(); S.g.setSticks({ A: stick('fire', { charge: 2 }) }); S.fight(); S.chargeShot('A', 3);
-  eq(S.B.hp, 80, 'B の HP（中1発）');
+scenario('溜めの倍率は効かず、どの棒も 3 秒で大', () => {
+  const S = setup({ rules: { t1: 1, t2: 3 } }); S.g.setSticks({ A: stick('fire', { charge: 2 }) }); S.fight(); S.charge('A');
+  S.run(2.8); eq(S.A.tier, 'm', '2.8 秒'); S.run(.3); eq(S.A.tier, 'l', '3.1 秒');
 });
-scenario('試合中に棒を替えてもすぐ反映され、HPは残りの割合を保つ', () => {
-  const S = setup(); S.fight(); S.A.hp = 50; S.g.setSticks({ A: stick('water', { hp: 1.5 }) }); S.run(.1);
-  eq(S.A.hpMax, 150, '試合中の A の最大HP'); eq(S.A.element, 'water', '試合中の A の属性'); eq(S.A.hp, 75, '残り50%のまま');
+scenario('試合中に棒を替えると属性はすぐ替わり、HP はそのまま', () => {
+  const S = setup(); S.fight(); S.A.hp = 50; S.g.setSticks({ A: stick('water') }); S.run(.1);
+  eq(S.A.hpMax, 100, '試合中の A の最大HP'); eq(S.A.element, 'water', '試合中の A の属性'); eq(S.A.hp, 50, 'HP はそのまま');
   S.g.command({ cmd: 'reset' });
-  eq(S.A.hpMax, 150, 'リセット後の A の最大HP'); eq(S.A.hp, 150, 'リセット後は満タン');
+  eq(S.A.hp, 100, 'リセット後は満タン');
 });
 scenario('水と風の棒でも撃ち合い・反射・溜めが動く', () => {
   const S = setup(); S.g.setSticks({ A: stick('water'), B: stick('wind') }); S.fight();

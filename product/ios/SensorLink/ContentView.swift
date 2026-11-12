@@ -1,13 +1,12 @@
 import SwiftUI
-import WebKit
 
 /// Camera picture with the detected tags drawn on top, the status lines, and the three buttons (IMU / Calibrate / LAN).
 struct ContentView: View {
     @EnvironmentObject var model: Model
     @State private var showImu = false
     @State private var showLan = false
-    @State private var showStick = false
     @State private var showScan = false
+    @State private var showSaved = false
 
     var body: some View {
         ZStack {
@@ -36,8 +35,6 @@ struct ContentView: View {
                     Button("Calibrate") { model.calibrate() }
                     Button("LAN") { showLan = true }
                     Button(model.scanning ? "Finish" : "Scan") { showScan = true }
-                    Button("枝") { showStick = true }
-                        .disabled(model.inMatch) // no stick changes during a match
                 }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity)
@@ -49,7 +46,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showImu) { ImuSheet().environmentObject(model) }
         .sheet(isPresented: $showLan) { LanSheet().environmentObject(model) }
-        .sheet(isPresented: $showStick) { StickSheet(url: URL(string: "http://\(model.host):\(model.port)/sticks.html")!).environmentObject(model) }
+        .sheet(isPresented: $showSaved) { SavedScansSheet().environmentObject(model) }
         .alert(model.scanning ? "Finish the scan?" : "Scan the stick", isPresented: $showScan) {
             if model.scanning {
                 Button("Send to PC") { model.scanFinish() }
@@ -57,6 +54,7 @@ struct ContentView: View {
                 Button("Keep scanning", role: .cancel) {}
             } else {
                 Button("Start") { model.scanStart() }
+                Button("Saved (\(model.scan.saved().count))") { showSaved = true }
                 Button("Cancel", role: .cancel) {}
             }
         } message: { Text(scanMessage) }
@@ -64,7 +62,7 @@ struct ContentView: View {
 
     // The stick scan (Scan.swift; the same words as the Android app)
     private var scanMessage: String {
-        if model.scanning { return "\(model.scan.count) pictures. The PC needs 6 at least; more angles give a better shape." }
+        if model.scanning { return "\(model.scan.count) pictures. The PC needs 6 at least; more angles give a better shape. They are also saved on this phone." }
         return "The PC turns photos into a 3D model of your stick's shape. Open the PC dashboard first (connection screen).\n\n" +
             "1. Lay the magic circle flat and lay the stick straight across its middle, its TIP toward tag T0 (the top of the poster).\n" +
             "2. Keep anything else that is not black or white off the circle (hands, feet, bags). Don't move the circle or the stick from now on.\n" +
@@ -140,6 +138,33 @@ struct ImuSheet: View {
     }
 }
 
+/// The scans saved on this phone (Scan.saved): tap one to send it to the PC again, swipe to delete (the same as Android's Saved).
+struct SavedScansSheet: View {
+    @EnvironmentObject var model: Model
+    @Environment(\.dismiss) private var dismiss
+    @State private var files: [URL] = []
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section(footer: Text("Tap one to send it to the PC again; swipe left to delete.")) {
+                    if files.isEmpty { Text("No saved scans yet") }
+                    ForEach(files, id: \.self) { u in
+                        Button(model.scan.label(u)) { model.resendScan(u); dismiss() }
+                    }
+                    .onDelete { idx in
+                        for i in idx { try? FileManager.default.removeItem(at: files[i]) }
+                        files = model.scan.saved()
+                    }
+                }
+            }
+            .navigationTitle("Saved scans")
+            .navigationBarItems(trailing: Button("Close") { dismiss() })
+            .onAppear { files = model.scan.saved() }
+        }
+    }
+}
+
 struct LanSheet: View {
     @EnvironmentObject var model: Model
     @Environment(\.dismiss) private var dismiss
@@ -168,40 +193,4 @@ struct LanSheet: View {
         }
         .onAppear { host = model.host; port = String(model.port) }
     }
-}
-
-/// The PC's branch-scan page (sticks.html) inside the app: its photo button opens the camera, and the page measures and uploads.
-struct StickSheet: View {
-    let url: URL
-    @EnvironmentObject var model: Model
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationView {
-            Group {
-                if model.lanUp {
-                    WebView(url: url)
-                } else {
-                    VStack(spacing: 12) {
-                        Text("PC につながっていません").font(.headline)
-                        Text("閉じて LAN を開き、PC の IP とポートを入れてください。\n今の行き先: \(url.host ?? "") : \(url.port ?? 0)")
-                            .font(.subheadline).foregroundColor(.secondary).multilineTextAlignment(.center)
-                    }.padding()
-                }
-            }
-                .navigationTitle("枝をスキャン")
-                .navigationBarTitleDisplayMode(.inline)
-                .navigationBarItems(trailing: Button("閉じる") { dismiss() })
-        }
-    }
-}
-
-struct WebView: UIViewRepresentable {
-    let url: URL
-    func makeUIView(context: Context) -> WKWebView {
-        let v = WKWebView()
-        v.load(URLRequest(url: url))
-        return v
-    }
-    func updateUIView(_ v: WKWebView, context: Context) {}
 }

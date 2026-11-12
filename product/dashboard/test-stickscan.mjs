@@ -1,10 +1,13 @@
-// Stick scan (public/stickscan.js) on synthetic pictures: a black and white printed floor and a natural 0.9 m stick (brown bark with grey
-// patches, dark streaks, a pale knot) lying on it with its shadow, tip toward
+// Stick scan (public/stickscan.js) on synthetic pictures: the real mahoujin print (public/mahoujin-design.bin.gz) on the floor, distorted
+// by up to ~9 mm as a glued-up poster is (buildStick matches the print to the design), carpet round it, and a natural 0.9 m stick (dark
+// grey bark as dark as the print's lines, with darker streaks and a pale knot: only the design tells it from the print) lying on it with
+// its shadow, tip toward
 // -z: tapered (r 15 mm at the grip to 8 mm at the tip), a knot (+6 mm) at 30 %, bowed 25 mm sideways, and a 22 cm side branch (a Y)
 // leaving it at 45 %. Many angles, noise, a warm white balance that differs per picture. Checks the cameras from the mahoujin's tag
 // corners, then the model's length, the branch, the thickness at both ends, the bow and which end is the tip.   node test-stickscan.mjs
 process.env.MARKER = 'rune';
-const W = await import('./public/world.js'), { buildStick, viewCamera } = await import('./public/stickscan.js');
+const W = await import('./public/world.js'), { buildStick, viewCamera, parseDesign } = await import('./public/stickscan.js');
+const design = parseDesign((await import('node:zlib')).gunzipSync((await import('node:fs')).readFileSync(new URL('./public/mahoujin-design.bin.gz', import.meta.url))));
 let fails = 0;
 const check = (ok, msg) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); if (!ok) fails++; };
 
@@ -18,12 +21,13 @@ function camAt(az, el, dist, target = [0, 0, 0]) {
   const z = norm(target.map((v, i) => v - O[i])), x = norm(cross(z, [0, 1, 0])), y = cross(z, x);
   return { pose: W.pose(W.fromCols(x, y, z), O), f: F, w: IW, h: IH };
 }
-// the floor: white paper with black rings and spokes (like the mahoujin's lines), a grey floor round it
+// the floor: the print, shifted by a smooth few-mm warp (sheets glued off, paper stretched), carpet round the circle
+const warp = (x, z) => [.006 * Math.sin(3 * x + 1) + .003, .005 * Math.cos(4 * z) - .002];
 function floorRGB(x, z) {
-  const r = Math.hypot(x, z), a = Math.atan2(z, x);
-  if (r > .62) return [110, 110, 110];
-  const line = [.15, .3, .45, .58].some(R => Math.abs(r - R) < .004) || (r > .15 && Math.abs(((a / (2 * Math.PI) * 12) % 1 + 1) % 1 - .5) * r * 2 * Math.PI / 12 < .0025);
-  return line ? [30, 30, 30] : [235, 235, 235];
+  const [wx, wz] = warp(x, z), u = Math.round(design.cx - (z + wz) * 1000 / W.RUNE_SCALE), v = Math.round(design.cy + (x + wx) * 1000 / W.RUNE_SCALE);
+  if (Math.hypot(x, z) > design.r * W.RUNE_SCALE / 1000) return Math.sin(x * 400) * Math.cos(z * 350) > .3 ? [120, 108, 95] : [96, 88, 78];
+  const ink = u >= 0 && v >= 0 && u < design.w && v < design.h ? design.ink[v * design.w + u] / 255 : 0, l = 235 - 205 * ink;
+  return [l, l, l];
 }
 // the stick: a chain of capsules along a bowed centre line, resting on the floor (centre height = radius)
 const A0 = [.05, .45], A1 = [-.05, -.45], SL = Math.hypot(A1[0] - A0[0], A1[1] - A0[1]);
@@ -47,13 +51,13 @@ function capsule(ro, rd, { a, b, r }) { // ray / capsule (iq): distance or -1
   h = b2 * b2 - c2; return h > 0 ? -b2 - Math.sqrt(h) : -1;
 }
 const LIGHT = norm([.4, 1, .3]);
-// a natural stick: brown bark with grey patches, dark streaks, and a pale knot
+// a natural stick: dark grey bark (no colour to go by), darker streaks, a pale knot
 function bark([x, y, z]) {
   const u = ((x - A0[0]) * AX[0] + (z - A0[1]) * AX[1]) / SL, w = Math.sin(x * 140 + y * 300) * Math.cos(z * 90 - y * 200);
-  if (Math.abs(u - .3) < .02) return [200, 182, 150];
-  if (w > .45) return [118, 115, 108];
-  if (w < -.6) return [70, 48, 30];
-  return [140, 92, 52];
+  if (Math.abs(u - .3) < .02) return [200, 190, 175];
+  if (w > .45) return [110, 106, 100];
+  if (w < -.6) return [52, 48, 45];
+  return [84, 79, 74];
 }
 const BOUNDS = [{ a: [A0[0], .012, A0[1]], b: [A1[0], .012, A1[1]], r: .06 }, { a: [B0[0], .012, B0[2]], b: [B1[0], .012, B1[2]], r: .04 }]; // around the stick and the branch: most rays miss them
 function hitStick(O, d) {
@@ -109,8 +113,10 @@ check(n >= 20, `cameras from the tags in ${n} / 24 views`);
 check(worst < .02, `camera position error from the tags ${(worst * 1000).toFixed(1)} mm (< 20)`);
 console.log(`rendered in ${Date.now() - t0} ms`);
 
-const t1 = Date.now(), m = buildStick(views);
-console.log(`built in ${Date.now() - t1} ms: length ${m.length} m, ${m.voxels} voxels, ${m.nodes.length} nodes, r ${m.r.map(v => (v * 1000).toFixed(1)).join(' / ')} mm`);
+let plain = 'no model'; try { plain = `${(buildStick(views).length * 100).toFixed(0)} cm`; } catch (e) { plain = e.message; }
+console.log(`without the design (colour and brightness only): ${plain}`);
+const t1 = Date.now(), m = buildStick(views, design);
+console.log(`built in ${Date.now() - t1} ms (print matched, worst shift ${m.printShiftMm} mm): length ${m.length} m, ${m.voxels} voxels, ${m.nodes.length} nodes, r ${m.r.map(v => (v * 1000).toFixed(1)).join(' / ')} mm`);
 const LEN = SL + rTrue(0) + rTrue(1); // the capsules' round ends stick out by their radius
 check(Math.abs(m.length - LEN) < .01, `length ${m.length.toFixed(3)} m (true ${LEN.toFixed(3)}, end to end)`);
 check(m.edges.every(([i, j]) => i !== j && m.nodes[i] && m.nodes[j]) && m.nodes.every(n => n.length === 2 && n.every(Number.isFinite)), 'nodes and edges complete');

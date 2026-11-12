@@ -37,11 +37,12 @@ const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
 const DEFAULTS = {
   posSrc: 'auto', hand: 'R', aim: 'motion', stickLen: { A: W.STICK.len, B: W.STICK.len },
   minimap: true, debug: false, pip: false, mirrorX: false, mirrorY: false, swordFlip: false, fovC: 40, viewVer: 2, fpv: null, drone: 'fixed', videoSrc: 'remote', tagMode: 4, tagMount: 'floor', tagHeight: 1.0, knownFov: null,
-  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 7, fxStyle: 'smash', backdrop: 'court', timeOfDay: DEFAULT_HOUR,
+  matchSec: 60, test: false, useTruth: false, screen: 'connect', rules: RULES, rulesVer: 8, fxStyle: 'smash', backdrop: 'court', timeOfDay: DEFAULT_HOUR,
   zoom: { fixed: 1, auto: 1, orbit: 1, chaseA: 1, chaseB: 1, top: 1, side: 1 }, // game screen: zoom per camera mode (free: the mouse wheel)
   chara: { A: 'wizard', B: 'wizard' }, // who each player is drawn as (field3d.js CHARAS): the wizard, or the special character チャオベン
   mimic: true, // the avatars copy the poses MediaPipe finds in phone C's picture (screen 3, and the small 3D window of screen 4)
   swing: SWING_DEFAULT, // the sword swing heard on the player's phone (swing-sense.js): on, and the 小 / 中 / 大 lines in °/s
+  crt: true, // screens 3 and 4 look like an old CRT screen: fewer lines, scanlines, a little bleed and glow (stage.js), 30 fps
 };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('pd-cfg')) ?? {}; } catch { return {}; } })();
 const cfg = { ...DEFAULTS, ...saved, swing: { ...SWING_DEFAULT, ...saved.swing }, stickLen: { ...DEFAULTS.stickLen, ...saved.stickLen }, zoom: { ...DEFAULTS.zoom, ...saved.zoom }, chara: { ...DEFAULTS.chara, ...saved.chara } };
@@ -53,9 +54,9 @@ if ((saved.rulesVer ?? 0) < 2) cfg.aim = 'motion'; // ...and the aim from the ti
 if ((saved.rulesVer ?? 0) < 4) cfg.fxStyle = 'smash'; // the program-drawn set is the one used in the show (10/18)
 if ((saved.rulesVer ?? 0) < 5) cfg.drone = 'fixed'; // the game screen starts on phone C's view, the same as screen 4 (10/18)
 if ((saved.rulesVer ?? 0) < 6) cfg.backdrop = 'court'; // the game screen stands in the school courtyard (11/3)
-cfg.rulesVer = 7;
+cfg.rulesVer = 8;
 cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg }, size: { ...RULES.size, ...saved.rules?.size }, speed: speedRule(saved.rules?.speed ?? RULES.speed) };
-if ((saved.rulesVer ?? 0) < 7) { cfg.rules.t1 = RULES.t1; cfg.rules.t2 = RULES.t2; } // the charge takes half as long (11/4): a saved 2 / 5 s must not hide it
+if ((saved.rulesVer ?? 0) < 8) { cfg.rules.t1 = RULES.t1; cfg.rules.t2 = RULES.t2; } // the charge takes half as long (11/4), then 2/3 of 1 / 3 s (11/12): a saved older time must not hide it
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
 const axis = { A: W.STICK.axis, B: W.STICK.axis }; // the IMU's +Y points to the stick tip, on both sticks
 
@@ -70,14 +71,20 @@ const vsrc = createVideoSource(video, { onChange: () => { stage?.resize(); } });
 
 let sfx = null; // sound: loaded lazily so a failing module never stops the picture
 import('./audio.js').then(M => { sfx = M.createAudio(); sfx.load(); try { const v = JSON.parse(localStorage.getItem('pd-vol')); if (v) for (const [k, x] of Object.entries(v)) sfx.setVolume(k, x); } catch {} }).catch(e => console.warn('audio', e));
-/** A game sound that concerns these players (their shot, guard, failed charge, a hit they took or landed) plays on their
- *  phones as well: the same files cut / pitched / faded as here (audio.js describe), sent through the server ({ type: 'sfx' }).
- *  The phone plays at gain × PHONE_REF: the loudest sound (大's hit, MIX.special +3 dB) at full scale. */
+/** A game sound that concerns these players (their guard, failed charge, a hit they took) plays on their phones as well: the
+ *  same files cut / pitched / faded as here (audio.js describe), sent through the server ({ type: 'sfx' }).
+ *  The phone plays at gain × PHONE_REF: the loudest sound (大's hit, MIX.special +3 dB) at full scale.
+ *  The shooter's phone has its own sounds (11/12), apart from what the one hit hears: myShot = 小 fired (my_shot), myLaunch =
+ *  中 / 大 fired (my_launch, 大 lower), landed = a 中 / 大 of theirs hit: the same as the one hit hears (the hit + damage). */
 const PHONE_REF = Math.pow(10, -3 / 20), PHONE_FILE = { guardUp: 'guard', guardReflect: 'guard_reflect' };
+const PHONE_OWN = { myShot: () => [{ file: 'my_shot', gain: .8, rate: 1 }], myLaunch: tier => [{ file: 'my_launch', gain: tier === 'l' ? 1 : .8, rate: tier === 'l' ? .8 : 1 }] };
 function phoneSound(slots, kind, ...args) {
   if (!sfx || sfx.muted) return;
+  if (PHONE_OWN[kind]) { for (const slot of new Set(slots)) hub.send?.({ type: 'sfx', slot, voices: PHONE_OWN[kind](...args) }); return; }
+  const landed = kind === 'landed'; if (landed) kind = 'hit';
   const voices = kind === 'chargeFail' ? [] : sfx.describe(kind, ...args).map(v => ({ file: PHONE_FILE[v.name] ?? v.name, gain: Math.min(1, +(v.gain * PHONE_REF).toFixed(3)),
-    rate: +v.rate.toFixed(3), offset: v.offset, dur: v.dur, rel: v.rel, fade: v.fade }));
+    rate: +v.rate.toFixed(3), offset: v.offset, dur: v.dur, rel: v.rel, fade: v.fade })).slice(0, landed ? 3 : 4);
+  if (landed) voices.push({ file: 'damage', gain: 1, rate: 1 }); // the one hit hears it from HitSound (flash)
   if (kind !== 'chargeFail' && !voices.length) return;
   for (const slot of new Set(slots)) hub.send?.({ type: 'sfx', slot, ...(kind === 'chargeFail' ? { kind } : { voices }) });
 }
@@ -197,7 +204,7 @@ gameCtrl.innerHTML = `
   <div class="players2">${['A', 'B'].map(s => `
     <div class="pc" data-s="${s}"><div class="row" style="justify-content:space-between"><b class="el" style="color:var(--${s})"></b><span class="num hpv"></span></div>
       <div class="facts"></div>
-      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="2.5 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
+      <div class="row" style="margin-top:4px"><button data-act="shoot">小（溜めなし）</button><button data-act="charge">押して溜め</button><button data-act="special" title="2 秒あまり溜めてから撃つ（溜め中は動くと失敗）">大（溜めて撃つ）</button></div></div>`).join('')}
   </div>
   <h3>振りの音（スマホ）</h3>
   <div class="row"><button id="swingOn" title="棒を速く振ると、そのプレイヤーのスマホから刀を振る音が鳴る。振りが大きいほど大きな音">刀の振り音を鳴らす</button><button id="swingTry" title="この PC で中の大きさを鳴らす">試聴（PC）</button></div>
@@ -235,7 +242,7 @@ ${['s', 'm', 'l'].map(t => `<label title="${TIER_JA[t]}の弾の速さ。1 が�
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
   <div class="row" id="zoomRow"><label title="今のカメラのズーム。カメラごとに覚える。1 が元の大きさ">ズーム <input id="zoom" type="range" min="0.5" max="3" step="0.05" style="width:130px;vertical-align:middle"> <span id="zoomOut" class="num"></span> 倍</label><button id="zoomReset">1 倍に戻す</button><span class="muted" id="zoomFor" style="font-size:12px"></span></div>
   <h3>表示</h3>
-  <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="debug">デバッグ</button></div>
+  <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="crt" title="試合画面と最終映像を昔のブラウン管テレビ風に：解像度を下げ、走査線と少しのにじみ・光り、30 fps">ブラウン管風</button><button data-tog="debug">デバッグ</button></div>
   <div class="row"><span class="muted" style="font-size:12px">背景</span><span class="seg" id="backdrops"><button data-backdrop="court">中庭</button><button data-backdrop="rock">岩場</button><button data-backdrop="chaoben">チャオベン劇場</button><button data-backdrop="plain">無地</button></span></div>
   <div class="row"><label title="中庭と岩場の空と光の時刻。動かすと影も付け直す"><span class="muted" style="font-size:12px">時刻</span> <input id="tod" type="range" min="0" max="24" step="0.25" style="width:130px;vertical-align:middle"> <span id="todOut" class="num"></span></label><span class="seg" id="todPresets">${PRESETS.map(([n, h]) => `<button data-tod="${h}">${n}</button>`).join('')}</span></div>
   <div class="row"><button id="todAuto" title="空の時刻がひとりでに進む。プリセットを押すと、そこから進む">時刻を自動で進める</button><span class="seg" id="todSpeeds">${TOD_SPEEDS.map(([n, v]) => `<button data-todspeed="${v}" title="1分で${v}時間">${n}</button>`).join('')}</span></div>
@@ -388,7 +395,7 @@ drawer.innerHTML = `
   <section><h3>音</h3>
     ${['master:全体', 'bgm:BGM', 'sfx:効果音', 'amb:環境音'].map(x => { const [k, n] = x.split(':'); return `<label class="f"><span>${n}</span><input type="range" min="0" max="1" step="0.01" data-vol="${k}"><output data-volout="${k}"></output></label>`; }).join('')}
     <div class="row"><button id="mute">消音</button><button id="bgmPreview" title="M キーでも押せる。試合の BGM を、試合とは関係なく流す。試合が始まると自動で止まり、試合の BGM が頭から流れる">試合 BGM を流す<kbd>M</kbd></button><span class="note" id="audioInfo"></span></div>
-    <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大'], ['shotWater', '水の発射'], ['hitWater', '水の命中'], ['specialWater', '水の大'], ['shotWind', '風の発射'], ['hitWind', '風の命中'], ['specialWind', '風の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}<button id="damageSound" title="ダメージを受けたときに、スマホ A・B がライトと一緒に鳴らす音">被弾（スマホの音）</button></div></section>
+    <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大'], ['shotWater', '水の発射'], ['hitWater', '水の命中'], ['specialWater', '水の大'], ['shotWind', '風の発射'], ['hitWind', '風の命中'], ['specialWind', '風の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}<button id="damageSound" title="ダメージを受けたときに、スマホ A・B がライトと一緒に鳴らす音">被弾（スマホの音）</button><button data-own="my_shot" title="小を撃った人のスマホが鳴らす音">小の発射（撃った人のスマホ）</button><button data-own="my_launch" title="中・大を撃った人のスマホが鳴らす音（大は低く）">溜め技の発射（撃った人のスマホ）</button></div></section>
   <section><h3>キー操作</h3><table class="keys">
     <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ試合開始（撃った瞬間に相手を狙う）・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
     <tr><td>Space / Enter</td><td>A / B が小の攻撃（溜めなし）</td></tr><tr><td>Q / P 長押し</td><td>A / B が溜める（離した時の溜め時間で小・中・大）</td></tr>
@@ -419,6 +426,7 @@ for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
 };
 
 $('#damageSound').onclick = () => { if (!sfx) return; sfx.unlock?.(); sfx.play('damage'); };
+for (const b of drawer.querySelectorAll('[data-own]')) b.onclick = () => { if (!sfx) return; sfx.unlock?.(); sfx.play(b.dataset.own); };
 
 // ---- keys ----
 const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 2: { cmd: 'phase', phase: 'demo' }, 3: { cmd: 'phase', phase: 'fight' }, 4: { cmd: 'pause' }, r: { cmd: 'reset' },
@@ -570,6 +578,8 @@ function applyMimic(on) {
 }
 
 // ---- main loop ----
+const CRT_FPS = 30;
+let stageDt = 0; // time since the stage last drew
 let last = performance.now() / 1000, fps = 60, lastSlow = 0, est = PA.estimate(nowS()), dummyDrawnAt = -1e9;
 function frame(ts) {
   requestAnimationFrame(frame);
@@ -599,8 +609,11 @@ function frame(ts) {
   if (mimicOn || layersOn) vision.setHints(visionHints());
   applyMimic(mimicOn);
   watchEnd();
-  if (screen === 'game' || screen === 'final') { stage.render(dt, game, est, koShow.state(dt)); updateHud(); }
-  else stage.fx.step(dt); // effects keep their time even when nobody looks
+  stageDt += dt;
+  if (screen === 'game' || screen === 'final') {
+    if (!cfg.crt || stageDt >= 1 / CRT_FPS - .004) { stage.render(stageDt, game, est, koShow.state(stageDt)); stageDt = 0; } // the CRT look draws 30 frames a second
+    updateHud();
+  } else { stage.fx.step(stageDt); stageDt = 0; } // effects keep their time even when nobody looks
   if (screen === 'final') finalControls.updateStatus();
   if (screen === 'space') space.frame(nowS(), est);
   if (screen === 'connect') connect.frame();

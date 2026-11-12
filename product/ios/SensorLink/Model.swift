@@ -23,7 +23,6 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     @Published var preview: UIImage?
     @Published var marks: [TagMark] = []
     @Published var toast: String?
-    @Published var inMatch = false   // a match runs on the PC: 枝 is greyed out
     @Published var lanUp = false
     @Published var found: [ImuDevice] = []
     /// A hit: the whole screen blinks pure #FF0000 (ContentView) for as long as the hit lasts
@@ -286,8 +285,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     private func refresh() {
-        let up = link.status == "connected", m = up && ["countdown", "fight"].contains(link.phase)
-        if inMatch != m { inMatch = m }
+        let up = link.status == "connected"
         if lanUp != up { lanUp = up }
         lock.lock()
         let ar = arError ?? arText
@@ -309,6 +307,10 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     // MARK: stick scan (Scan.swift); the button and the instructions are in ContentView
 
     func scanStart() { scan.start(); scanning = true }
-    func scanFinish() { scan.finish(); scanning = false; showToast("Sent: the PC builds the model") }
+    func scanFinish() {
+        scan.finish(); scanning = false
+        showToast(lanUp ? "Sent: the PC builds the model (saved on the phone too)" : "PC not connected: saved on the phone. Send it later from Scan > Saved")
+    }
+    func resendScan(_ u: URL) { showToast(lanUp && scan.resend(u) ? "Sent: the PC builds the model" : "Not sent: connect to the PC first (LAN)") }
     func scanCancel() { scan.cancel(); scanning = false }
 }

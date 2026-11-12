@@ -29,7 +29,7 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷', water: '水', wind: '�
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 1, t2: 2.5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: { s: 1, m: 1, l: 1 } }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × per tier (an old single number counts for all three)
+export const RULES = { t1: .7, t2: 2, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: { s: 1, m: 1, l: 1 } }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × per tier (an old single number counts for all three)
 /** The ball-speed rule as { s, m, l }: an older saved single number (one speed for every tier) counts for all three. */
 export const speedRule = v => typeof v === 'object' && v ? { s: +v.s || 1, m: +v.m || 1, l: +v.l || 1 } : { s: +v || 1, m: +v || 1, l: +v || 1 };
 // how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
@@ -69,16 +69,17 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   let winner = null;
   const canAct = () => !match.paused && match.phase === 'fight';
   const rules = () => cfg.rules ?? RULES;
-  // assigned sticks (server.mjs 'sticks'): stat multipliers, 1 = the global rule. Taken on at reset / while setting up, never mid-fight
+  // assigned sticks (server.mjs 'sticks'): power and speed multipliers (stick-stats.js), 1 = the global rule; HP and the charge times are
+  // the rules' alone, the same for every stick. Taken on at reset / while setting up, never mid-fight
   const assigned = { A: null, B: null };
   const st = (p, k) => Math.min(3, Math.max(.3, +p?.stick?.stats?.[k] || 1)); // clamped: a bad record never stalls or breaks a match
-  const hpOf = p => Math.round((rules().hp ?? RULES.hp) * st(p, 'hp'));
+  const hpOf = () => Math.round(rules().hp ?? RULES.hp);
   const takeStick = p => { p.stick = assigned[p.slot]; p.element = p.stick?.element ?? ELEMENT[p.slot]; };
   const MOVE_GRACE = .5; // s added to chargeHold while the player steps or turns. Measured: while circling, Charge events stop for at most 1 s; a longer wait keeps a stopped charge (and the vibration) alive while just walking
   const CHARGE_LIVE = .4; // s after a Charge event the circling counts as still going (actions.js sends one every ~.15 s while it does)
   const speedMul = tier => speedRule(rules().speed)[tier];
   const speedOf = (T, p, tier) => T.speed * speedMul(tier) * st(p, 'speed'); // m/s, the dashboard's ball-speed slider for this tier and the stick applied
-  const t2Of = () => rules().t2; // the charge times are fixed: the stick's 溜め stat does not change them (11/12)
+  const t2Of = () => rules().t2; // the charge times are fixed and the same for every stick (中 1 s, 大 3 s)
   const tierOf = t => t < rules().t1 ? 's' : t < t2Of() ? 'm' : 'l';
   const IMU_SIDE = cross(W.STICK.axis, W.STICK.up);
 
@@ -110,7 +111,21 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     p.base.copy(v3(W.handAt(p.body, p.dir.toArray()))); // the hand swings with the stick, the arm turning at the shoulder
     if (T && cfg.useTruth) { p.base.copy(v3(T.base)); p.dir.copy(v3(T.dir)); }
     p.tip.copy(p.base).addScaledVector(p.dir, cfg.stickLen?.[p.slot] ?? W.STICK.len);
+    dodgeOffset(p);
     shrink(p);
+  }
+  // Dodge (actions.js: a spike of the chest's sideways acceleration): the character leaps DODGE.dist m to that side in DODGE.out s,
+  // leaning into it (p.lean, rad: field3d.js tilts the figure), then drifts back to where the player really is over DODGE.back s.
+  // Shots hit it where it is drawn, so a dodge in time gets out of a shot's way.
+  const DODGE = { dist: .5, out: .15, back: 1.2, lean: 22 * Math.PI / 180 };
+  function dodgeOffset(p) {
+    const d = p.dodge, t = d ? now() - d.t0 : Infinity;
+    if (t > DODGE.out + DODGE.back) { p.dodge = null; p.lean = 0; return; }
+    const k = t < DODGE.out ? 1 - (1 - t / DODGE.out) ** 3 : .5 * (1 + Math.cos(Math.PI * (t - DODGE.out) / DODGE.back)); // fast out, eased back
+    const r = v3(W.app3(p.body.R, [0, 0, 1])).setY(0).normalize().multiplyScalar(d.side * DODGE.dist * k); // the body's right
+    p.body = { R: p.body.R, t: [p.body.t[0] + r.x, p.body.t[1], p.body.t[2] + r.z] };
+    for (const v of [p.chest, p.base, p.tip]) v.add(r);
+    p.lean = d.side * DODGE.lean * k;
   }
   /** The player's character is smaller than a person (W.CHARA_SCALE, cfg.chara): the chest and the hand are drawn in toward the floor
    *  under the chest by its scale, the stick shortened to W.STICK_SCALE, so hits, shots and the drawn figure all agree. p.body stays the person's (full size): field3d.js poses the figure
@@ -161,7 +176,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   /** Fires one projectile of tier 's' | 'm' | 'l' along the aim. 小 is limited to one every rules().rapid s. */
   function shoot(p, tier = 's') {
     if (!canAct()) return false;
-    if (tier === 's' && now() - p.lastShot < rules().rapid / st(p, 'speed')) return false;
+    if (tier === 's' && now() - p.lastShot < rules().rapid) return false;
     p.lastShot = now();
     const T = TIER[tier], s = sfx();
     const dummyTarget = !!getDummyFrame(), homing = dummyTarget || match.mode === 'demo';
@@ -170,8 +185,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         : (cfg.aim ?? 'motion') === 'motion' ? (tier === 's' ? levelAim(p) : motionAim(p) ?? p.dir.clone()) : p.dir.clone();
     p.shots++; if (tier === 'l') p.specials++;
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
-    if (tier === 'l') { s?.special(p.element, panOf(p.tip)); onSound([p.slot], 'special', p.element); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
-    else { s?.shot(p.element, panOf(p.tip), T.power); onSound([p.slot], 'shot', p.element, 0, T.power); drone?.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() }); }
+    if (tier === 'l') { s?.special(p.element, panOf(p.tip)); onSound([p.slot], 'myLaunch', tier); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
+    else { s?.shot(p.element, panOf(p.tip), T.power); onSound([p.slot], tier === 's' ? 'myShot' : 'myLaunch', tier); drone?.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() }); }
     const k = sizeOf(tier);
     // steer: the dummy room keeps turning a shot onto the chest it was drawn at; デモ試合 never does (aimed once, then straight)
     const steer = dummyTarget && match.mode !== 'demo';
@@ -212,7 +227,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const sizeOf = tier => Math.max(.2, Math.min(4, +(rules().size?.[tier] ?? 1) || 1));
   function fxShot(p, tier) { // try-out: aimed at the other player's chest so it always shows the hit too
     const T = TIER[tier], foe = other(p), aim = foe.chest.clone().sub(p.tip).normalize();
-    if (tier === 'l') { sfx()?.special(p.element, panOf(p.tip)); onSound([p.slot], 'special', p.element); } else { sfx()?.shot(p.element, panOf(p.tip), T.power); onSound([p.slot], 'shot', p.element, 0, T.power); }
+    if (tier === 'l') sfx()?.special(p.element, panOf(p.tip)); else sfx()?.shot(p.element, panOf(p.tip), T.power);
+    onSound([p.slot], tier === 's' ? 'myShot' : 'myLaunch', tier); // the shooter's phone: its own launch sounds (app.js phoneSound), not the PC's
     const k = sizeOf(tier);
     shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, test: true, homing: match.mode === 'demo', pos: p.tip.clone(), vel: aim.multiplyScalar(speedOf(T, p, tier)), born: now() });
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
@@ -251,7 +267,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         log(foe.slot, 'guard', `${TIER_JA[s.tier]}にガードを貫通された`);
       }
       if (hit) {
-        fx.hit(s.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.element, panOf(s.pos), T.hit, s.tier); onSound([foe.slot, s.owner.slot], 'hit', s.element, 0, T.hit, s.tier); // both: the one hit and the one who hit
+        fx.hit(s.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.element, panOf(s.pos), T.hit, s.tier); onSound([foe.slot], 'hit', s.element, 0, T.hit, s.tier);
+        if (s.tier !== 's') onSound([s.owner.slot], 'landed', s.element, 0, T.hit, s.tier); // a charged shot landing: the shooter's phone plays what the one hit hears (no light, no buzz); a 小 only had its launch sound
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
         onHit(foe.slot, T.flash); // the phone of the player who was hit lights its torch for this many ms (app.js, server.mjs)
         if (!s.test) damage(foe, s.owner, s.tier, s.mul ?? 1); // try-out shots only show
@@ -282,8 +299,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     sfx()?.chargeFail?.(p.slot); onSound([p.slot], 'chargeFail'); // the charge sound runs backwards and fades instead of stopping dead (the phone's too)
     fx.hit(p.element, p.tip.clone(), .1); showAct(p, '溜め失敗'); log(p.slot, 'charge', `溜め失敗（${why}）`);
   }
-  /** A detector event from actions.js ({ slot, name, dir, power, speed }). Dodge is not part of the game; Guard comes from
-   *  the stick pose every frame (stepGuard: the detector's 1 s hold is too slow for a block). */
+  /** A detector event from actions.js ({ slot, name, dir, power, speed, side }). Dodge makes the character leap aside (dodgeOffset);
+   *  Guard comes from the stick pose every frame (stepGuard: the detector's 1 s hold is too slow for a block). */
   function onSensed(ev) {
     const p = players[ev.slot]; if (!p || !canAct()) return;
     if (ev.name === 'Charge') { // only while the stick is not below horizontal (its IMU elevation; exactly level only happens in scripted tests);
@@ -292,6 +309,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       p.chargeSeen = now(); startCharge(p);
     }
     else if (ev.name === 'Swing') { p.swingAt = now(); if (inFront(p)) attack(p); else log(p.slot, 'shot', '背中側で止めたので撃たない'); }
+    else if (ev.name === 'Dodge' && (ev.side === 1 || ev.side === -1)) { p.dodge = { t0: now(), side: ev.side }; showAct(p, '回避'); log(p.slot, 'dodge', `${ev.side > 0 ? '右' : '左'}へ回避`); }
   }
   /** A swing only fires when the stick stops in front of the body: tip ahead of the chest along the body's facing
    *  (horizontal). A stick that comes to rest behind the back (wind-up, putting it down) is not a shot. */

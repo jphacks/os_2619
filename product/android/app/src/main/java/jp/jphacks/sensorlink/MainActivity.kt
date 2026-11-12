@@ -146,7 +146,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
                 if (!blinking) { hitRed.removeCallbacks(blinkRed); blinkRed.run() } // already blinking: it just goes on longer
             }
         }
-        scan = Scan(link)
+        scan = Scan(link, java.io.File(filesDir, "scans"))
         imu = Imu(this) { s ->
             link.send(JSONObject().put("type", "imu").put("t", link.pcTime(s.wallMs))
                 .put("euler", arr(s.euler)).put("acc", arr(s.acc)).put("gyro", arr(s.gyro))
@@ -358,12 +358,34 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
                 "A photo is taken every half second while 2 or more tags show green; get the whole stick in the picture.\n" +
                 "4. Tap Finish (after about 30 pictures). The model appears on the PC's connection screen and in the game.")
             .setPositiveButton("Start") { _, _ -> scan.start(); b.text = "Finish" }
+            .setNeutralButton("Saved (${scan.saved().size})") { _, _ -> savedScans() }
             .setNegativeButton("Cancel", null).show()
         else AlertDialog.Builder(this).setTitle("Finish the scan?")
-            .setMessage("${scan.n} pictures. The PC needs 6 at least; more angles give a better shape.")
-            .setPositiveButton("Send to PC") { _, _ -> scan.finish(); b.text = "Scan"; Toast.makeText(this, "Sent: the PC builds the model", Toast.LENGTH_LONG).show() }
+            .setMessage("${scan.n} pictures. The PC needs 6 at least; more angles give a better shape. They are also saved on this phone.")
+            .setPositiveButton("Send to PC") { _, _ ->
+                val sent = scan.finish(); b.text = "Scan"
+                Toast.makeText(this, if (sent) "Sent: the PC builds the model (saved on the phone too)"
+                    else "PC not connected: saved on the phone. Send it later from Scan > Saved", Toast.LENGTH_LONG).show()
+            }
             .setNeutralButton("Cancel scan") { _, _ -> scan.cancel(); b.text = "Scan" }
             .setNegativeButton("Keep scanning", null).show()
+    }
+
+    /** The scans saved on this phone (Scan.saved): pick one to send it to the PC again or delete it. */
+    private fun savedScans() {
+        val files = scan.saved()
+        if (files.isEmpty()) { Toast.makeText(this, "No saved scans yet", Toast.LENGTH_SHORT).show(); return }
+        AlertDialog.Builder(this).setTitle("Saved scans")
+            .setItems(files.map { scan.label(it) }.toTypedArray()) { _, i ->
+                val f = files[i]
+                AlertDialog.Builder(this).setTitle(scan.label(f))
+                    .setPositiveButton("Send to PC") { _, _ ->
+                        Toast.makeText(this, if (scan.resend(f)) "Sent: the PC builds the model" else "Not sent: connect to the PC first (LAN)", Toast.LENGTH_LONG).show()
+                    }
+                    .setNeutralButton("Delete") { _, _ -> f.delete(); savedScans() }
+                    .setNegativeButton("Back") { _, _ -> savedScans() }.show()
+            }
+            .setNegativeButton("Close", null).show()
     }
 
     private fun imuDialog() {
