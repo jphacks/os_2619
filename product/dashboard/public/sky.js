@@ -31,12 +31,21 @@ const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a
 const norm = v => { const l = Math.hypot(...v); return v.map(x => x / l); };
 const RAD = Math.PI / 180, SWEEP = 23.3 * RAD; // the sun's turn per hour: from the front right at dawn, behind the camera at noon, to the front left at dusk
 
+/** The share of the windows lit (0-1) at hour h: all of them come on in broad day (on), where the daylight hides it; from dusk (out) they go out one
+ *  by one, the last at midnight; dark until the next day. */
+export const WINDOWS = { on: 9, out: 18.6 };
+export function windowsLit(h) {
+  h = wrap(h);
+  if (h < WINDOWS.on) return 0;
+  if (h < WINDOWS.out) return 1;
+  return (24 - h) / (24 - WINDOWS.out);
+}
 /** The palette at hour h (no directions). */
 export function paletteAt(h) {
   h = wrap(h);
   let i = K.length - 1; while (K[i].h > h) i--;
   const a = K[i], b = K[(i + 1) % K.length], span = wrap(b.h - a.h) || 24, t = wrap(h - a.h) / span;
-  const out = { day: lerp(a.day, b.day, t), stars: lerp(a.stars, b.stars, t), lamp: lerp(a.lamp, b.lamp, t) };
+  const out = { day: lerp(a.day, b.day, t), stars: lerp(a.stars, b.stars, t), lamp: lerp(a.lamp, b.lamp, t), win: windowsLit(h) };
   for (const f of FIELDS) out[f] = a[f].map((v, j) => lerp(v, b[f][j], t));
   return out;
 }
@@ -68,7 +77,7 @@ export function timeOfDay(h, anchor, { minEl = 28 * RAD, sweep = 1 } = {}) {
 export const clock = h => { const m = Math.round(wrap(h) * 60) % 1440; return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
 
 // ---- for the shaders: the uniforms (plain arrays: Three.js takes them for vec3) and the GLSL that reads them ----
-const U = { uTodDay: 'day', uTodStars: 'stars', uTodLamp: 'lamp', uTodHor: 'hor', uTodMid: 'mid', uTodZen: 'zen', uTodGlow: 'glow', uTodCloud: 'cloud', uTodSun: 'sun', uTodAmb: 'amb', uTodHaze: 'haze', uTodSunDir: 'sunDir', uTodMoon: 'moonDir' };
+const U = { uTodDay: 'day', uTodStars: 'stars', uTodLamp: 'lamp', uTodWin: 'win', uTodHor: 'hor', uTodMid: 'mid', uTodZen: 'zen', uTodGlow: 'glow', uTodCloud: 'cloud', uTodSun: 'sun', uTodAmb: 'amb', uTodHaze: 'haze', uTodSunDir: 'sunDir', uTodMoon: 'moonDir' };
 /** One set of uniforms, shared by a look's shaders and the field's floor. */
 export function todUniforms(t = timeOfDay(DEFAULT_HOUR, { x: 0, y: .5, z: .87 })) {
   const u = {}; for (const k in U) u[k] = { value: Array.isArray(t[U[k]]) ? [...t[U[k]]] : t[U[k]] };
@@ -77,7 +86,7 @@ export function todUniforms(t = timeOfDay(DEFAULT_HOUR, { x: 0, y: .5, z: .87 })
 export function applyTod(u, t) { for (const k in U) u[k].value = Array.isArray(t[U[k]]) ? [...t[U[k]]] : t[U[k]]; }
 
 export const TOD_GLSL = `
-uniform float uTodDay, uTodStars, uTodLamp; uniform vec3 uTodHor, uTodMid, uTodZen, uTodGlow, uTodCloud, uTodSun, uTodAmb, uTodHaze, uTodSunDir, uTodMoon;
+uniform float uTodDay, uTodStars, uTodLamp, uTodWin; uniform vec3 uTodHor, uTodMid, uTodZen, uTodGlow, uTodCloud, uTodSun, uTodAmb, uTodHaze, uTodSunDir, uTodMoon;
 vec3 todHaze(vec3 dayHaze) { return mix(uTodHaze, dayHaze, uTodDay); }
 float todHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 float todStars(vec3 d, float time) { // one jittered point a cell, a Gaussian at least a pixel wide, so the stars neither shimmer nor vanish as the view moves

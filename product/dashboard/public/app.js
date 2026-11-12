@@ -328,8 +328,9 @@ showCharas();
 $('#todAuto').onclick = () => { cfg.todAuto = !cfg.todAuto; save(); };
 for (const b of gameCtrl.querySelectorAll('[data-todspeed]')) b.onclick = () => { cfg.todSpeed = +b.dataset.todspeed; save(); };
 const todIn = $('#tod'); // the clock: stage.js hands cfg.timeOfDay to the field every frame, the field bakes the shadows again once it settles
-todIn.oninput = () => { cfg.timeOfDay = +todIn.value; save(); };
-for (const b of gameCtrl.querySelectorAll('[data-tod]')) b.onclick = () => { cfg.timeOfDay = +b.dataset.tod; save(); };
+// picking a time shows it at once, before a match too (the waiting sky moves there; back to setup it is noon again)
+todIn.oninput = () => { cfg.timeOfDay = waitHour = +todIn.value; save(); };
+for (const b of gameCtrl.querySelectorAll('[data-tod]')) b.onclick = () => { cfg.timeOfDay = waitHour = +b.dataset.tod; save(); };
 for (const b of gameCtrl.querySelectorAll('[data-fxshot]')) b.onclick = () => game.command({ cmd: 'fxShot', slot: b.dataset.s, tier: b.dataset.fxshot });
 for (const b of gameCtrl.querySelectorAll('[data-fxcharge]')) {
   b.onpointerdown = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: true });

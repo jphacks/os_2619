@@ -66,8 +66,10 @@ function frame(b, ox, oz, nx, nz) {
     },
   };
 }
+let windowSeed = 0; // each window's own draw for its lamp at night: the same every build (the windows are made in the same order)
 function pointedWindow(f, u, y, w, s, depth = .14) {
-  f.at(archPanel(w, s), u, y, .02, KIND.glass);
+  const r = (Math.sin(++windowSeed * 12.9898) * 43758.5453) % 1; // 0..1 (abs below): carried in the glass's kind as 2 + r * .4 (it still rounds to glass)
+  f.at(archPanel(w, s), u, y, .02, KIND.glass + Math.abs(r) * .4);
   f.at(archRing(w + .36, s, .19, depth), u, y - .02, 0, KIND.trim);
   f.box(u - .045, u + .045, y, y + s + w * .78, 0, .1, KIND.trim); // mullion
   f.box(u - w / 2, u + w / 2, y + s * .52, y + s * .52 + .08, 0, .1, KIND.trim); // transom
@@ -269,7 +271,7 @@ void main() {
   } else if (k < 2.5) { // leaded glass: it mirrors the sky darkly, lit by nothing
     vec2 lat = abs(fract(vec2(along2, vW.y) / .24) - .5) * 2.; float fade = 1. - smoothstep(.1, .4, fwidth(along2 / .24));
     vec3 g = mix(vec3(.09, .13, .19), vec3(.27, .38, .52), smoothstep(.3, .78, n2 + (n3 - .5) * .35));
-    float lamp = step(.38, hash(vec2(floor(along2 / 1.9), floor(vW.y / 2.6)))) * uTodLamp; // after dark most windows are lit from inside
+    float lamp = step((vK - 2.) / .4, uTodWin) * uTodLamp; // a window is lit while its own draw (pointedWindow) is under the hour's share (sky.js windowsLit): all on by day (the daylight hides it), out one by one from dusk, all dark at midnight
     g = mix(g * uTodAmb, vec3(1., .70, .34) * (.85 + .3 * n2), lamp);
     gl_FragColor = vec4(g * (1. - max(smoothstep(.8, .95, lat.x), smoothstep(.8, .95, lat.y)) * .45 * fade), 1.);
     return;
@@ -288,6 +290,7 @@ void main() {
 /** createCourtyard(tod) -> { group, uniforms (the floor shares c* and tod), sun (the light now), fit(R), setTime(h, final), update(dt), dispose() }. tod: sky.js todUniforms(), shared with the floor. */
 export function createCourtyard(tod = todUniforms()) {
   const group = new THREE.Group(); group.name = 'courtyard';
+  windowSeed = 0; // every build draws the same lamps
   const { geometry, pos, idx } = buildCourt();
   const uniforms = {
     cN: { value: noiseTexture() }, cSh: { value: null }, cD: { value: null }, cSun: { value: SUN.clone() }, cSunB: { value: SUN.clone() }, cExt: { value: EXT },
