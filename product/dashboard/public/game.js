@@ -279,6 +279,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function failCharge(p, why) {
     if (!p.charging) return;
     p.charging = false; p.charge = 0; p.chargeT = 0; p.tier = null; p.autoRelease = null; p.fails++;
+    sfx()?.chargeFail?.(p.slot); // the charge sound runs backwards and fades instead of stopping dead
     fx.hit(p.element, p.tip.clone(), .1); showAct(p, '溜め失敗'); log(p.slot, 'charge', `溜め失敗（${why}）`);
   }
   /** A detector event from actions.js ({ slot, name, dir, power, speed }). Dodge is not part of the game; Guard comes from
