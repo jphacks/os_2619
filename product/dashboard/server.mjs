@@ -143,6 +143,7 @@ function sendModel(slot) {
 }
 
 let matchPhase = 'setup'; // the dashboard's game phase (setup / countdown / fight / result)
+const lastHp = {}; // slot -> the last { type: 'hp', hp, max } a dashboard sent, for a phone that joins mid-match
 const wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
 wss.on('connection', (ws, req) => {
   let role = null, id = null;
@@ -179,6 +180,7 @@ wss.on('connection', (ws, req) => {
       log(`phone ${slot} (${k.name}) connected from ${req.socket.remoteAddress}`);
       send(ws, { type: 'welcome', slot, marker });
       send(ws, { type: 'match', phase: matchPhase });
+      if (lastHp[slot]) send(ws, lastHp[slot]); // its HP screen starts where the match is
       ws.send(modelMsg(slot));
       return status();
     }
@@ -204,6 +206,12 @@ wss.on('connection', (ws, req) => {
         .filter(v => PHONE_SFX.has(v?.file)).map(v => ({ file: v.file, gain: num(v.gain, 0, 1), rate: num(v.rate, .25, 4, 1), offset: num(v.offset, 0, 10), dur: num(v.dur, 0, 10), rel: num(v.rel, 0, 2, .25),
           fade: Array.isArray(v.fade) ? [num(v.fade[0], 0, 10), num(v.fade[1], 0, 10)] : null })) };
       if (m.kind || m.voices.length) for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, m);
+      return;
+    }
+    if (k.type === 'hp') { // { type: 'hp', slot, hp, max } from a dashboard: that slot's phone fills its HP screen (green for what is left, red for what is lost)
+      if (role !== 'dashboard' || !SLOTS.includes(k.slot)) return;
+      const m = { type: 'hp', hp: Math.max(0, +k.hp || 0), max: Math.max(1, +k.max || 100) }; lastHp[k.slot] = m;
+      for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, m);
       return;
     }
     if (k.type === 'flash') { // a hit: { type: 'flash', slot, ms } from a dashboard lights the torch of that slot's phone

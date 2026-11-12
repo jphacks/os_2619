@@ -27,6 +27,10 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     @Published var found: [ImuDevice] = []
     /// A hit: the whole screen blinks pure #FF0000 (ContentView) for as long as the hit lasts
     @Published var hitRed = 0.0
+    /// The HP screen (ContentView HpScreen): open, and the share of HP left (1 full, 0 none). It opens by the HP button or when a match starts.
+    @Published var hpOpen = false
+    @Published var hpLeft = 1.0
+    private var brightnessBefore: CGFloat?
     private var hitRedUntil = Date.distantPast
     private var hitTimer: Timer?
     @Published var scanning = false
@@ -87,6 +91,8 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         link.onCharge = { [weak self] el, tier, level in self?.chargeSound.charge(element: el, tier: tier, level: level) }
         link.onSound = { [weak self] voices in self?.gameSound.play(voices) }
         link.onChargeFail = { [weak self] in self?.chargeSound.fail() }
+        link.onHp = { [weak self] hp, mx in DispatchQueue.main.async { self?.hpLeft = max(0, min(1, hp / max(1, mx))) } }
+        link.onPhase = { [weak self] p in if p == "countdown" || p == "fight" { DispatchQueue.main.async { self?.openHp() } } } // the dashboard started a match
         session.delegate = self
         session.delegateQueue = arQueue
     }
@@ -100,6 +106,16 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         cfg.isAutoFocusEnabled = true
         session.run(cfg)
         Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.refresh() }
+    }
+
+    /// The HP screen: the screen as bright as it goes while it is up, as it was after.
+    func openHp() {
+        guard !hpOpen else { return }
+        brightnessBefore = UIScreen.main.brightness; UIScreen.main.brightness = 1; hpOpen = true
+    }
+    func closeHp() {
+        guard hpOpen else { return }
+        hpOpen = false; if let b = brightnessBefore { UIScreen.main.brightness = b }; brightnessBefore = nil
     }
 
     /// A hit: the screen blinks pure red (on 60 ms / off 40 ms) until `ms` from now; a newer hit only makes it last longer.

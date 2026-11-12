@@ -38,6 +38,10 @@ class Link(private val id: String, private val name: String) {
     @Volatile var phase = "setup"; private set
     /** The PC says this phone's player was hit: light the torch for this many ms. Called on OkHttp's thread. */
     @Volatile var onFlash: ((Int) -> Unit)? = null
+    /** This player's HP and the most it can be (`hp`, dashboard app.js), for the HP screen. Called on OkHttp's thread. */
+    @Volatile var onHp: ((Double, Double) -> Unit)? = null
+    /** The game phase changed (setup / countdown / fight / result): the HP screen opens when a match starts. OkHttp's thread. */
+    @Volatile var onPhase: ((String) -> Unit)? = null
     /** The PC's vibration word: charge, win or off (Vibe.kt). Called on OkHttp's thread. */
     @Volatile var onVibrate: ((String) -> Unit)? = null
     /** A `vibrate` charge packet also says what the PC's charge sound is doing: element, tier (s / m / l), level 0..1. OkHttp's thread. */
@@ -98,7 +102,8 @@ class Link(private val id: String, private val name: String) {
                 }
                 "welcome" -> { slot = k.optString("slot", "-"); marker = k.optString("marker", "april"); status = "connected" }
                 "marker" -> marker = k.optString("marker", marker)
-                "match" -> phase = k.optString("phase", phase)
+                "match" -> { val p = k.optString("phase", phase); if (p != phase) { phase = p; onPhase?.invoke(p) } }
+                "hp" -> onHp?.invoke(k.optDouble("hp", 100.0), k.optDouble("max", 100.0))
                 "flash" -> onFlash?.invoke(k.optInt("ms"))
                 "sfx" -> if (k.optString("kind") == "chargeFail") onChargeFail?.invoke() else k.optJSONArray("voices")?.let { onSound?.invoke(it) }
                 "vibrate" -> {
