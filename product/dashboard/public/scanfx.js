@@ -1,6 +1,7 @@
 // 新しい枝 (screen 6): the show while a phone scans a new stick (stickui.js 'stickscan' page events).
 //  - waiting: the mahoujin, black lines on a white disc, in the dark
-//  - scanning: gold motes spring up all around and drift in to circle over it, more with every picture taken; a hum swells with them
+//  - scanning: gold motes spring up all around and are drawn into a hurricane over the middle: a funnel turning round the centre,
+//    fastest at its eye, the motes climbing it; more motes, a taller, wider, faster storm with every picture taken; a hum swells with it
 //  - building (the phone's 送信): the motes pull back, then snap all at once into one point over the middle (a whoosh) and wait
 //    there as a ball of light
 //  - built: the ball explodes, the screen shakes and the stick is there; gold and silver sparks dance round it, the mahoujin turns
@@ -19,14 +20,14 @@ const PULL = .35, SNAP = .4; // s: the pull back before the rush, the rush into 
 const ease = x => (x = Math.min(1, Math.max(0, x)), x * x * (3 - 2 * x));
 const outCubic = x => 1 - (1 - Math.min(1, Math.max(0, x))) ** 3;
 
-// round soft dots, each with its own colour, size and alpha, added as light
+// round soft dots, each with its own colour, size and alpha; plain blending: added as light they would vanish over the white disc
 const dotMaterial = () => new THREE.ShaderMaterial({
-  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  transparent: true, depthWrite: false,
   vertexShader: `attribute vec3 color; attribute float size, alpha; varying vec3 vC; varying float vA;
     void main() { vC = color; vA = alpha; vec4 mv = modelViewMatrix * vec4(position, 1.); gl_PointSize = size * 300. / -mv.z; gl_Position = projectionMatrix * mv; }`,
   fragmentShader: `varying vec3 vC; varying float vA;
     void main() { float d = length(gl_PointCoord - .5); if (d > .5) discard; float core = smoothstep(.5, .0, d);
-      gl_FragColor = vec4(mix(vC, vec3(1., .97, .85), core * core * .6), vA * core); }`,
+      gl_FragColor = vec4(mix(vC, vec3(1., .93, .6), core * core * .5), vA * min(1., core * 1.6)); }`,
 });
 function cloud(n) {
   const g = new THREE.BufferGeometry();
@@ -74,9 +75,9 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
       }
     }).catch(e => console.warn('scan show: mahoujin', e));
 
-  // ---- motes: each springs up somewhere around (from), lingers, drifts to its own orbit over the circle ----
+  // ---- motes: each springs up somewhere around (from), then is drawn into the hurricane (its own height, place round it, width) ----
   const motes = cloud(N); scene.add(motes);
-  const from = new Float32Array(3 * N), orbit = new Float32Array(4 * N), start = new Float32Array(3 * N), vel = new Float32Array(3 * N);
+  const from = new Float32Array(3 * N), orbit = new Float32Array(4 * N), start = new Float32Array(3 * N), vel = new Float32Array(3 * N), ang = new Float32Array(N);
   const came = new Float32Array(N).fill(-1); // when it sprang up (s), -1: not yet
   const CENTRE = V(0, STICK_Y, 0);
   for (let i = 0; i < N; i++) {
@@ -151,10 +152,11 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
   }
 
   // ---- state ----
-  let phase = 'idle', t = 0, phaseAt = 0, pictures = 0, rec = null, active = false, okShown = false;
+  let phase = 'idle', t = 0, phaseAt = 0, pictures = 0, rec = null, active = false, okShown = false, level = 0;
+  const storm = { h: .5, top: .3, spin: 2, rise: .06 }; // the hurricane's height (m), its width at the top (m), turn and climb speeds
   const go = p => { phase = p; phaseAt = t; };
   function reset() {
-    go('idle'); pictures = 0; rec = null; came.fill(-1); sparks.visible = false; holder.visible = false; stickMat.emissiveIntensity = 0;
+    go('idle'); pictures = 0; level = 0; rec = null; came.fill(-1); sparks.visible = false; holder.visible = false; stickMat.emissiveIntensity = 0;
     lineMat.color.copy(BLACK); glowMat.opacity = 0; okShown = false; $('flash').style.opacity = 0;
     for (const k of ['title', 'name', 'ok']) $(k).classList.remove('on');
     $('msg').textContent = ''; $('msg').classList.remove('off');
@@ -198,13 +200,18 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
     // motes
     const want = phase === 'idle' ? 0 : phase === 'scan' ? FIRST + (N - FIRST) * Math.min(1, pictures / FULL_AT) : N;
     hum(phase === 'scan' ? .25 + .75 * Math.min(1, pictures / FULL_AT) : 0);
+    level += ((phase === 'scan' ? Math.min(1, pictures / FULL_AT) : 0) - level) * Math.min(1, dt * 1.5); // eased: the storm grows smoothly
+    storm.h = .35 + .55 * level; storm.top = .25 + .45 * level; // up to 0.9 m: the whole storm stays in view storm.spin = 2 + 5 * level; storm.rise = .06 + .14 * level;
     for (let i = 0; i < N; i++) {
       if (came[i] < 0) { if (phase === 'scan' && i < want) came[i] = t; else { al.setX(i, 0); continue; } }
-      if (phase === 'scan' || phase === 'idle') {
-        const [R, ph, h, w] = orbit.subarray(4 * i, 4 * i + 4), k = ease((t - came[i] - 1.5) / 5); // it lingers where it sprang up, then drifts in
-        o.set(R * Math.cos(ph + w * t), h + .03 * Math.sin(3 * t + ph), R * Math.sin(ph + w * t));
+      if (phase === 'scan' || phase === 'idle') { // the hurricane: a funnel widening upward, turning faster nearer its eye, the motes climbing it
+        const hy = (orbit[4 * i + 2] / .52 + storm.rise * t) % 1, R = (.06 + storm.top * hy ** 1.4) * (.75 + .5 * (orbit[4 * i] - .15) / .75);
+        ang[i] += dt * storm.spin * .35 / (R + .1);
+        o.set(R * Math.cos(ang[i]), .02 + hy * storm.h, R * Math.sin(ang[i]));
+        const k = ease((t - came[i] - .6) / 2.5); // it springs up where it is, then is sucked in
         p.fromArray(from, 3 * i).lerp(o, k); p.y += .05 * Math.sin(2 * t + i) * (1 - k);
-        al.setX(i, .9 * (.55 + .45 * Math.sin(6 * t + i * 1.7)) * Math.min(1, (t - came[i]) * 1.5));
+        const ends = k < 1 ? 1 : Math.min(1, hy * 8, (1 - hy) * 5); // no pop where a mote leaves the top and starts again at the foot
+        al.setX(i, .9 * (.55 + .45 * Math.sin(6 * t + i * 1.7)) * Math.min(1, (t - came[i]) * 1.5) * ends);
       } else if (phase === 'rush') { // pull back, then snap into one point and wait there, crackling
         p.fromArray(start, 3 * i).sub(CENTRE);
         const out = T < PULL ? 1 + .3 * outCubic(T / PULL) : 1.3 * (1 - Math.min(1, (T - PULL) / SNAP) ** 3);
