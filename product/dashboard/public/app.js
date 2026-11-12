@@ -13,7 +13,7 @@ import { createVideoSource } from './video.js';
 import { createStage, DRONE_JA } from './stage.js';
 import { POSE, CHARAS } from './field3d.js';
 import { mountSticks } from './sticks.js';
-import { createGame, PHASE_JA, POS_JA, ELEMENT_JA, RULES, TIER_JA } from './game.js';
+import { createGame, PHASE_JA, POS_JA, ELEMENT_JA, RULES, TIER_JA, speedRule } from './game.js';
 import { createSmashStyle } from './fx-smash.js';
 import { createSpace } from './space3d.js';
 import { createConnect } from './connect.js';
@@ -51,7 +51,7 @@ if ((saved.rulesVer ?? 0) < 4) cfg.fxStyle = 'smash'; // the program-drawn set i
 if ((saved.rulesVer ?? 0) < 5) cfg.drone = 'fixed'; // the game screen starts on phone C's view, the same as screen 4 (10/18)
 if ((saved.rulesVer ?? 0) < 6) cfg.backdrop = 'court'; // the game screen stands in the school courtyard (11/3)
 cfg.rulesVer = 7;
-cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg }, size: { ...RULES.size, ...saved.rules?.size } };
+cfg.rules = { ...RULES, ...saved.rules, dmg: { ...RULES.dmg, ...saved.rules?.dmg }, size: { ...RULES.size, ...saved.rules?.size }, speed: speedRule(saved.rules?.speed ?? RULES.speed) };
 if ((saved.rulesVer ?? 0) < 7) { cfg.rules.t1 = RULES.t1; cfg.rules.t2 = RULES.t2; } // the charge takes half as long (11/4): a saved 2 / 5 s must not hide it
 const save = () => { try { localStorage.setItem('pd-cfg', JSON.stringify(cfg)); } catch {} };
 const axis = { A: W.STICK.axis, B: W.STICK.axis }; // the IMU's +Y points to the stick tip, on both sticks
@@ -159,7 +159,7 @@ gameCtrl.innerHTML = `
     <label>中になる溜め時間 <input data-rule="t1" type="number" min="0.1" max="20" step="0.1"> 秒</label>
     <label>大になる溜め時間 <input data-rule="t2" type="number" min="0.2" max="30" step="0.1"> 秒</label>
     <label>HP（試合開始時） <input data-rule="hp" type="number" min="1" max="1000" step="1"></label>
-    <label title="小・中・大すべての弾の速さ。1 が今の速さ">弾の速さ <input data-rule="speed" type="range" min="0.3" max="2" step="0.05" style="width:110px;vertical-align:middle"> <span id="speedOut" class="num"></span> 倍</label>
+${['s', 'm', 'l'].map(t => `<label title="${TIER_JA[t]}の弾の速さ。1 が元の速さ">${TIER_JA[t]}の弾の速さ <input data-rule="speed.${t}" type="range" min="0.3" max="2" step="0.05" style="width:110px;vertical-align:middle"> <span data-speedout="${t}" class="num"></span> 倍</label>`).join('')}
     <label>小のダメージ <input data-rule="dmg.s" type="number" min="0" max="100" step="1"></label>
     <label>中のダメージ <input data-rule="dmg.m" type="number" min="0" max="100" step="1"></label>
     <label>大のダメージ <input data-rule="dmg.l" type="number" min="0" max="100" step="1"></label>
@@ -199,7 +199,7 @@ const ruleGet = k => k.split('.').reduce((o, x) => o?.[x], cfg.rules), ruleSet =
 function showRules() {
   for (const i of ruleIns) i.value = +(ruleGet(i.dataset.rule) * (+i.dataset.scale || 1)).toFixed(2);
   const r = cfg.rules;
-  $('#speedOut').textContent = (+r.speed || 1).toFixed(2);
+  for (const o of gameCtrl.querySelectorAll('[data-speedout]')) o.textContent = (+r.speed?.[o.dataset.speedout] || 1).toFixed(2);
   $('#rulesNote').textContent = r.t2 > r.t1 ? `0〜${r.t1}秒 小 / ${r.t1}〜${r.t2}秒 中 / ${r.t2}秒〜 大` : '大になる時間は中より長くする';
 }
 for (const i of ruleIns) if (i.type === 'range') i.oninput = () => i.onchange(); // the slider applies while it is dragged
@@ -226,7 +226,7 @@ for (const b of gameCtrl.querySelectorAll('[data-fxcharge]')) {
   b.onpointerleave = () => game.command({ cmd: 'fxCharge', slot: b.dataset.s, on: false });
 }
 // the numbers saved on this PC's server (server.mjs /rules -> rules.json): loaded once at start (they win over this browser's), saved with the button
-const mergeRules = r => ({ ...RULES, ...r, dmg: { ...RULES.dmg, ...r?.dmg }, size: { ...RULES.size, ...r?.size } });
+const mergeRules = r => ({ ...RULES, ...r, dmg: { ...RULES.dmg, ...r?.dmg }, size: { ...RULES.size, ...r?.size }, speed: speedRule(r?.speed ?? RULES.speed) });
 const rulesMsg = t => { $('#rulesSaved').textContent = t; };
 async function loadSavedRules(quiet) {
   try {
@@ -241,7 +241,7 @@ $('#rulesSave').onclick = async () => {
 };
 $('#rulesLoad').onclick = () => loadSavedRules(false);
 loadSavedRules(true);
-$('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg }, size: { ...RULES.size } }; save(); showRules(); };
+$('#rulesReset').onclick = () => { cfg.rules = { ...RULES, dmg: { ...RULES.dmg }, size: { ...RULES.size }, speed: { ...RULES.speed } }; save(); showRules(); };
 showRules();
 // a held 押して溜め button / Q・P key: repeat the charge every 0.2 s (under game.js CHARGE_LIVE), as a stick that keeps circling
 // would; a single 'on' only grew the charge for 0.4 s, so it stayed 小 and failed after chargeHold

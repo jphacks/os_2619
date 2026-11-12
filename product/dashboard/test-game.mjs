@@ -13,10 +13,10 @@ register('data:text/javascript,' + encodeURIComponent(`
 const { createGame, RULES } = await import('./public/game.js');
 
 const DT = 1 / 60;
-function setup({ rules = {}, matchSec = 60, test = false, dummy = false, sfx = null } = {}) {
+function setup({ rules = {}, matchSec = 60, test = false, dummy = false, sfx = null, chara = undefined } = {}) {
   let t = 1000, ids = 1;
   const fx = { aura() {}, charge() {}, shot: () => ids++, moveShot() {}, endShot() {}, hit() {}, guard() {}, block() {} };
-  const cfg = { posSrc: 'start', aim: 'motion', hand: 'R', stickLen: { A: .8, B: .8 }, useTruth: true, test,
+  const cfg = { posSrc: 'start', aim: 'motion', hand: 'R', stickLen: { A: .8, B: .8 }, useTruth: true, test, chara,
     rules: { ...RULES, t1: 2, t2: 5, chargeHold: 0, ...rules, dmg: { ...RULES.dmg, ...rules.dmg }, size: { ...RULES.size, ...rules.size } } };
   const pos = { A: [-1.2, 0], B: [1.2, 0] };
   // dummy: the dummy room's frame (app.js getDummyFrame), players where the script puts them, as the dummy room draws them
@@ -533,6 +533,22 @@ scenario('水と風の棒でも撃ち合い・反射・溜めが動く', () => {
   S.swing('A'); S.run(1); S.chargeShot('A', 3);
   S.g.command({ cmd: 'guard', slot: 'B', on: true }); S.run(.5); S.swing('A'); S.run(1.5);
   eq(S.B.hp, 75, 'B の HP（小＋中）'); eq(S.A.hp, 90, 'A の HP（反射された小）');
+});
+
+scenario('弾の速さは小・中・大それぞれの倍率で飛ぶ（古い1つの値は3つ共通）', () => {
+  const vel = (speed, tier) => { const S = setup({ rules: { speed } }); S.fight(); S.g.command({ cmd: 'fxShot', slot: 'A', tier }); return S.g.shots.at(-1).vel.length(); };
+  const base = { s: vel({ s: 1, m: 1, l: 1 }, 's'), m: vel({ s: 1, m: 1, l: 1 }, 'm'), l: vel({ s: 1, m: 1, l: 1 }, 'l') };
+  const k = { s: 2, m: .5, l: 1.5 };
+  for (const t of ['s', 'm', 'l']) eq(+(vel(k, t) / base[t]).toFixed(3), k[t], `${t} の速さの倍率`);
+  for (const t of ['s', 'm', 'l']) eq(+(vel(.6, t) / base[t]).toFixed(3), .6, `古い値 0.6 での ${t} の倍率`);
+});
+
+scenario('小さいキャラ（魔法使い 1/3・チャオベン 1/2）は胸が縮み、棒はどちらもチャオベンの大きさ、それでも撃ち合える', () => {
+  const S = setup({ chara: { A: 'wizard', B: 'chaoben' } }); S.fight(); S.run(.1);
+  eq(+S.A.chest.y.toFixed(3), +(1.3 / 3).toFixed(3), 'A（魔法使い）の胸の高さ'); eq(+S.B.chest.y.toFixed(3), .65, 'B（チャオベン）の胸の高さ');
+  eq(+S.A.tip.distanceTo(S.A.base).toFixed(3), .4, 'A（魔法使い）の棒の長さはチャオベンと同じ 1/2'); eq(+S.B.tip.distanceTo(S.B.base).toFixed(3), .4, 'B（チャオベン）の棒の長さ');
+  eq(+S.A.chest.x.toFixed(3), -1.2, 'A の床の上の位置は変わらない');
+  S.swing('A'); S.run(1.5); eq(S.B.hp, 95, 'A の小が小さい B に当たる');
 });
 
 const w = Math.max(...results.map(r => r.name.length));

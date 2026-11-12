@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { createSim, DT, due } from './fake-world.mjs';
-import { START, STICK, bodyPose, mul3, tr3, app3, apply, fromCols, toQuat, fromQuat, toRodrigues } from './public/world.js';
+import { START, STICK, handAt, bodyPose, mul3, tr3, app3, apply, fromCols, toQuat, fromQuat, toRodrigues } from './public/world.js';
 
 const D = Math.PI / 180, G = 9.81;
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -54,7 +54,7 @@ export function pin(sim, t) {
     const s = p.slot === 'A' && t > HOLD ? stickAt(t - HOLD) : IDLE;
     const Rimu = mul3(p.body.R, fromQuat(qStick(s.a, s.e)));
     p.dir = app3(Rimu, STICK.axis);
-    p.base = apply(p.body, [STICK.hand.fwd, STICK.hand.up, STICK.hand.right]);
+    p.base = handAt(p.body, p.dir);
     const imuPos = p.base.map((b, i) => b + 0.2 * p.dir[i]);
     (p.mh ??= []).push({ R: Rimu, x: imuPos }); if (p.mh.length > 3) p.mh.shift();
     const h = p.mh, k = h.length - 1;

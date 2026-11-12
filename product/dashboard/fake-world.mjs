@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import {
   START, STICK, TAGS, CORNER_IDS, tagScale, mul3, tr3, app3, pose, compose, invert, apply,
-  fromCols, fromQuat, toQuat, fromRodrigues, toRodrigues, bodyPose, worldTagPose, phoneArcamPose, arcam_T_cv,
+  fromCols, fromQuat, toQuat, fromRodrigues, toRodrigues, bodyPose, handAt, worldTagPose, phoneArcamPose, arcam_T_cv,
 } from './public/world.js';
 
 export const DT = 0.01;            // sim tick, s (100 Hz)
@@ -112,7 +112,7 @@ export function createSim({ seed = 1, drift = 0, noise = 1 } = {}) {
       p.swinging = sb.swinging;
       const Rimu = mul3(p.body.R, fromQuat(sb.q));
       p.dir = app3(Rimu, STICK.axis);
-      p.base = apply(p.body, [STICK.hand.fwd, STICK.hand.up, STICK.hand.right]);
+      p.base = handAt(p.body, p.dir);
       const imuPos = p.base.map((b, i) => b + 0.2 * p.dir[i]); // sensor sits 20 cm up the stick
       p.hist.push({ R: Rimu, x: imuPos }); if (p.hist.length > 3) p.hist.shift();
       const h = p.hist, k = h.length - 1;

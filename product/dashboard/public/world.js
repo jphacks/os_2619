@@ -21,7 +21,9 @@ export const ARENA = { half: 4 };   // 8 m x 8 m
 export const CHEST_H = 1.3;          // chest phone / chest tag height, m
 export const START = { A: { pos: [-1.2, 0, 0], yaw: 0 }, B: { pos: [1.2, 0, 0], yaw: Math.PI } }; // yaw 0 = facing +x
 export const PHONE_TAG_SIZE = 0.1;   // old app only: the one size typed into the phone; tags with `sz` (new app) are already metric
-export const STICK = { len: 1.0, axis: [0, 1, 0], up: [0, 0, 1], hand: { fwd: 0.3, right: 0.2, up: -0.3 } };
+// hand: where the stick hand rests (body frame, from the chest), the stick held forward and a little down. shoulder: the stick arm's shoulder.
+// The hand is not fixed there: handAt() swings the arm from the shoulder with the stick, so a swing moves the whole arm, not just the stick.
+export const STICK = { len: 1.0, axis: [0, 1, 0], up: [0, 0, 1], hand: { fwd: 0.3, right: 0.2, up: -0.3 }, shoulder: { fwd: -0.1, right: 0.21, up: 0.07 }, lead: 0.6 };
 
 // Tag layouts. Pick one with ?layout= (browser) or LAYOUT= (node); default 'map4'.
 // - map4:  four sheets (ids 0-3, any size listed here) lying anywhere on the floor, roughly the corners of the play area.
@@ -217,6 +219,23 @@ export function worldTagPose(id, body) {
   const n = Math.hypot(tag.pos[0], tag.pos[2]), z = [-tag.pos[0] / n, 0, -tag.pos[2] / n], y = [0, 1, 0];
   const x = [z[2], 0, -z[0]]; // x = y × z
   return tag.flip ? pose(fromCols(x.map(v => -v), [0, -1, 0], z), tag.pos) : pose(fromCols(x, y, z), tag.pos);
+}
+
+/** Each character's size against a person (field3d.js CHARAS): the game shrinks that player's heights, stick and body toward the floor under them by it. */
+export const CHARA_SCALE = { wizard: 1 / 3, chaoben: 1 / 2 };
+/** The stick of a smaller character: one size for every character, チャオベン's (the wizard's body is smaller, its stick is not). */
+export const STICK_SCALE = CHARA_SCALE.chaoben;
+
+/**
+ * The stick hand (world) for body pose `body` and stick direction `dir` (world, unit): the arm hangs from the shoulder at its resting reach,
+ * pointing between the stick's direction and the resting hand's (STICK.lead: how much the stick leads). Stick forward: the hand a little below
+ * the shoulder, in front; stick up: forward and up; stick down: down by the hip. A swing turns the arm about the shoulder.
+ */
+export function handAt(body, dir) {
+  const { hand: h, shoulder: s, lead } = STICK, rest = [h.fwd - s.fwd, h.up - s.up, h.right - s.right], reach = Math.hypot(...rest);
+  const r = app3(body.R, rest).map(v => v / reach), a = r.map((v, i) => lead * dir[i] + (1 - lead) * v), n = Math.hypot(...a);
+  const sh = apply(body, [s.fwd, s.up, s.right]);
+  return n < 1e-6 ? apply(body, [h.fwd, h.up, h.right]) : sh.map((v, i) => v + a[i] / n * reach);
 }
 
 /** Body frame of a standing player: x forward, y up, z right. */

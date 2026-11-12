@@ -29,7 +29,9 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷', water: '水', wind: '�
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 1, t2: 2.5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: 1 }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × (all tiers)
+export const RULES = { t1: 1, t2: 2.5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: { s: 1, m: 1, l: 1 } }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × per tier (an old single number counts for all three)
+/** The ball-speed rule as { s, m, l }: an older saved single number (one speed for every tier) counts for all three. */
+export const speedRule = v => typeof v === 'object' && v ? { s: +v.s || 1, m: +v.m || 1, l: +v.l || 1 } : { s: +v || 1, m: +v || 1, l: +v || 1 };
 // how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
 // a little larger than the ball looks so near misses still count (10/18: .12 / .28 / .5 were too strict)
 const TIER = {
@@ -74,7 +76,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const takeStick = p => { p.stick = assigned[p.slot]; p.element = p.stick?.element ?? ELEMENT[p.slot]; };
   const MOVE_GRACE = .5; // s added to chargeHold while the player steps or turns. Measured: while circling, Charge events stop for at most 1 s; a longer wait keeps a stopped charge (and the vibration) alive while just walking
   const CHARGE_LIVE = .4; // s after a Charge event the circling counts as still going (actions.js sends one every ~.15 s while it does)
-  const speedOf = (T, p) => T.speed * (rules().speed ?? 1) * st(p, 'speed'); // m/s, the dashboard's ball-speed slider and the stick applied
+  const speedMul = tier => speedRule(rules().speed)[tier];
+  const speedOf = (T, p, tier) => T.speed * speedMul(tier) * st(p, 'speed'); // m/s, the dashboard's ball-speed slider for this tier and the stick applied
   const t2Of = () => rules().t2; // the charge times are fixed: the stick's 溜め stat does not change them (11/12)
   const tierOf = t => t < rules().t1 ? 's' : t < t2Of() ? 'm' : 'l';
   const IMU_SIDE = cross(W.STICK.axis, W.STICK.up);
@@ -87,7 +90,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       p.chest.fromArray(dummy.chest); p.base.fromArray(dummy.base);
       p.tip.fromArray(dummy.tip); p.dir.fromArray(dummy.dir);
       p.src = 'dummy'; p.stickSrc = 'ダミー映像と同じ座標';
-      return;
+      return shrink(p);
     }
     const g = est?.slots?.[p.slot] ?? {}, st = W.START[p.slot], T = p.truth;
     const phoneOk = g.chest && (g.aligned || g.src === 'localize');
@@ -97,9 +100,6 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     else if (src === 'start' || !p.body) p.body = W.bodyPose(st.pos, st.yaw);
     p.src = src === 'hold' ? (p.src === 'start' ? 'start' : 'hold') : src;
     p.chest.copy(v3(p.body.t));
-    // hand in the body frame (x fwd, y up, z right)
-    const h = W.STICK.hand;
-    p.base.copy(v3(W.apply(p.body, [h.fwd, h.up, h.right])));
     const sk = est?.stick?.[p.slot];
     if (sk?.dir) { p.dir.copy(v3(sk.dir)).normalize(); p.stickSrc = sk.src === 'calib-ar' ? 'IMU（キャリブ時の向き基準）' : 'IMU（立ち位置の向き基準）'; }
     else if (p.imu) {
@@ -107,8 +107,20 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       p.dir.copy(v3(W.app3(W.bodyPose(st.pos, st.yaw).R, [dot(v, W.STICK.axis), dot(v, W.STICK.up), dot(v, IMU_SIDE)]))).normalize();
       p.stickSrc = 'IMU';
     } else { p.dir.copy(v3(W.app3(p.body.R, [1, 0, 0]))); p.stickSrc = 'IMU なし（前向き）'; }
+    p.base.copy(v3(W.handAt(p.body, p.dir.toArray()))); // the hand swings with the stick, the arm turning at the shoulder
     if (T && cfg.useTruth) { p.base.copy(v3(T.base)); p.dir.copy(v3(T.dir)); }
     p.tip.copy(p.base).addScaledVector(p.dir, cfg.stickLen?.[p.slot] ?? W.STICK.len);
+    shrink(p);
+  }
+  /** The player's character is smaller than a person (W.CHARA_SCALE, cfg.chara): the chest and the hand are drawn in toward the floor
+   *  under the chest by its scale, the stick shortened to W.STICK_SCALE, so hits, shots and the drawn figure all agree. p.body stays the person's (full size): field3d.js poses the figure
+   *  from it and shrinks the drawing by p.scale about the same point. The stick keeps its direction. */
+  function shrink(p) {
+    const k = p.scale = W.CHARA_SCALE[cfg.chara?.[p.slot]] ?? 1;
+    if (k === 1) return;
+    const cx = p.chest.x, cz = p.chest.z, len = p.base.distanceTo(p.tip);
+    for (const v of [p.chest, p.base]) v.set(cx + (v.x - cx) * k, v.y * k, cz + (v.z - cz) * k);
+    p.tip.copy(p.base).addScaledVector(p.dir, len * W.STICK_SCALE); // the stick: the same size for every character (W.STICK_SCALE), from the small hand
   }
 
   function effects(p) {
@@ -151,7 +163,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     const T = TIER[tier], s = sfx();
     const dummyTarget = !!getDummyFrame(), homing = dummyTarget || match.mode === 'demo';
     const aim = homing ? other(p).chest.clone().sub(p.tip).normalize()
-      : cfg.aim === 'eye' ? p.tip.clone().sub(p.chest.clone().add(V(0, .35, 0))).normalize()
+      : cfg.aim === 'eye' ? p.tip.clone().sub(p.chest.clone().add(V(0, .35 * (p.scale ?? 1), 0))).normalize()
         : (cfg.aim ?? 'motion') === 'motion' ? (tier === 's' ? levelAim(p) : motionAim(p) ?? p.dir.clone()) : p.dir.clone();
     p.shots++; if (tier === 'l') p.specials++;
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
@@ -160,7 +172,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     const k = sizeOf(tier);
     // steer: the dummy room keeps turning a shot onto the chest it was drawn at; デモ試合 never does (aimed once, then straight)
     const steer = dummyTarget && match.mode !== 'demo';
-    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, pos: p.tip.clone(), vel: aim.multiplyScalar(speedOf(T, p)), born: now(), dummyTarget, homing, steer });
+    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, pos: p.tip.clone(), vel: aim.multiplyScalar(speedOf(T, p, tier)), born: now(), dummyTarget, homing, steer });
     log(p.slot, tier === 'l' ? 'special' : 'shot', `${TIER_JA[tier]}の攻撃${tier === 's' ? '' : `（溜め ${p.chargeT.toFixed(1)} 秒）`}`);
     return true;
   }
@@ -199,7 +211,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     const T = TIER[tier], foe = other(p), aim = foe.chest.clone().sub(p.tip).normalize();
     if (tier === 'l') sfx()?.special(p.element, panOf(p.tip)); else sfx()?.shot(p.element, panOf(p.tip), T.power);
     const k = sizeOf(tier);
-    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, test: true, homing: match.mode === 'demo', pos: p.tip.clone(), vel: aim.multiplyScalar(speedOf(T, p)), born: now() });
+    shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, test: true, homing: match.mode === 'demo', pos: p.tip.clone(), vel: aim.multiplyScalar(speedOf(T, p, tier)), born: now() });
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
   }
   function damage(foe, from, tier, mul = 1) {
@@ -215,13 +227,13 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       const s = shots[i], foe = other(s.owner), T = TIER[s.tier];
       if (s.steer && getDummyFrame()) { // dummy room (not デモ試合): steer at the chest every frame
         const distance = s.pos.distanceTo(foe.chest);
-        s.vel.copy(foe.chest).sub(s.pos).normalize().multiplyScalar(speedOf(T, s.owner));
-        s.pos.addScaledVector(s.vel, Math.min(dt, distance / speedOf(T, s.owner)));
+        s.vel.copy(foe.chest).sub(s.pos).normalize().multiplyScalar(speedOf(T, s.owner, s.tier));
+        s.pos.addScaledVector(s.vel, Math.min(dt, distance / speedOf(T, s.owner, s.tier)));
       } else s.pos.addScaledVector(s.vel, dt);
       fx.moveShot(s.id, s.pos);
-      // hit: distance to the opponent's vertical body segment (capsule radius .3 + the shot's own radius)
-      const a = foe.chest.clone().setY(foe.chest.y - 1.05), b = foe.chest.clone().setY(foe.chest.y + .15);
-      const hit = (match.phase === 'fight' || s.test) && new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .3 + T.radius * (s.size ?? 1);
+      // hit: distance to the opponent's vertical body segment (capsule radius .3 + the shot's own radius), the body at its character's size
+      const fk = foe.scale ?? 1, a = foe.chest.clone().setY(foe.chest.y - 1.05 * fk), b = foe.chest.clone().setY(foe.chest.y + .15 * fk);
+      const hit = (match.phase === 'fight' || s.test) && new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .3 * fk + T.radius * (s.size ?? 1);
       if (hit && foe.guarding) { // 小 bounces back at its shooter; 中 / 大 go through the guard and hit
         fx.block(foe.element, s.pos.clone());
         if (s.tier === 's') {
@@ -229,7 +241,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
           const back = s.owner.chest.clone().sub(s.pos).normalize();
           fx.endShot(s.id, 'timeout');
           s.id = fx.shot(s.element, s.pos.clone(), back.clone(), T.power, T.big * (s.size ?? 1), { tier: s.tier, scale: s.size ?? 1 });
-          s.vel.copy(back).multiplyScalar(speedOf(T, foe)); s.owner = foe; s.born = now(); s.steer = false; s.mul = +(rules().reflectMul ?? 2) || 0; // a bounced 小 hits harder
+          s.vel.copy(back).multiplyScalar(speedOf(T, foe, s.tier)); s.owner = foe; s.born = now(); s.steer = false; s.mul = +(rules().reflectMul ?? 2) || 0; // a bounced 小 hits harder
           foe.reflects = (foe.reflects ?? 0) + 1; showAct(foe, '反射！'); log(foe.slot, 'guard', `${other(foe).slot} の小を反射`);
           continue;
         }
@@ -241,7 +253,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         onHit(foe.slot, T.flash); // the phone of the player who was hit lights its torch for this many ms (app.js, server.mjs)
         if (!s.test) damage(foe, s.owner, s.tier, s.mul ?? 1); // try-out shots only show
       }
-      const end = hit ? 'hit' : s.pos.y < 0 ? 'floor' : now() - s.born > 1.6 / Math.max(.3, (rules().speed ?? 1) * st(s.owner, 'speed')) ? 'timeout' : null; // y < 0: into the floor; slower balls live longer, so they still reach
+      const end = hit ? 'hit' : s.pos.y < 0 ? 'floor' : now() - s.born > 1.6 / Math.max(.3, speedMul(s.tier) * st(s.owner, 'speed')) ? 'timeout' : null; // y < 0: into the floor; slower balls live longer, so they still reach
       if (end) { fx.endShot(s.id, end); shots.splice(i, 1); }
     }
   }
@@ -379,7 +391,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     stepMatch(raw);
     for (const p of Object.values(players)) {
       place(p, est, sensorOnly); effects(p);
-      p.trail.push({ t: now(), p: p.tip.clone().sub(p.chest) }); while (p.trail.length && p.trail[0].t < now() - .5) p.trail.shift(); // for motionAim
+      p.trail.push({ t: now(), p: p.tip.clone().sub(p.chest).divideScalar(p.scale ?? 1) }); // at a person's size: motionAim's speeds are a real stick's while (p.trail.length && p.trail[0].t < now() - .5) p.trail.shift(); // for motionAim
     }
     stepCharge(dt); stepGuard(); stepShots(dt); stepBuzz();
     const s = sfx();
