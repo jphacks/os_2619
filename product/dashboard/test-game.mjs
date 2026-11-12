@@ -353,14 +353,14 @@ scenario('止めた棒の向きが 1.5° ほど揺れ、センサーの更新が
   }
   eq(S.B.guarding, true, '止めて 0.66 秒後の B のガード');
 });
-scenario('棒を相手に向けたまま止めてもガードにならない（横から 40° より前）', () => {
+scenario('棒を相手に向けたまま止めてもガードにならない（横から 55° より前）', () => {
   const S = setup(); S.fight(); stickB(S, [-1, .3, 0]); S.run(.4); eq(S.B.guarding, false, '相手に向けた B のガード');
-  stickB(S, [-Math.sin(.8), 0, Math.cos(.8)]); S.run(.4); eq(S.B.guarding, false, '横から 46° 前に向けた B のガード');
+  stickB(S, [-Math.sin(1.05), 0, Math.cos(1.05)]); S.run(.4); eq(S.B.guarding, false, '横から 60° 前に向けた B のガード');
 });
-scenario('横向きでも上下に 40° より傾けるとガードにならない', () => {
-  const S = setup(); S.fight(); stickB(S, [0, Math.sin(.8), Math.cos(.8)]); S.run(.4); eq(S.B.guarding, false, '46° 上げた B のガード');
+scenario('横向きでも上下に 50° より傾けるとガードにならない', () => {
+  const S = setup(); S.fight(); stickB(S, [0, Math.sin(1.05), Math.cos(1.05)]); S.run(.4); eq(S.B.guarding, false, '60° 上げた B のガード');
 });
-scenario('横から 34° 前・34° 上げた棒はガードになる（許容 40°）。許容を 30° にするとならない', () => {
+scenario('横から 34° 前・34° 上げた棒はガードになる（許容 50° / 55°）。許容を 30° にするとならない', () => {
   const a = .6, d = [-Math.sin(a) * Math.cos(a), Math.sin(a), Math.cos(a) * Math.cos(a)];
   const S = setup(); S.fight(); stickB(S, d); S.run(.4); eq(S.B.guarding, true, '34° の B のガード');
   const T = setup({ rules: { guardLevel: 30, guardSide: 30 } }); T.fight(); stickB(T, d); T.run(.4); eq(T.B.guarding, false, '許容 30° での B のガード');
