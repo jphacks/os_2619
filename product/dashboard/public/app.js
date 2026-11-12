@@ -176,7 +176,7 @@ gameCtrl.innerHTML = `
   <h3>試合の進行</h3>
   <div class="phase">
     <button data-phase="setup">準備中<kbd>1</kbd></button>
-    <button data-phase="fight" class="go">試合開始<kbd>3</kbd></button><button data-phase="demo" title="試合と同じだが、魔法は撃った瞬間に相手の方向へ真っすぐ飛ぶ。撃ったあとに素早く動けば避けられる">デモ試合開始<kbd>2</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
+    <button data-phase="demo" class="go bigstart" title="試合と同じだが、魔法は撃った瞬間に相手の方向へ真っすぐ飛ぶ。撃ったあとに素早く動けば避けられる">デモ試合開始<kbd>2</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
   </div>
   <div class="row" style="margin-top:6px"><button data-cmd="reset">やり直し<kbd>R</kbd></button><label class="kv">試合時間 <input id="secIn" type="number" min="10" max="600" step="10" style="width:64px"> 秒</label></div>
   <p class="why" id="why"></p>
@@ -216,7 +216,7 @@ ${['s', 'm', 'l'].map(t => `<label title="${TIER_JA[t]}の弾の速さ。1 が�
   <div class="seg" id="drones">${Object.entries(DRONE_JA).map(([k, v]) => `<button data-drone="${k}">${v}</button>`).join('')}</div>
   <div class="row" id="zoomRow"><label title="今のカメラのズーム。カメラごとに覚える。1 が元の大きさ">ズーム <input id="zoom" type="range" min="0.5" max="3" step="0.05" style="width:130px;vertical-align:middle"> <span id="zoomOut" class="num"></span> 倍</label><button id="zoomReset">1 倍に戻す</button><span class="muted" id="zoomFor" style="font-size:12px"></span></div>
   <h3>表示</h3>
-  <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="crt" title="試合画面と最終映像を昔のブラウン管テレビ風に：解像度を下げ、走査線と少しのにじみ・光り、30 fps">ブラウン管風</button><button data-tog="debug">デバッグ</button></div>
+  <div class="row"><button data-tog="minimap">ミニマップ</button><button data-tog="crt" title="試合画面と最終映像を昔のブラウン管テレビ風に：解像度を下げ、少しのにじみ・光り、30 fps（C キーでも切り替え）">ブラウン管風<kbd>C</kbd></button><button data-tog="debug">デバッグ</button></div>
   <div class="row"><span class="muted" style="font-size:12px">背景</span><span class="seg" id="backdrops"><button data-backdrop="court">中庭</button><button data-backdrop="rock">岩場</button><button data-backdrop="chaoben">チャオベン劇場</button><button data-backdrop="plain">無地</button></span></div>
   <div class="row"><label title="中庭と岩場の空と光の時刻。動かすと影も付け直す"><span class="muted" style="font-size:12px">時刻</span> <input id="tod" type="range" min="0" max="24" step="0.25" style="width:130px;vertical-align:middle"> <span id="todOut" class="num"></span></label><span class="seg" id="todPresets">${PRESETS.map(([n, h]) => `<button data-tod="${h}">${n}</button>`).join('')}</span></div>
   <div class="row"><button id="todAuto" title="空の時刻がひとりでに進む。プリセットを押すと、そこから進む">時刻を自動で進める</button><span class="seg" id="todSpeeds">${TOD_SPEEDS.map(([n, v]) => `<button data-todspeed="${v}" title="1分で${v}時間">${n}</button>`).join('')}</span></div>
@@ -224,7 +224,12 @@ ${['s', 'm', 'l'].map(t => `<label title="${TIER_JA[t]}の弾の速さ。1 が�
   <h3>攻撃・防御の記録</h3>
   <ul class="log" id="gameLog"></ul>`;
 tutorial.mountButton($('#tutRow'));
-for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.onclick = () => game.command({ cmd: 'phase', phase: b.dataset.phase });
+for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.onclick = () => { game.command({ cmd: 'phase', phase: b.dataset.phase }); matchFullscreen(b.dataset.phase); };
+/** A match started on screen 3 (button or key) shows the game box fullscreen; Esc leaves it (the browser does that itself). */
+function matchFullscreen(phase) {
+  if ((phase === 'demo' || phase === 'fight') && screen === 'game' && !document.fullscreenElement) $('#gameBox').requestFullscreen?.().catch(() => {});
+}
+addEventListener('fullscreenchange', () => setTimeout(stage.resize, 100)); // the stage follows the box in and out of fullscreen
 gameCtrl.querySelector('[data-cmd=pause]').onclick = () => game.command({ cmd: 'pause' });
 gameCtrl.querySelector('[data-cmd=reset]').onclick = () => game.command({ cmd: 'reset' });
 const secIn = $('#secIn'); secIn.value = cfg.matchSec;
@@ -359,7 +364,6 @@ for (const r of drawer.querySelectorAll('[data-vol]')) r.oninput = () => {
 };
 $('#mute').onclick = () => sfx?.setMuted(!sfx.muted);
 $('#tutRow').append($('#bgmPreview')); // the match BGM button sits next to 発表用スライド on screen 3 (moved out of the settings drawer)
-{ const b = document.querySelector('[data-tog="crt"]'); b.insertAdjacentHTML('beforeend', '<kbd>C</kbd>'); $('#tutRow').append(b); } // and the CRT look's on / off (C), easy to find
 $('#bgmPreview').onclick = () => { if (!sfx) return; sfx.unlock?.(); sfx.previewBgm(!sfx.previewingBgm); };
 for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
   if (!sfx) return; sfx.unlock?.();
@@ -379,7 +383,7 @@ addEventListener('keydown', e => {
   if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (held[k] && screen !== 'final') return holdCharge(held[k], true);
-  if (KEYS[k]) return game.command(KEYS[k]);
+  if (KEYS[k]) { game.command(KEYS[k]); if (KEYS[k].cmd === 'phase') matchFullscreen(KEYS[k].phase); return; }
   if (k === 'k') scan();
   else if (k === 'c') document.querySelector('[data-tog="crt"]').click(); // ブラウン管風 on / off
   else if (k === 'm') $('#bgmPreview').click(); // 試合 BGM を流す / 止める (also while the slides are open: tutorial.js lets M through); the minimap is its button only
