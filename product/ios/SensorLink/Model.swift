@@ -293,7 +293,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         prefs.removeObject(forKey: "imu")
     }
 
-    private func showToast(_ s: String) {
+    func showToast(_ s: String) {
         toast = s
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             if self?.toast == s { self?.toast = nil }
