@@ -5,8 +5,8 @@ import android.media.AudioAttributes
 import android.media.SoundPool
 
 /**
- * The sound of taking a hit, played together with the torch (`flash` packets). res/raw/damage.wav is made by
- * effect-assets/procedural/make-damage.mjs (the dashboard's settings can play the same file to audition it).
+ * The sound of taking a hit, played together with the torch (`flash` packets): res/raw/damage.mp3
+ * (the same file as dashboard/public/audio/damage.mp3, which the dashboard's settings play to audition it).
  * SoundPool: decoded once at start, so a hit plays with no delay. Any thread.
  */
 class HitSound(context: Context) {

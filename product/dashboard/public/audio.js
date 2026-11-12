@@ -13,7 +13,7 @@
 
 const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3', 'water1', 'water2', 'water3', 'wind1', 'wind2', 'wind3', 'guard',
   'charge_fire', 'charge_thunder', 'charge_water', 'charge_wind', 'full_fire', 'full_thunder', 'full_water', 'full_wind', 'damage'];
-const EXT = { damage: 'wav' }; // damage: the phones' hit sound (effect-assets/procedural/make-damage.mjs), only auditioned here
+const EXT = {}; // per-file extension when not mp3 (damage: the phones' hit sound, only auditioned here)
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
 const LUFS = { bgm: -4.0, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2,
