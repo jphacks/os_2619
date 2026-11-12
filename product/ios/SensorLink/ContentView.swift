@@ -225,13 +225,15 @@ struct HpScreen: View {
                 }
                 .frame(width: w, height: h, alignment: .topLeading)
                 .scaleEffect(x: 1, y: -1) // mirror the HP display vertically, as Android's HpBar does
-                VStack {
-                    Spacer()
-                    Button("Close") { model.closeHp() }
-                        .foregroundColor(.gray)
-                        .padding(.bottom, 24)
+                if model.matchPhase != "countdown" && model.matchPhase != "fight" {
+                    VStack {
+                        Spacer()
+                        Button("Close") { model.closeHp() }
+                            .foregroundColor(.gray)
+                            .padding(.bottom, 24)
+                    }
+                    .frame(width: w, height: g.size.height)
                 }
-                .frame(width: w, height: g.size.height)
             }
         }
         .ignoresSafeArea()
