@@ -156,7 +156,10 @@ const koShow = createKoShow(hud, {
     for (const [k, dy] of [[1, 0], [.6, .7]]) stage.fx.hit(el, at.clone().setY(at.y + dy), k, { tier: 'l', target: at.clone() });
     stage.drone.event('hit', { target: loser.slot, pos: at, power: 1 }); stage.state.shake = 2.2; stage.field.cheer();
   },
-  sound(kind) { const w = game.winner; if (kind === 'ko' || kind === 'burst') sfx?.hit(w?.element ?? 'thunder', 0, 1, 'l'); },
+  sound(kind) {
+    const w = game.winner; if (kind === 'ko' || kind === 'burst') sfx?.hit(w?.element ?? 'thunder', 0, 1, 'l');
+    if (kind === 'result' && w) { sfx?.play('win'); if (!sfx?.muted) hub.send?.({ type: 'sfx', slot: w.slot, voices: [{ file: 'win', gain: 1, rate: 1 }] }); } // the fanfare, here and on the winner's phone (none on a draw)
+  },
 });
 let koPhase = null;
 function watchEnd() { // the show starts when the game says the match is over, and is put away when a new one (or setup) begins

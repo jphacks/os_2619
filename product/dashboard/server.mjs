@@ -343,7 +343,7 @@ const withStats = s => {
   return { ...s, volume: v && Math.round(v * 1e6), stats: s.custom ? pick(s.custom) : v ? statsFromVolume(v) : pick(null) };
 };
 // the game sounds a phone has (Android res/raw, iOS bundle): what { type: 'sfx' } may name
-const PHONE_SFX = new Set(['fire', 'lightning', 'water', 'wind'].flatMap(e => [1, 2, 3].map(i => e + i)).concat(['guard', 'guard_reflect', 'damage', 'my_shot', 'my_launch', 'swing'])); // swing: the sword swing (swing-sense.js)
+const PHONE_SFX = new Set(['fire', 'lightning', 'water', 'wind'].flatMap(e => [1, 2, 3].map(i => e + i)).concat(['guard', 'guard_reflect', 'damage', 'my_shot', 'my_launch', 'swing', 'win'])); // win: the victory fanfare, on the winner's phone // swing: the sword swing (swing-sense.js)
 const assigned = () => ({ A: withStats(byId(db.assign.A)), B: withStats(byId(db.assign.B)) });
 const sticksMsg = () => JSON.stringify({ type: 'sticks', ...assigned() });
 const saveDb = () => { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(STICKS_FILE, JSON.stringify(db, null, 2)); }; // sync: two saves never interleave
