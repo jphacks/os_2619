@@ -122,11 +122,16 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             setBackgroundColor(Color.BLACK); visibility = View.GONE
             isClickable = true; setOnClickListener { closeHp() } // consume touches even when closing is disabled during the match
             addView(hpBar, FrameLayout.LayoutParams(-1, 0, Gravity.TOP)) // the top half: sized once the screen's height is known
+            addView(hpClose, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = (48 * resources.displayMetrics.density).toInt() })
         }
     }
+    // the way out, low on the screen like iOS's Close; hidden while a match runs (it could not close then)
+    private val hpClose by lazy { Button(this).apply { text = "Close"; textSize = 18f; setTextColor(Color.GRAY); setBackgroundColor(0xFF1A1A1A.toInt()); setOnClickListener { closeHp() } } }
+    private fun syncHpClose() { hpClose.visibility = if (link.phase == "countdown" || link.phase == "fight") View.GONE else View.VISIBLE }
     private fun openHp() {
         if (hpScreen.visibility == View.VISIBLE) return
         hpScreen.visibility = View.VISIBLE; overlay.visibility = View.INVISIBLE // nothing draws the picture under it
+        syncHpClose()
         window.attributes = window.attributes.apply { screenBrightness = 1f } // as bright as it goes
     }
     private fun closeHp() {
@@ -161,7 +166,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         link.onChargeFail = { chargeSound.fail() }
         hitSound; chargeSound; gameSound // load the sounds now, so the first hit / charge is not silent
         link.onHp = { info -> runOnUiThread { hpBar.info = info } }
-        link.onPhase = { p -> runOnUiThread { if (p == "countdown" || p == "fight") openHp() else if (p == "setup") closeHp() } } // a match starts / is over
+        link.onPhase = { p -> runOnUiThread { syncHpClose(); if (p == "countdown" || p == "fight") openHp() else if (p == "setup") closeHp() } } // a match starts / is over
         link.onFlash = { ms ->
             torchUntilMs = maxOf(torchUntilMs, SystemClock.elapsedRealtime() + ms) // another hit can only make it last longer
             if (ms > 0) { hitSound.play(); vibe.hit() }
