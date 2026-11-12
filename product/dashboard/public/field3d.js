@@ -237,6 +237,7 @@ function makeTags(debugGroup) {
 }
 
 // ---- avatar ----
+const _up = V(), _side = V(), _basis = new THREE.Matrix4(); // the scanned stick's roll
 const between = (m, a, b) => { // unit-height y-axis mesh from a to b
   const d = V().subVectors(b, a), L = Math.max(d.length(), 1e-4);
   m.position.copy(a).addScaledVector(d, .5); m.scale.set(1, L, 1);
@@ -356,7 +357,7 @@ function makeAvatar(slot) {
     const g = m && stickGeometry(m);
     stick.geometry = g || plainStick;
     stickMat.color.set(g ? STICK_COLOR : metal); stickMat.metalness = g ? 0 : .85; stickMat.roughness = g ? .8 : .28; // the scanned one: solid brown wood
-    stick.userData.r = g ? 1 : .02; stick.userData.glow = g ? 0 : .25; // solid brown; it still glows while charging
+    stick.userData.r = g ? 1 : .02; stick.userData.glow = g ? 0 : .25; stick.userData.scanned = !!g; // solid brown; it still glows while charging
     stickMat.needsUpdate = true;
   }
   const tipMat = new THREE.MeshBasicMaterial({ color: metal });
@@ -424,6 +425,10 @@ function makeAvatar(slot) {
     if (base && tipP) {
       const d = V().subVectors(tipP, base).normalize(); // held in both hands, more of it shows below them
       between(stick, base.clone().addScaledVector(d, -.08 - .22 * st.grip), tipP); stick.scale.x = stick.scale.z = stick.userData.r * st.thick; // thick: the holder shrinks it by the character's size, the stick is W.STICK_SCALE
+      if (stick.userData.scanned && p.up) { // a scanned model also turns with the stick's roll: its up as it lay when scanned (z) along the IMU's up across the stick
+        _up.set(p.up.x, p.up.y, p.up.z).addScaledVector(d, -_up.set(p.up.x, p.up.y, p.up.z).dot(d));
+        if (_up.lengthSq() > 1e-6) { _up.normalize(); stick.quaternion.setFromRotationMatrix(_basis.makeBasis(_side.crossVectors(d, _up), d, _up)); } // x = side = along × up (stickscan.js)
+      }
       tip.position.copy(tipP);
       stickMat.emissiveIntensity = p.charging ? .5 + 1.2 * (p.charge ?? 0) * (.7 + .3 * Math.sin(st.time * 30)) : stick.userData.glow;
       tip.scale.setScalar(.04 * st.thick * (1 + (p.charging ? (p.charge ?? 0) : 0)));

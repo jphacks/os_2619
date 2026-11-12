@@ -102,10 +102,12 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     p.src = src === 'hold' ? (p.src === 'start' ? 'start' : 'hold') : src;
     p.chest.copy(v3(p.body.t));
     const sk = est?.stick?.[p.slot];
-    if (sk?.dir) { p.dir.copy(v3(sk.dir)).normalize(); p.stickSrc = sk.src === 'calib-ar' ? 'IMU（キャリブ時の向き基準）' : 'IMU（立ち位置の向き基準）'; }
+    p.up = null; // across the stick, for its roll (a scanned model's branches turn with it); null: unknown, drawn without roll
+    if (sk?.dir) { p.dir.copy(v3(sk.dir)).normalize(); p.up = sk.up ? v3(sk.up) : null; p.stickSrc = sk.src === 'calib-ar' ? 'IMU（キャリブ時の向き基準）' : 'IMU（立ち位置の向き基準）'; }
     else if (p.imu) {
-      const v = rotQ(p.imu.q, W.STICK.axis);
-      p.dir.copy(v3(W.app3(W.bodyPose(st.pos, st.yaw).R, [dot(v, W.STICK.axis), dot(v, W.STICK.up), dot(v, IMU_SIDE)]))).normalize();
+      const R = W.bodyPose(st.pos, st.yaw).R, inBody = v => [dot(v, W.STICK.axis), dot(v, W.STICK.up), dot(v, IMU_SIDE)];
+      p.dir.copy(v3(W.app3(R, inBody(rotQ(p.imu.q, W.STICK.axis))))).normalize();
+      p.up = v3(W.app3(R, inBody(rotQ(p.imu.q, W.STICK.up))));
       p.stickSrc = 'IMU';
     } else { p.dir.copy(v3(W.app3(p.body.R, [1, 0, 0]))); p.stickSrc = 'IMU なし（前向き）'; }
     p.base.copy(v3(W.handAt(p.body, p.dir.toArray()))); // the hand swings with the stick, the arm turning at the shoulder

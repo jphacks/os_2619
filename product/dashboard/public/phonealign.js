@@ -81,7 +81,7 @@ function robustFit(c) {
  * - get(slot): { src: 'ar'|'localize'|null, aligned, theta, t, rms, n, used, lastFix, world_T_ar, chest, fwd, yaw, cam (world_T_arcam),
  *   trail,
  *   sightings (last tags message: [{ id, p (world), R (tag axes in world, 3x3 row-major), d }]), k, online, calibAt, hz, lastT }.
- * - estimate(now): { slots: { A, B }, stick: { A: { dir, base, src } }, warn }; stick[s] is s's own IMU stick.
+ * - estimate(now): { slots: { A, B }, stick: { A: { dir, up, base, src } }, warn }; stick[s] is s's own IMU stick (up: across it, for its roll).
  * - onFieldChange(): the field tags moved (setField): refit from the stored sightings. Also subscribed to world.onFieldChange.
  */
 export function createPhoneAlign(opts = {}) {
@@ -257,15 +257,14 @@ export function createPhoneAlign(opts = {}) {
    *  fixed stick axis (IMU +Y; opts.axis[s] may override it) - so the swing that is detected and the
    *  direction it fires along come from one definition. Elevation is absolute; heading is relative to the yaw at Calibrate.
    *  Without euler: imu.q, tared with the stick forward and level, and the default axis. */
-  function stickBody(s, st) {
-    const axis = o.axis?.[s] ?? W.STICK.axis;
+  function stickBody(s, st, axis = o.axis?.[s] ?? W.STICK.axis) {
     if (st.imu.euler) {
       const d = eulerRot(st.imu.euler, axis), el = Math.asin(Math.max(-1, Math.min(1, d[2])));
       const hd = (o.headingSign?.() ?? 1) * (Math.atan2(d[1], d[0]) - st.yaw0); // + = turned left (counter-clockwise seen from above); headingSign -1 turns the sword's left-right round
       return [Math.cos(el) * Math.cos(hd), Math.sin(el), -Math.cos(el) * Math.sin(hd)];
     }
     if (!st.imu.q) return null;
-    const v = rotQw(st.imu.q, W.STICK.axis);
+    const v = rotQw(st.imu.q, axis);
     return [dot(v, W.STICK.axis), dot(v, W.STICK.up), dot(v, IMU_SIDE)];
   }
   /** Stick direction in the field world: the body frame at calibration is turned to the world by the phone's yaw at
@@ -275,9 +274,12 @@ export function createPhoneAlign(opts = {}) {
     const body = stickBody(s, st); if (!body) return null;
     let yaw0 = W.START[s].yaw, src = 'start';
     if (st.calibPose && g.theta != null) { const f = rotY(g.theta, qrot(st.calibPose.q, [0, 0, -1])); yaw0 = Math.atan2(-f[2], f[0]); src = 'calib-ar'; }
-    const dir = W.app3(W.bodyPose([0, 0, 0], yaw0).R, body);
+    const R = W.bodyPose([0, 0, 0], yaw0).R, dir = W.app3(R, body);
+    // up: the sensor's W.STICK.up axis turned the same way, so the stick's roll about its own axis is known too (a scanned model's
+    // branches turn with it: field3d.js). Taken across the stick: what of it lies along the stick is dropped there.
+    const ub = stickBody(s, st, W.STICK.up), up = ub && W.app3(R, ub);
     const base = g.chest ? W.handAt(W.bodyPose(g.chest, g.yaw ?? yaw0, g.chest[1]), dir) : null;
-    return { dir, base, src };
+    return { dir, up, base, src };
   }
 
   /** Everything at once; `now` in PC seconds (k.t clock). */
