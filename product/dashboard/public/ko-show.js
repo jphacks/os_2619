@@ -46,14 +46,14 @@ export function timeline(t, ko) {
 }
 
 // The start (the 3 s countdown, game.js setPhase): the camera visits A, then B, each with a name card; "VS" between them, the camera
-// pulls back, "READY", and "FIGHT!" as the match starts. t from the countdown's start; the match starts at INTRO.fight.
-export const INTRO = { a: 0, b: 1.05, vs: 2.05, ready: 2.35, fight: 3, end: 3.8, zoom: 1.5 };
+// pulls back; "3", "2", "1" one a second over it all, and "FullStick!" as the match starts. t from the countdown's start; the match starts at INTRO.fight.
+export const INTRO = { a: 0, b: 1.05, vs: 2.05, fight: 3, end: 3.8, zoom: 1.5 };
 export function introLine(t) {
   const I = INTRO, k = t < I.vs ? Math.min(1, t / .35) : 1 - inOut((t - I.vs) / .6);
   const on = t < I.b ? 'A' : t < I.vs ? 'B' : null;
   const x = t < I.b ? .36 : t < I.vs ? .64 : .5;
   return { scale: 1, k: 0, zoom: 1 + (I.zoom - 1) * (on ? outCubic(k * 1.4) : Math.max(0, k)), on, x, lastOn: t < I.vs ? null : 'B',
-    cardA: t >= I.a && t < I.fight, cardB: t >= I.b && t < I.fight, vs: t >= I.vs && t < I.fight, ready: t >= I.ready && t < I.fight, fight: t >= I.fight && t < I.end, done: t >= I.end };
+    cardA: t >= I.a && t < I.fight, cardB: t >= I.b && t < I.fight, vs: t >= I.vs && t < I.fight, count: t < I.fight ? Math.ceil(I.fight - t) : 0, fight: t >= I.fight && t < I.end, done: t >= I.end };
 }
 
 const STATS = [
@@ -76,7 +76,7 @@ export function createKoShow(hud, { colorOf, nameOf, onBurst = () => {}, sound =
       <div class="ko-rank"><small>RANK</small><b></b></div>
       <div class="ko-hint">R でもう一回</div></div>
     <div class="mi"><div class="mi-card A"><small>PLAYER</small><b>A</b><em></em></div><div class="mi-card B"><small>PLAYER</small><b>B</b><em></em></div>
-      <div class="mi-vs">VS</div><div class="mi-call"><span class="ready">READY</span><span class="fight">FIGHT!</span></div></div>`;
+      <div class="mi-vs">VS</div><div class="mi-call"><span class="num"></span><span class="fight">FullStick!</span></div></div>`;
   hud.append(el);
   const $ = q => el.querySelector(q), color = new THREE.Color();
   let at = null, show = null, last = { burst: false, stamp: false, result: false }, t = 0;
@@ -129,7 +129,11 @@ export function createKoShow(hud, { colorOf, nameOf, onBurst = () => {}, sound =
       if (intro) {
         intro.t += dt; const s = introLine(intro.t);
         if (s.fight && !el.classList.contains('fight')) sound('fight');
-        setFlags({ cardA: s.cardA, cardB: s.cardB, vs: s.vs, ready: s.ready && !s.fight, fight: s.fight });
+        if (s.count && s.count !== intro.count) { // each number slams in afresh, with its beep
+          intro.count = s.count; $('.mi-call .num').textContent = s.count;
+          el.classList.remove('count'); void el.offsetWidth; el.classList.add('count'); sound('count');
+        }
+        setFlags({ cardA: s.cardA, cardB: s.cardB, vs: s.vs, count: s.count > 0, fight: s.fight });
         if (s.done) { intro = null; el.className = 'ko'; return null; }
         return { ...s, zoom: reduce ? 1 : s.zoom, color, focus: s.on ? intro.players[s.on] : null };
       }

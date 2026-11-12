@@ -308,6 +308,23 @@ export function createAudio({ base = 'audio/' } = {}) {
     voice(key('guard', kind), name, { pan, gain: db(kind === 'up' ? MIX.shot - 4 : MIX.hit - 2) });
   }
   function play(name, { gain = 1, pan = 0, rate = 1 } = {}) { return !!voice(key('play', name), name, { gain, pan, rate, vary: false }); }
+  // the start's countdown (ko-show.js), synthesised (there is no file): 'tick' for 3, 2, 1 a short bright beep; 'go' for FullStick!
+  // a chord that sweeps up an octave and rings out
+  function countdown(kind) {
+    if (ctx.state !== 'running') return;
+    const go = kind === 'go', t = ctx.currentTime, dur = go ? 1.2 : .17, peakG = db(go ? -6 : -9);
+    const out = node(0), lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = go ? 4200 : 3000;
+    lp.connect(out).connect(bus.sfx);
+    out.gain.setValueAtTime(0, t); out.gain.linearRampToValueAtTime(peakG, t + .008);
+    out.gain.setValueAtTime(peakG, t + dur * .45); out.gain.exponentialRampToValueAtTime(.0001, t + dur);
+    const notes = go ? [523.25, 659.25, 783.99, 1046.5] : [988];
+    for (const f of notes) {
+      const o = ctx.createOscillator(), g = node(1 / notes.length); o.type = go ? 'sawtooth' : 'square';
+      o.frequency.setValueAtTime(go ? f / 2 : f, t); if (go) o.frequency.exponentialRampToValueAtTime(f, t + .14);
+      o.connect(g).connect(lp); o.start(t); o.stop(t + dur + .05);
+    }
+    setTimeout(() => { out.disconnect(); lp.disconnect(); }, (dur + .3) * 1000);
+  }
   /** The voices a game sound (shot / hit / special / guard) would start, without playing them: [{ name, gain (linear, incl.
    *  loudness norm), rate, offset, dur, rel, fade }]. The players' phones play the same (app.js phoneSound). */
   let capture = null;
@@ -345,7 +362,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     load, unlock,
     get unlocked() { return ctx.state === 'running'; }, get loaded() { return loaded; },
     setVolume, get volumes() { return { ...vol }; }, setMuted, get muted() { return muted; },
-    bgm, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, chargeFail, describe, aura, guard, play, stopAll, dispose,
+    bgm, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, chargeFail, describe, aura, guard, play, countdown, stopAll, dispose,
     peak, // output peak (linear) over the last ~43 ms, for meters / tests
     ctx,
   };

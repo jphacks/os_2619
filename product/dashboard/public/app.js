@@ -163,6 +163,7 @@ const koShow = createKoShow(hud, {
     stage.drone.event('hit', { target: loser.slot, pos: at, power: 1 }); stage.state.shake = 2.2; stage.field.cheer();
   },
   sound(kind) {
+    if (kind === 'count' || kind === 'fight') sfx?.countdown(kind === 'fight' ? 'go' : 'tick'); // 3, 2, 1, FullStick!
     const w = game.winner; if (kind === 'ko' || kind === 'burst') sfx?.hit(w?.element ?? 'thunder', 0, 1, 'l');
     if (kind === 'result' && w) { sfx?.play('win'); if (!sfx?.muted) hub.send?.({ type: 'sfx', slot: w.slot, voices: [{ file: 'win', gain: 1, rate: 1 }] }); } // the fanfare, here and on the winner's phone (none on a draw)
   },
