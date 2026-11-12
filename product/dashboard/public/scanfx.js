@@ -5,7 +5,7 @@
 //    there as a ball of light
 //  - built: the ball explodes, the screen shakes and the stick is there; gold and silver sparks dance round it, the mahoujin turns
 //    gold, the camera closes in on the stick, "New Stick" and then an OK button fade in (a boom and a bright chime). OK goes back to
-//    the game screen (onOk). The sounds are synthesised here (Web Audio, no files).
+//    the game screen (onOk). The sounds are synthesised here (Web Audio, no files); the stick's entrance is an organ fanfare.
 // mountScanFx(section, { onOk }) -> { setActive(on) }; it draws only while its screen is shown.
 import * as THREE from 'three';
 import { parseDesign } from './stickscan.js';
@@ -133,14 +133,20 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
     o.connect(og).connect(c.destination); n.connect(lp).connect(ng).connect(c.destination);
     o.start(t); o.stop(t + 1); n.start(t); n.stop(t + .8);
   }
-  function chime() { // a quick rising major arpeggio over a held chord, each note a bell (sine + overtones, fast attack, long ring)
+  // an organ fanfare: four-note chords climbing (the top voice C5 D5 E5 G5, landing on C6), the last one held. Each note a drawbar
+  // organ (sines on the 16' 8' 4' 2⅔' 2' footages, a little vibrato), quick swell in and out like a pipe.
+  const FANFARE = [[.0, .16, [261.63, 329.63, 392, 523.25]], [.17, .16, [293.66, 392, 493.88, 587.33]], [.34, .16, [329.63, 392, 523.25, 659.25]],
+    [.51, .22, [392, 523.25, 659.25, 783.99]], [.76, 1.7, [523.25, 659.25, 783.99, 1046.5]]]; // [start s, length s, Hz]
+  function chime() {
     const c = audio(); if (!c) return;
-    const t0 = c.currentTime + .08, out = c.createGain(); out.gain.value = .22; out.connect(c.destination);
-    const bell = (f, at, len) => { for (const [m, v] of [[1, 1], [2, .35], [3.01, .12]]) {
-      const o = c.createOscillator(), g = c.createGain(); o.frequency.value = f * m; o.connect(g).connect(out);
-      g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(v, at + .01); g.gain.exponentialRampToValueAtTime(.0005, at + len); o.start(at); o.stop(at + len); } };
-    [1046.5, 1318.5, 1568, 2093].forEach((f, i) => bell(f, t0 + i * .07, 1.4));
-    for (const f of [523.25, 659.25, 783.99]) bell(f, t0 + .28, 2.2);
+    const t0 = c.currentTime + .05, out = c.createGain(), vib = c.createOscillator(), vibG = c.createGain();
+    out.gain.value = .045; out.connect(c.destination); vib.frequency.value = 6; // 20 sines at once: kept low under the boom vibG.gain.value = 2.5; vib.connect(vibG); vib.start(t0); vib.stop(t0 + 2.8);
+    for (const [at, len, chord] of FANFARE) for (const f of chord) for (const [m, v] of [[.5, .5], [1, 1], [2, .7], [3, .35], [4, .3]]) {
+      const o = c.createOscillator(), g = c.createGain(), s = t0 + at, e = s + len;
+      o.frequency.value = f * m; vibG.connect(o.detune); o.connect(g).connect(out);
+      g.gain.setValueAtTime(0, s); g.gain.linearRampToValueAtTime(v, s + .02); g.gain.setValueAtTime(v, e - .04); g.gain.linearRampToValueAtTime(0, e + (len > 1 ? .5 : .03));
+      o.start(s); o.stop(e + .6);
+    }
   }
 
   // ---- state ----
