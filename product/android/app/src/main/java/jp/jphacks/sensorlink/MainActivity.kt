@@ -532,10 +532,8 @@ class Overlay(private val a: MainActivity) : View(a) {
 }
 
 /**
- * Match mode's HP display (the top half of the screen; MainActivity flips it upside down), on black.
- * Above: the opponent's picture and beside it a plain bar, round at both ends, in the opponent's colour. The two shrink toward the top
- * centre as the opponent goes away (drawn size ∝ 1 / distance, as in perspective). Below: "あなた" and this player's bar across the
- * whole width, raised (a darker base under it, shaded top to bottom, a gloss, a bevelled rim) and cut into ten.
+ * Match mode HP display, mirrored vertically by MainActivity. Both HP bars are flat,
+ * with parallel slanted ends; the opponent and avatar still shrink with distance.
  */
 class HpBar(a: Activity) : View(a) {
     var info = HpInfo(100.0, 100.0, null, "wizard", 100.0, 100.0, 0.0)
@@ -544,9 +542,8 @@ class HpBar(a: Activity) : View(a) {
         .mapValues { (_, id) -> lazy { android.graphics.BitmapFactory.decodeResource(resources, id) } }
     private var near = 1f // the opponent's drawn size now, eased toward its distance's (the distance comes about 10 times a second)
     private val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private val pill = Path()
+    private val slash = Path()
     private val box = RectF()
-    private val gloss = RectF()
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat()
@@ -578,67 +575,51 @@ class HpBar(a: Activity) : View(a) {
         val bh = size * .2f
         val bx = x0 + size + w * .04f
         box.set(bx, cy - bh / 2, w * .95f, cy + bh / 2)
-        p.color = 0xFF2A2A2E.toInt()
-        c.drawRoundRect(box, bh / 2, bh / 2, p)
-        c.save()
-        pill.reset(); pill.addRoundRect(box, bh / 2, bh / 2, Path.Direction.CW); c.clipPath(pill)
-        p.color = if (slot == "A") 0xFFFF6600.toInt() else 0xFF0078FF.toInt() // the players' colours (field3d.js TEAM)
-        c.drawRect(box.left, box.top, box.left + box.width() * share(info.foeHp, info.foeMax), box.bottom, p)
-        c.restore()
+        drawSlashBar(c, box, share(info.foeHp, info.foeMax),
+            if (slot == "A") 0xFFFF6600.toInt() else 0xFF0078FF.toInt()) // field3d.js TEAM
     }
 
     private fun drawMine(c: Canvas, w: Float, h: Float) {
-        val share = share(info.hp, info.max)
+        val remaining = share(info.hp, info.max)
         val gx = w * .03f
         val gw = w - 2 * gx
-        val gh = minOf(h * .2f, w * .16f)
+        val gh = minOf(h * .12f, w * .095f)
         val gy = h * .74f - gh / 2
-        val r = gh / 2
         p.shader = null; p.style = Paint.Style.FILL
-        // the label, small, over the bar's left end
-        p.color = 0xD9FFFFFF.toInt(); p.textSize = gh * .3f; p.typeface = android.graphics.Typeface.DEFAULT_BOLD
-        c.drawText("あなた", gx + r * .5f, gy - gh * .2f, p)
-        // the base: the bar's thickness, seen under it
-        box.set(gx, gy + gh * .12f, gx + gw, gy + gh * 1.12f)
-        p.color = 0xFF44444E.toInt()
-        c.drawRoundRect(box, r, r, p)
+        p.color = 0xD9FFFFFF.toInt(); p.textSize = gh * .42f
+        p.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        c.drawText("あなた", gx + gh * .15f, gy - gh * .3f, p)
         box.set(gx, gy, gx + gw, gy + gh)
-        c.save()
-        pill.reset(); pill.addRoundRect(box, r, r, Path.Direction.CW); c.clipPath(pill)
-        // what was lost: dark red, deepest at the edges
-        p.shader = vertical(gy, gh, intArrayOf(0xFF120303.toInt(), 0xFF3A0A0A.toInt(), 0xFF120303.toInt()))
-        c.drawRect(box, p)
-        // what is left: green, yellow under half, red under a quarter; lit from above
-        val base = when { share > .5f -> 0xFF22D046.toInt(); share > .25f -> 0xFFFFC21A.toInt(); else -> 0xFFFF2A2A.toInt() }
-        p.shader = vertical(gy, gh, intArrayOf(mix(base, Color.WHITE, .45f), base, mix(base, Color.BLACK, .5f)))
-        c.drawRect(gx, gy, gx + gw * share, gy + gh, p)
-        // the gloss on the upper half
-        gloss.set(gx + r * .35f, gy + gh * .08f, gx + gw - r * .35f, gy + gh * .46f)
-        p.shader = android.graphics.LinearGradient(0f, gloss.top, 0f, gloss.bottom, 0x8CFFFFFF.toInt(), 0x00FFFFFF, android.graphics.Shader.TileMode.CLAMP)
-        c.drawRoundRect(gloss, gloss.height() / 2, gloss.height() / 2, p)
-        // the cuts: every tenth, the half longer; engraved (a dark line with a light one beside it)
-        p.shader = null; p.strokeWidth = maxOf(2f, gh * .035f)
-        for (i in 1..9) {
-            val x = gx + gw * i / 10f
-            val inset = if (i == 5) gh * .1f else gh * .26f
-            p.color = 0xA0000000.toInt(); c.drawLine(x, gy + inset, x, gy + gh - inset, p)
-            p.color = 0x50FFFFFF; c.drawLine(x + p.strokeWidth, gy + inset, x + p.strokeWidth, gy + gh - inset, p)
+        val color = when {
+            remaining > .5f -> 0xFF22D046.toInt()
+            remaining > .25f -> 0xFFFFC21A.toInt()
+            else -> 0xFFFF2A2A.toInt()
         }
-        c.restore()
-        // the rim: light on top, dark below
-        p.style = Paint.Style.STROKE; p.strokeWidth = maxOf(3f, gh * .07f)
-        p.shader = vertical(gy, gh, intArrayOf(Color.WHITE, 0xFF8A8A96.toInt(), 0xFF4A4A54.toInt()))
-        c.drawRoundRect(box, r, r, p)
-        p.style = Paint.Style.FILL; p.shader = null
+        drawSlashBar(c, box, remaining, color)
     }
 
-    private fun vertical(y: Float, h: Float, colors: IntArray) =
-        android.graphics.LinearGradient(0f, y, 0f, y + h, colors, null, android.graphics.Shader.TileMode.CLAMP)
+    private fun drawSlashBar(c: Canvas, bounds: RectF, remaining: Float, color: Int) {
+        p.shader = null; p.style = Paint.Style.FILL
+        slashPath(bounds.left, bounds.top, bounds.right, bounds.bottom)
+        p.color = 0xFF252A32.toInt()
+        c.drawPath(slash, p)
+        if (remaining > 0f) {
+            slashPath(bounds.left, bounds.top, bounds.left + bounds.width() * remaining, bounds.bottom)
+            p.color = color
+            c.drawPath(slash, p)
+        }
+    }
 
-    private fun mix(a: Int, b: Int, t: Float) = Color.rgb(
-        (Color.red(a) + (Color.red(b) - Color.red(a)) * t).toInt(),
-        (Color.green(a) + (Color.green(b) - Color.green(a)) * t).toInt(),
-        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t).toInt())
+    private fun slashPath(left: Float, top: Float, right: Float, bottom: Float) {
+        val slant = minOf((bottom - top) * .38f, (right - left) * .25f)
+        slash.reset()
+        // MainActivity mirrors this view vertically, so these edges appear as / on screen.
+        slash.moveTo(left, top)
+        slash.lineTo(right - slant, top)
+        slash.lineTo(right, bottom)
+        slash.lineTo(left + slant, bottom)
+        slash.close()
+    }
 
     companion object {
         const val REF_DIST = 1.2 // m: this near or nearer, the opponent at full size (the players start 2.4 m apart: half size)

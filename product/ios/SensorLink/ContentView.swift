@@ -197,10 +197,9 @@ struct LanSheet: View {
     }
 }
 
-/// The HP screen (match mode), on black, at full brightness while it is up (Model.openHp); the same as Android's HpBar. The top half:
-/// above, the opponent's picture and beside it a plain bar, round at both ends, in the opponent's colour, the two shrinking toward the
-/// top centre as the opponent goes away (drawn size ∝ 1 / distance, as in perspective); below, a small "あなた" and this player's bar
-/// across the whole width, raised (a darker base under it, shaded top to bottom, a gloss, a bevelled rim) and cut into ten. A small Close at the bottom.
+/// The HP screen (match mode), on black and at full brightness. The display fills the top half,
+/// mirrored vertically to match Android. Both HP bars are flat with parallel slanted ends.
+/// The opponent's avatar and bar shrink toward the vanishing point as distance increases.
 struct HpScreen: View {
     @EnvironmentObject var model: Model
     static let refDist = 1.2 // m: this near or nearer, the opponent at full size (the players start 2.4 m apart: half size)
@@ -211,14 +210,18 @@ struct HpScreen: View {
             let w = g.size.width, h = g.size.height / 2, info = model.hp
             ZStack(alignment: .topLeading) {
                 Color.black
-                if let slot = info.foeSlot { // nil: a PC too old to say who the opponent is
-                    foe(info, slot: slot, w: w, h: h)
+                ZStack(alignment: .topLeading) {
+                    if let slot = info.foeSlot { // nil: a PC too old to say who the opponent is
+                        foe(info, slot: slot, w: w, h: h)
+                            .frame(width: w, height: h, alignment: .topLeading)
+                            .scaleEffect(near(info.dist), anchor: UnitPoint(x: 0.5, y: 0.02)) // toward the vanishing point, the top centre
+                            .animation(.easeOut(duration: 0.15), value: near(info.dist))
+                    }
+                    mine(info, w: w, h: h)
                         .frame(width: w, height: h, alignment: .topLeading)
-                        .scaleEffect(near(info.dist), anchor: UnitPoint(x: 0.5, y: 0.02)) // toward the vanishing point, the top centre
-                        .animation(.easeOut(duration: 0.15), value: near(info.dist))
                 }
-                mine(info, w: w, h: h)
-                    .frame(width: w, height: h, alignment: .topLeading)
+                .frame(width: w, height: h, alignment: .topLeading)
+                .scaleEffect(x: 1, y: -1) // mirror the HP display vertically, as Android's HpBar does
                 VStack {
                     Spacer()
                     Button("Close") { model.closeHp() }
@@ -244,57 +247,67 @@ struct HpScreen: View {
             Image(picture).resizable().interpolation(.high)
                 .frame(width: size, height: size)
                 .offset(x: x0, y: cy - size / 2)
-            ZStack(alignment: .leading) {
-                Color(white: 0.17)
-                color.frame(width: bw * share(info.foeHp, info.foeMax))
-            }
-            .frame(width: bw, height: bh)
-            .clipShape(Capsule())
-            .offset(x: bx, y: cy - bh / 2)
+            SlashBar(progress: share(info.foeHp, info.foeMax), color: color)
+                .frame(width: bw, height: bh)
+                .offset(x: bx, y: cy - bh / 2)
         }
     }
 
     private func mine(_ info: HpInfo, w: CGFloat, h: CGFloat) -> some View {
-        let s: CGFloat = share(info.hp, info.max)
-        let gx: CGFloat = w * 0.03, gh: CGFloat = Swift.min(h * 0.2, w * 0.16)
-        let gw: CGFloat = w - 2 * gx, gy: CGFloat = h * 0.74 - gh / 2, r: CGFloat = gh / 2
-        let lw: CGFloat = Swift.max(1, gh * 0.035 / 2) // points: the cuts are drawn two lines wide
-        // what is left: green, yellow under half, red under a quarter
-        let base: [Double] = s > 0.5 ? [0.133, 0.816, 0.275] : s > 0.25 ? [1, 0.761, 0.102] : [1, 0.165, 0.165]
-        let tone: (Double, Double) -> Color = { to, t in Color(red: base[0] + (to - base[0]) * t, green: base[1] + (to - base[1]) * t, blue: base[2] + (to - base[2]) * t) }
-        let lost: [Color] = [Color(red: 0.07, green: 0.01, blue: 0.01), Color(red: 0.23, green: 0.04, blue: 0.04), Color(red: 0.07, green: 0.01, blue: 0.01)]
-        let rim: [Color] = [.white, Color(red: 0.54, green: 0.54, blue: 0.59), Color(red: 0.29, green: 0.29, blue: 0.33)]
+        let remaining = share(info.hp, info.max)
+        let gx: CGFloat = w * 0.03, gh: CGFloat = Swift.min(h * 0.12, w * 0.095)
+        let gw: CGFloat = w - 2 * gx, gy: CGFloat = h * 0.74 - gh / 2
+        let color: Color
+        if remaining > 0.5 {
+            color = Color(red: 0.133, green: 0.816, blue: 0.275)
+        } else if remaining > 0.25 {
+            color = Color(red: 1, green: 0.761, blue: 0.102)
+        } else {
+            color = Color(red: 1, green: 0.165, blue: 0.165)
+        }
         return ZStack(alignment: .topLeading) {
             Text("あなた")
-                .font(.system(size: gh * 0.3, weight: .bold))
+                .font(.system(size: gh * 0.42, weight: .medium))
                 .foregroundColor(Color.white.opacity(0.85))
-                .offset(x: gx + r * 0.5, y: gy - gh * 0.55)
-            Capsule() // the base: the bar's thickness, seen under it
-                .fill(Color(red: 0.267, green: 0.267, blue: 0.306))
+                .offset(x: gx + gh * 0.15, y: gy - gh * 0.72)
+            SlashBar(progress: remaining, color: color)
                 .frame(width: gw, height: gh)
-                .offset(x: gx, y: gy + gh * 0.12)
+                .offset(x: gx, y: gy)
+                .animation(.easeOut(duration: 0.25), value: remaining)
+        }
+    }
+}
+
+private struct SlashBar: View {
+    let progress: CGFloat
+    let color: Color
+
+    var body: some View {
+        GeometryReader { g in
             ZStack(alignment: .leading) {
-                LinearGradient(colors: lost, startPoint: .top, endPoint: .bottom) // what was lost: dark red, deepest at the edges
-                LinearGradient(colors: [tone(1, 0.45), tone(0, 0), tone(0, 0.5)], startPoint: .top, endPoint: .bottom) // lit from above
-                    .frame(width: gw * s)
-                LinearGradient(colors: [Color.white.opacity(0.55), Color.white.opacity(0)], startPoint: .top, endPoint: .bottom) // the gloss
-                    .frame(width: gw - r * 0.7, height: gh * 0.38)
-                    .clipShape(Capsule())
-                    .offset(x: r * 0.35, y: -gh * 0.23)
-                ForEach(1..<10, id: \.self) { k in // the cuts: every tenth, the half longer; engraved (a dark line, a light one beside it)
-                    HStack(spacing: 0) {
-                        Color.black.opacity(0.63).frame(width: lw)
-                        Color.white.opacity(0.31).frame(width: lw)
-                    }
-                    .frame(height: gh * (k == 5 ? 0.8 : 0.48))
-                    .offset(x: gw * CGFloat(k) / 10 - lw)
+                SlashShape().fill(Color(red: 0.145, green: 0.165, blue: 0.196))
+                    .frame(width: g.size.width, height: g.size.height)
+                if progress > 0 {
+                    SlashShape().fill(color)
+                        .frame(width: g.size.width * progress, height: g.size.height)
                 }
             }
-            .frame(width: gw, height: gh)
-            .clipShape(Capsule())
-            .overlay(Capsule().strokeBorder(LinearGradient(colors: rim, startPoint: .top, endPoint: .bottom), lineWidth: Swift.max(1.5, gh * 0.035))) // the rim: light on top, dark below
-            .offset(x: gx, y: gy)
-            .animation(.easeOut(duration: 0.25), value: s)
+            .frame(width: g.size.width, height: g.size.height, alignment: .leading)
         }
+    }
+}
+
+private struct SlashShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard rect.width > 0, rect.height > 0 else { return path }
+        let slant = Swift.min(rect.height * 0.38, rect.width * 0.25)
+        // HpScreen mirrors this shape vertically, so the visible ends slope like /.
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - slant, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + slant, y: rect.maxY))
+        path.closeSubpath()
+        return path
     }
 }
