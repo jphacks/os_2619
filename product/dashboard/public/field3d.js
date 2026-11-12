@@ -571,7 +571,7 @@ function makeAvatar(slot) {
   }
 
 
-  const _P0 = V(), _f = V(), _m = new THREE.Matrix4(), _s = new THREE.Matrix4(), _r = new THREE.Matrix4();
+  const _P0 = V(), _f = V(), _m = new THREE.Matrix4(), _s = new THREE.Matrix4(), _r = new THREE.Matrix4(), ROLL_AT = .65; // m: a dodge's roll turns the figure about its middle
   return {
     root, world, holder, hud, slot, setStick, setChara, get chara() { return chara; }, broken: false, // broken: blown to pieces at a KO (ko-shatter.js), hidden until the next match
     /** p.base / p.tip come in at the character's size (game.js shrink); the figure is posed at a person's size and the holder shrinks the drawing. */
@@ -595,9 +595,12 @@ function makeAvatar(slot) {
         p = { ...p, base: up(p.base), tip: up(p.tip) };
       }
       if (p?.body) _P0.set(p.body.t[0], 0, p.body.t[2]);
-      // a dodge (game.js): the whole figure and its stick lean to that side, about the floor under the chest
+      // a dodge (game.js): the whole figure and its stick lean to that side about the floor under the chest, roll about its own middle
+      // (ROLL_AT m up, at the figure's size) and hop off the floor, all about its forward axis
       if (p?.lean) _r.makeRotationAxis(_f.set(p.body.R[0], 0, p.body.R[6]).normalize(), p.lean); else _r.identity();
-      holder.matrix.makeTranslation(_P0.x, 0, _P0.z).multiply(_r).multiply(_s.makeScale(k, k, k)).multiply(_m.makeTranslation(-_P0.x, 0, -_P0.z)); holder.matrixWorldNeedsUpdate = true;
+      holder.matrix.makeTranslation(_P0.x, p?.hop ?? 0, _P0.z);
+      if (p?.roll) holder.matrix.multiply(_m.makeTranslation(0, ROLL_AT * k, 0)).multiply(_s.makeRotationAxis(_f.set(p.body.R[0], 0, p.body.R[6]).normalize(), p.roll)).multiply(_m.makeTranslation(0, -ROLL_AT * k, 0));
+      holder.matrix.multiply(_r).multiply(_s.makeScale(k, k, k)).multiply(_m.makeTranslation(-_P0.x, 0, -_P0.z)); holder.matrixWorldNeedsUpdate = true;
       const r = this.pose(dt, p);
       hud.visible = world.visible;
       if (k !== 1) hpSprite.position.y = hpSprite.position.y * k + .15; // over the small head

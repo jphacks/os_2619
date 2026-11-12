@@ -117,18 +117,22 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     dodgeOffset(p);
     shrink(p);
   }
-  // Dodge (actions.js: a spike of the chest's sideways acceleration): the character leaps DODGE.dist m to that side in DODGE.out s,
-  // leaning into it (p.lean, rad: field3d.js tilts the figure), then drifts back to where the player really is over DODGE.back s.
-  // Shots hit it where it is drawn, so a dodge in time gets out of a shot's way.
-  const DODGE = { dist: 2.5, out: .25, back: 1.2, lean: 22 * Math.PI / 180 }; // 11/13: a big leap, 2.5 m (was 0.5 m in 0.15 s)
+  // Dodge (actions.js: a spike of the chest's sideways acceleration): the character rolls DODGE.dist m to that side in DODGE.out s (one
+  // whole turn about its forward axis, p.roll), stays there, and DODGE.back s before DODGE.stay is up hops back sideways to where the
+  // player really is (p.hop m off the floor at the top, leaning into the jump: p.lean). field3d.js turns and lifts the drawn figure;
+  // shots hit it where it is on the floor, so a dodge in time gets out of a shot's way.
+  const DODGE = { dist: 2.5, out: .45, stay: 2, back: .5, hop: .45, lean: 22 * Math.PI / 180 }; // 11/13: a big roll out, a hop back after 2 s
   function dodgeOffset(p) {
     const d = p.dodge, t = d ? now() - d.t0 : Infinity;
-    if (t > DODGE.out + DODGE.back) { p.dodge = null; p.lean = 0; return; }
-    const k = t < DODGE.out ? 1 - (1 - t / DODGE.out) ** 3 : .5 * (1 + Math.cos(Math.PI * (t - DODGE.out) / DODGE.back)); // fast out, eased back
+    p.roll = p.hop = p.lean = 0;
+    if (t > DODGE.stay) { p.dodge = null; return; }
+    const back = DODGE.stay - DODGE.back, u = Math.max(0, (t - back) / DODGE.back);
+    const k = t < DODGE.out ? 1 - (1 - t / DODGE.out) ** 3 : t < back ? 1 : 1 - u * u * (3 - 2 * u); // fast out, held, hopped back
     const r = v3(W.app3(p.body.R, [0, 0, 1])).setY(0).normalize().multiplyScalar(d.side * DODGE.dist * k); // the body's right
     p.body = { R: p.body.R, t: [p.body.t[0] + r.x, p.body.t[1], p.body.t[2] + r.z] };
     for (const v of [p.chest, p.base, p.tip]) v.add(r);
-    p.lean = d.side * DODGE.lean * k;
+    if (t < DODGE.out) { const s = t / DODGE.out; p.roll = d.side * 2 * Math.PI * s * s * (3 - 2 * s); } // a whole roll on the way out
+    if (t >= back) { p.hop = DODGE.hop * Math.sin(Math.PI * u); p.lean = -d.side * DODGE.lean * Math.sin(Math.PI * u); }
   }
   /** The player's character is smaller than a person (W.CHARA_SCALE, cfg.chara): the chest and the hand are drawn in toward the floor
    *  under the chest by its scale, the stick shortened to W.STICK_SCALE, so hits, shots and the drawn figure all agree. p.body stays the person's (full size): field3d.js poses the figure
