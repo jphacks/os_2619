@@ -296,6 +296,9 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     // MARK: stick scan (Scan.swift); the button and the instructions are in ContentView
 
     func scanStart() { scan.start(); scanning = true }
-    func scanFinish() { scan.finish(); scanning = false; showToast("Sent: the PC builds the model") }
+    func scanFinish() {
+        scan.finish(); scanning = false
+        showToast(lanUp ? "Sent: the PC builds the model (saved on the phone too)" : "PC not connected: saved on the phone. Send it later from Scan > Saved")
+    func resendScan(_ u: URL) { showToast(lanUp && scan.resend(u) ? "Sent: the PC builds the model" : "Not sent: connect to the PC first (LAN)") }
     func scanCancel() { scan.cancel(); scanning = false }
 }
