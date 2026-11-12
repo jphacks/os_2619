@@ -127,11 +127,14 @@ function setRuneScale(v) {
 // this file (not in git). A dashboard sends { type: 'setStick', slot, model | null }; every dashboard (now and on hello) and the slot's
 // phone get { type: 'stick', slot, model }.
 const sticksFile = join(root, 'sticks.json');
-// v 2 only (shape: ring centres c, radii r per angle); a v 1 model (colours) saved by an older build is dropped on load
-const okStick = m => m && typeof m === 'object' && m.v === 2 && m.length > .1 && m.length < 2 && Number.isInteger(m.rings) && Number.isInteger(m.around)
-  && m.rings > 1 && m.rings <= 256 && m.around > 2 && m.around <= 64
-  && Array.isArray(m.r) && m.r.length === m.rings * m.around && m.r.every(v => v > 0 && v < .2)
-  && Array.isArray(m.c) && m.c.length === 2 * m.rings && m.c.every(v => Math.abs(v) < .3);
+// v 3 only (a tree: nodes [side, along], edges, thickness r [grip, tip]); older models (v 1 colours, v 2 rings) are dropped on load
+const okStick = m => m && typeof m === 'object' && m.v === 3 && m.length > .1 && m.length < 2
+  && Array.isArray(m.r) && m.r.length === 2 && m.r.every(v => v > 0 && v < .2)
+  && Array.isArray(m.nodes) && m.nodes.length >= 2 && m.nodes.length <= 1024
+  && m.nodes.every(n => Array.isArray(n) && n.length === 2 && Math.abs(n[0]) < 1 && Math.abs(n[1]) <= m.length)
+  && Number.isInteger(m.tip) && m.tip > 0 && m.tip < m.nodes.length
+  && Array.isArray(m.edges) && m.edges.length <= 1024
+  && m.edges.every(e => Array.isArray(e) && e.length === 2 && e.every(i => Number.isInteger(i) && i >= 0 && i < m.nodes.length) && e[0] !== e[1]);
 let sticks = {}; try { sticks = Object.fromEntries(Object.entries(JSON.parse(readFileSync(sticksFile, 'utf8')) ?? {}).filter(([, m]) => okStick(m))); } catch {}
 function setStick(slot, model) {
   if (!SLOTS.includes(slot) || (model !== null && !okStick(model))) return;
