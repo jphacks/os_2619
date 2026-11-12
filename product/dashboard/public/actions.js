@@ -6,11 +6,11 @@ import { cross, dot, norm, qrot } from './map.js';
 
 const D = Math.PI / 180;
 const CHARGE_RMS = { start: 120, keep: 90 }; // °/s: see the gyro charge below
-const DODGE_ACC = 6, DODGE_DT = .08; // m/s², s: see Dodge below
+const DODGE_ACC = 3.5, DODGE_V = .25, DODGE_DT = .08; // m/s², m/s, s: see Dodge below (11/13: lowered from 6 m/s², 0.4 m/s for a lighter sidestep)
 export const ACTIONS = [
   { name: 'Charge', how: 'only while the stick is raised 45° or more; gyro only: starts when the stick moved 120°/s RMS over the last second and changed its turning direction 4+ times (stick circled or shaken at the base), then keeps going at 90°/s and 3+ times; slower than a swing' },
   { name: 'Swing', how: 'stick turns faster than 300°/s through more than 60° and stops dead (from over 250°/s to under 100°/s within 0.12 s); direction plus start and stop position' },
-  { name: 'Dodge', how: 'a spike of the chest phone\'s sideways acceleration (across where it faces) over 6 m/s², moving that way; left / right' },
+  { name: 'Dodge', how: 'a spike of the chest phone\'s sideways acceleration (across where it faces) over 3.5 m/s², moving that way; left / right' },
   { name: 'Guard', how: 'stick within 45° of horizontal (above or below) and still (under 60°/s) for 1 s; held upright it does nothing' },
 ];
 
@@ -116,7 +116,7 @@ export function createActions() {
         const f = qrot(k.wq, [0, 0, -1]), fwd = norm([f[0], 0, f[2]]), right = cross(fwd, [0, 1, 0]);
         const side = p => (p[0] * right[0] + p[2] * right[2]);
         const v1 = (side(a1.p) - side(a0.p)) / d1, v2 = (side(k.wp) - side(a1.p)) / d2, acc = (v2 - v1) / ((d1 + d2) / 2);
-        if (!S.dodging && Math.abs(acc) > DODGE_ACC && Math.sign(acc) === Math.sign(v2) && Math.abs(v2) > .4) {
+        if (!S.dodging && Math.abs(acc) > DODGE_ACC && Math.sign(acc) === Math.sign(v2) && Math.abs(v2) > DODGE_V) {
           const dir = acc > 0 ? 'right' : 'left';
           emit('Dodge', `${dir}, ${Math.abs(acc).toFixed(1)} m/s²`, k.t, { dir, side: Math.sign(acc), acc: Math.abs(acc), speed: Math.abs(v2) });
           S.dodging = true; S.dodgeAt = k.t;
