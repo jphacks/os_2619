@@ -55,6 +55,9 @@ class Link(private val id: String, private val name: String) {
     /** The PC's word on this slot's scanned stick (dashboard stickscan.js): "91 cm", "none", or null before it said anything. */
     @Volatile var stick: String? = null; private set
 
+    /** The PC's web server (the same host and port as the socket), for the sticks' photos. */
+    val httpBase get() = url.replace("ws://", "http://").removeSuffix("/ws")
+
     /** Phone wall time converted to the PC clock, seconds. */
     fun pcTime(wallMs: Long = System.currentTimeMillis()) = wallMs / 1000.0 + offset
 

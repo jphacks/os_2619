@@ -105,11 +105,12 @@ phone.on('message', d => pin.push(JSON.parse(d)));
 await new Promise(r => phone.once('open', r));
 phone.send(JSON.stringify({ type: 'hello', role: 'phone', id: 'p1', name: 'test' }));
 await wait(() => pin.find(k => k.type === 'stick' && k.slot === 'A' && k.model?.length === 1));
-{ // the phone's Stick menu: every saved stick with its model; picking one puts it on the phone's slot
+{ // the phone's Stick menu: every saved stick with its photo's path (no model); picking one puts it on the phone's slot
   const rec3 = await (await json('/sticks', { name: '別のスマホの枝', model: small })).json();
   phone.send(JSON.stringify({ type: 'stickList' }));
   let l = await wait(() => pin.find(k => k.type === 'stickList'));
-  assert.deepEqual(l.sticks.map(s => s.id), [rec3.id, rec.id]); assert.equal(l.current, rec.id); assert.equal(l.sticks[0].model.length, .8);
+  assert.deepEqual(l.sticks.map(s => s.id), [rec3.id, rec.id]); assert.equal(l.current, rec.id);
+  assert.equal(l.sticks[0].model, undefined); assert.equal(l.sticks[0].image, null); assert.equal(l.sticks[1].image, rec.image);
   phone.send(JSON.stringify({ type: 'pickStick', id: 'nope' })); // unknown: nothing changes
   phone.send(JSON.stringify({ type: 'pickStick', id: rec3.id }));
   l = await wait(() => pin.filter(k => k.type === 'stickList')[2]);
