@@ -5,7 +5,8 @@
 //         Optionally a chest phone's own picture instead (A / B view), or the drone view as a picture-in-picture.
 // Both can look like an old CRT screen (cfg.crt): a pass that makes the frame about CRT_LINES lines (each line the average of its rows, so
 // fine distant detail does not shimmer as rendering at that size would), smears each line sideways a little and lets the bright parts
-// glow; CSS scanlines and a soft vignette over everything, the HUD too (index.html .stage.crt blurs and glows the HUD); 30 fps (app.js).
+// glow; a soft vignette over everything, the HUD too (index.html .stage.crt blurs and glows the HUD); 30 fps (app.js). About 18 texture
+// reads a pixel: light enough for a laptop GPU.
 // The tag scan (K) measures the floor sheets and phone C's pose at once; the result is kept in localStorage.
 // Ported from kawashima/app.js (renderer, guide, scan, skeletons).
 import * as THREE from 'three';
@@ -30,7 +31,7 @@ const FIELD_KEY = 'pd-field-fixed3-' + W.LAYOUT + RK, CAM_KEY = 'pd-tagcam-fixed
 export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay = null }) { // overlay.compose(src, w, h, dt): the picture with the recognition layers (visionfx.js) or null
   const el = document.createElement('div'); el.className = 'stage';
   const canvas = document.createElement('canvas'), guideCanvas = Object.assign(document.createElement('canvas'), { className: 'guide2d' }), gctx = guideCanvas.getContext('2d');
-  const crtVeil = Object.assign(document.createElement('div'), { className: 'crtveil' }); // scanlines + vignette (resize sets the line pitch)
+  const crtVeil = Object.assign(document.createElement('div'), { className: 'crtveil' }); // the vignette (resize)
   crtVeil.style.cssText = 'position:absolute;inset:0;pointer-events:none;display:none;z-index:5'; // over the HUD (app.js puts it in el later)
   el.append(canvas, guideCanvas, crtVeil);
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -242,7 +243,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     S.crt = !!cfg.crt; el.classList.toggle('crt', S.crt); crtVeil.style.display = S.crt ? '' : 'none';
     const pitch = Math.max(2, Math.round(h * devicePixelRatio / CRT_LINES)) / devicePixelRatio; // css px per line
     S.crtLines = h / pitch;
-    if (S.crt) crtVeil.style.background = `radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.45) 100%), repeating-linear-gradient(to bottom, transparent 0 ${pitch / 2}px, rgba(0,0,0,.35) ${pitch / 2}px ${pitch}px)`;
+    if (S.crt) crtVeil.style.background = 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.45) 100%)'; // no scanline stripes (taken out on request)
     fx.setSize(w, h);
     S.w = w; S.h = h;
     if (minimap) minimap.canvas.width = minimap.canvas.height = Math.round(Math.min(w, h) * .26 * devicePixelRatio);
@@ -269,17 +270,15 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
     uniforms: { tFrame: { value: null }, uLines: { value: 540 }, uAspect: { value: 16 / 9 } },
     vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
     fragmentShader: `uniform sampler2D tFrame; uniform float uLines, uAspect; varying vec2 vUv;
-      // one line of the CRT at x: the average of the line's rows (top, middle, bottom thirds); units: line heights
-      vec3 line(float x, float l) { float lh = 1. / uLines, y = (floor(vUv.y * uLines) + .5 + l) * lh, dx = x * lh / uAspect;
-        return (texture2D(tFrame, vec2(vUv.x + dx, y - lh / 3.)).rgb + texture2D(tFrame, vec2(vUv.x + dx, y)).rgb + texture2D(tFrame, vec2(vUv.x + dx, y + lh / 3.)).rgb) / 3.; }
+      // one line of the CRT at x (in line heights): two linear taps half a line apart average the line's rows, so it does not shimmer
+      vec3 line(float x) { float lh = 1. / uLines; vec2 p = vec2(vUv.x + x * lh / uAspect, (floor(vUv.y * uLines) + .5) * lh);
+        return (texture2D(tFrame, p - vec2(0., lh * .25)).rgb + texture2D(tFrame, p + vec2(0., lh * .25)).rgb) * .5; }
       void main() {
-        // the beam: about a line height sharp, and it bleeds along its line
-        vec3 c = line(0., 0.) * .3 + (line(-.7, 0.) + line(.7, 0.)) * .2 + (line(-1.6, 0.) + line(1.6, 0.)) * .15;
-        c.r = mix(c.r, line(.5, 0.).r, .5); c.b = mix(c.b, line(-.5, 0.).b, .5); // the three guns a little out of line
-        vec3 g = vec3(0.);
-        for (int i = 0; i < 12; i++) { vec2 d = vec2(cos(float(i) * .5236), sin(float(i) * .5236));
-          g += max(line(d.x * 2.5, floor(d.y * 2.5 + .5)) - .5, 0.) + max(line(d.x * 5., floor(d.y * 5. + .5)) - .5, 0.); } // only what is bright glows
-        gl_FragColor = vec4(c + g * (1.1 / 24.), 1.);
+        vec3 l0 = line(0.), lm = line(-.7), lp = line(.7), c = l0 * .3 + (lm + lp) * .2 + (line(-1.6) + line(1.6)) * .15; // the beam bleeds along its line
+        c.r = mix(c.r, lp.r, .35); c.b = mix(c.b, lm.b, .35); // the three guns a little out of line
+        vec3 g = vec3(0.); float r = 4. / uLines;
+        for (int i = 0; i < 8; i++) { float a = float(i) * .7854; g += max(texture2D(tFrame, vUv + vec2(cos(a) * r / uAspect, sin(a) * r)).rgb - .5, 0.); } // only what is bright glows
+        gl_FragColor = vec4(c + g * (1.1 / 8.), 1.);
       }`,
     depthTest: false, depthWrite: false,
   });
@@ -322,6 +321,7 @@ export function createStage({ video, cfg, hub, PA, isSetup = () => true, overlay
 
     renderer.setScissorTest(false);
     field.setLook(cfg.backdrop, !!cfg.debug);
+    field.setBattle(game.match.phase === 'fight');
     field.setTime(cfg.timeOfDay);
     if (S.mode === 'game') {
       canvas.style.transform = '';

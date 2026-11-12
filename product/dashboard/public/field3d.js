@@ -12,6 +12,7 @@ import { makeWizard } from './wizard.js';
 import { makeWizardModel } from './wizardmodel.js';
 import { makeChaobenModel } from './chaobenmodel.js';
 import { stickGeometry, STICK_COLOR } from './stickmesh.js';
+import { createBattleMotes } from './battle-motes.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const v3 = a => V(a[0], a[1], a[2]);
@@ -677,10 +678,15 @@ export function createField(scene, opts = {}) {
   });
 
   scene.add(group);
+  let motes = null, motesSig = null, battle = false; // embers and magic over the field during a fight (battle-motes.js), remade with the field
   return {
     group, background, rebuild,
+    /** a fight is running: the battle motes fade in (and out after it) */
+    setBattle(on) { battle = !!on; },
     update(dt, players = {}) {
       if (fieldSig() !== sig) rebuild();
+      if (motesSig !== sig) { if (motes) { group.remove(motes.points); motes.dispose(); } motes = createBattleMotes(fieldExtent()); group.add(motes.points); motesSig = sig; }
+      motes.update(dt, battle);
       uniforms.uTime.value += dt; if (activeLook) built[activeLook].update(dt);
       ['A', 'B'].forEach((s, i) => {
         const r = avatars[s].update(dt, players[s]);
@@ -699,6 +705,7 @@ export function createField(scene, opts = {}) {
         else if (pass === 'front') [a.root.visible, a.world.visible, a.hud.visible] = a.shown;
       }
       if (arena) arena.visible = pass !== 'front';
+      if (motes) motes.points.visible = pass !== 'front' && motes.shown; // once, with the background (they are not in front of the players)
       if (activeLook) built[activeLook].group.visible = pass !== 'front';
       uniforms.uHpOnly.value = pass === 'front' ? 1 : 0;
     },
