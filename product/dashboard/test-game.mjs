@@ -179,10 +179,10 @@ scenario('ボタンで撃つとき（棒が動いていない）は、小は体�
 });
 
 // ---- 溜めのリスク ----
-scenario('今の溜め時間は 1 秒で中、2.5 秒で大', () => {
-  eq(RULES.t1, 1, '中になる秒数'); eq(RULES.t2, 2.5, '大になる秒数');
+scenario('今の溜め時間は 0.7 秒で中、1.7 秒で大', () => {
+  eq(RULES.t1, .7, '中になる秒数'); eq(RULES.t2, 1.7, '大になる秒数');
   const S = setup({ rules: { t1: RULES.t1, t2: RULES.t2 } }); S.fight(); S.charge('A');
-  S.run(.9); eq(S.A.tier, 's', '0.9 秒'); S.run(.2); eq(S.A.tier, 'm', '1.1 秒'); S.run(1.5); eq(S.A.tier, 'l', '2.6 秒'); eq(S.A.charge, 1, 'メーター');
+  S.run(.6); eq(S.A.tier, 's', '0.6 秒'); S.run(.2); eq(S.A.tier, 'm', '0.8 秒'); S.run(1); eq(S.A.tier, 'l', '1.8 秒'); eq(S.A.charge, 1, 'メーター');
 });
 scenario('歩きながら棒を回し続けると、3m 動いても溜めは続き、中を撃てる', () => {
   const S = setup({ rules: { chargeHold: 1.5 } }); S.fight(); S.charge('A');

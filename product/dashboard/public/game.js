@@ -29,7 +29,7 @@ export const ELEMENT_JA = { fire: '炎', thunder: '雷', water: '水', wind: '�
 export const PHASE_JA = { setup: '準備中', countdown: 'カウントダウン', fight: '試合中', result: '試合終了' };
 export const TIER_JA = { s: '小', m: '中', l: '大' };
 /** Numbers the dashboard can change while play-testing (cfg.rules). */
-export const RULES = { t1: 1, t2: 2.5, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: { s: 1, m: 1, l: 1 } }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × per tier (an old single number counts for all three)
+export const RULES = { t1: .7, t2: 1.7, dmg: { s: 5, m: 20, l: 60 }, rapid: .25, chargeHold: 1.5, guardHold: .3, reflectMul: 2, size: { s: 1, m: 1, l: 1 }, hp: 100, speed: { s: 1, m: 1, l: 1 } }; // reflectMul: damage × of a 小 bounced back by a guard; size: ball size × (looks and hit radius); hp: each player's HP at the start; speed: ball speed × per tier (an old single number counts for all three)
 /** The ball-speed rule as { s, m, l }: an older saved single number (one speed for every tier) counts for all three. */
 export const speedRule = v => typeof v === 'object' && v ? { s: +v.s || 1, m: +v.m || 1, l: +v.l || 1 } : { s: +v || 1, m: +v || 1, l: +v || 1 };
 // how each tier looks and flies (provisional effects: size tells the tiers apart). radius is only the hit radius (m),
