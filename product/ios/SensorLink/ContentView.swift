@@ -246,7 +246,7 @@ struct HpScreen: View {
         let size: CGFloat = Swift.min(h * 0.42, w * 0.3), cy: CGFloat = h * 0.27, x0: CGFloat = w * 0.05
         let bh: CGFloat = size * 0.2, bx: CGFloat = x0 + size + w * 0.04
         let bw: CGFloat = w * 0.95 - bx
-        let color: Color = slot == "A" ? Color(red: 1, green: 0.4, blue: 0) : Color(red: 0, green: 0.47, blue: 1) // the players' colours (field3d.js TEAM)
+        let color: Color = slot == "A" ? Color(red: 1, green: 0.851, blue: 0.749) : Color(red: 0.749, green: 0.867, blue: 1) // the players' colours (field3d.js TEAM), near white: the phone gives off more light (Android the same)
         let picture: String = info.foeChara == "chaoben" ? "AvatarChaoben" : "AvatarWizard" + slot
         return ZStack(alignment: .topLeading) {
             Image(picture).resizable().interpolation(.high)
@@ -264,11 +264,11 @@ struct HpScreen: View {
         let gw: CGFloat = w - 2 * gx, gy: CGFloat = h * 0.74 - gh / 2
         let color: Color
         if remaining > 0.5 {
-            color = Color(red: 0.133, green: 0.816, blue: 0.275)
+            color = Color(red: 0.831, green: 1, blue: 0.863) // near-white green: the phone gives off more light (Android the same)
         } else if remaining > 0.25 {
-            color = Color(red: 1, green: 0.761, blue: 0.102)
+            color = Color(red: 1, green: 0.941, blue: 0.722)
         } else {
-            color = Color(red: 1, green: 0.165, blue: 0.165)
+            color = Color(red: 1, green: 0.769, blue: 0.769)
         }
         return ZStack(alignment: .topLeading) {
             Text("あなた")

@@ -583,7 +583,7 @@ class HpBar(a: Activity) : View(a) {
         val bx = x0 + size + w * .04f
         box.set(bx, cy - bh / 2, w * .95f, cy + bh / 2)
         drawSlashBar(c, box, share(info.foeHp, info.foeMax),
-            if (slot == "A") 0xFFFF6600.toInt() else 0xFF0078FF.toInt()) // field3d.js TEAM
+            if (slot == "A") 0xFFFFD9BF.toInt() else 0xFFBFDDFF.toInt()) // field3d.js TEAM, near white: the phone gives off more light (iOS the same)
     }
 
     private fun drawMine(c: Canvas, w: Float, h: Float) {
@@ -598,9 +598,9 @@ class HpBar(a: Activity) : View(a) {
         c.drawText("あなた", gx + gh * .15f, gy - gh * .3f, p)
         box.set(gx, gy, gx + gw, gy + gh)
         val color = when {
-            remaining > .5f -> 0xFF22D046.toInt()
-            remaining > .25f -> 0xFFFFC21A.toInt()
-            else -> 0xFFFF2A2A.toInt()
+            remaining > .5f -> 0xFFD4FFDC.toInt() // near-white green: the phone gives off more light (iOS the same)
+            remaining > .25f -> 0xFFFFF0B8.toInt()
+            else -> 0xFFFFC4C4.toInt()
         }
         drawSlashBar(c, box, remaining, color)
     }
