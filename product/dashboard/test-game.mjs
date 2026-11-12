@@ -100,6 +100,13 @@ scenario('溜めなしで振ると小が飛び、当たると5ダメージ', () 
   eq(S.A.shots, 1, '発射数'); eq(S.B.hp, 95, 'B の HP');
   eq(S.phone.filter(s => s.endsWith('hitConfirm')).join(), 'A hitConfirm', '当てた人のスマホのピコーン');
 });
+scenario('スマホがつながっている人に当たった小の音は PC から鳴らさず（スマホが鳴らす）、大は鳴らす。つながっていなければ小も鳴らす', () => {
+  const heard = [], sfx = new Proxy({ hit: (el, pan, power, tier) => heard.push(tier) }, { get: (o, n) => o[n] ?? (() => {}) });
+  const S = setup({ sfx }); S.g.setOnline([{ slot: 'A' }, { slot: 'B' }]); S.fight();
+  S.swing('A'); S.run(1); eq(heard.join(), '', 'B のスマホがつながっているときの小の PC の音');
+  S.chargeShot('A', 5.5); eq(heard.join(), 'l', '大の PC の音');
+  heard.length = 0; const T = setup({ sfx }); T.fight(); T.swing('A'); T.run(1); eq(heard.join(), 's', 'スマホがないときの小の PC の音');
+});
 scenario('小の連打は0.25秒おきまで。速すぎる振りは無視される', () => {
   const S = setup(); S.fight();
   for (let i = 0; i < 5; i++) { S.swing('A'); S.run(.05); } // 5 swings in 0.25 s
