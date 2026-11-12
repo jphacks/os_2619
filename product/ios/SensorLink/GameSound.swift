@@ -5,7 +5,7 @@ import AVFoundation
 /// plays it (audio.js voice): gain, rate, offset, dur + rel (a release), fade [from, silent at]. The voice is rendered into a
 /// buffer here exactly so and played once. Same as GameSound.kt. Files are read once at start. Any thread.
 final class GameSound {
-    private static let files = ["fire", "lightning", "water", "wind"].flatMap { e in (1...3).map { "\(e)\($0)" } } + ["guard", "guard_reflect"]
+    private static let files = ["fire", "lightning", "water", "wind"].flatMap { e in (1...3).map { "\(e)\($0)" } } + ["guard", "guard_reflect", "damage", "my_shot", "my_launch"]
     private static let perFormat = 4 // voices at once per file format
 
     private let q = DispatchQueue(label: "gamesound")

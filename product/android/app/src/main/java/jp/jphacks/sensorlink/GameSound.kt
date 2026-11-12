@@ -73,7 +73,7 @@ class GameSound(private val context: Context) {
     }
 
     private companion object {
-        val FILES = listOf("fire", "lightning", "water", "wind").flatMap { e -> (1..3).map { "$e$it" } } + listOf("guard", "guard_reflect")
+        val FILES = listOf("fire", "lightning", "water", "wind").flatMap { e -> (1..3).map { "$e$it" } } + listOf("guard", "guard_reflect", "damage", "my_shot", "my_launch")
     }
 }
 

@@ -170,8 +170,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         : (cfg.aim ?? 'motion') === 'motion' ? (tier === 's' ? levelAim(p) : motionAim(p) ?? p.dir.clone()) : p.dir.clone();
     p.shots++; if (tier === 'l') p.specials++;
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
-    if (tier === 'l') { s?.special(p.element, panOf(p.tip)); onSound([p.slot], 'special', p.element); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
-    else { s?.shot(p.element, panOf(p.tip), T.power); onSound([p.slot], 'shot', p.element, 0, T.power); drone?.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() }); }
+    if (tier === 'l') { s?.special(p.element, panOf(p.tip)); onSound([p.slot], 'myLaunch', tier); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
+    else { s?.shot(p.element, panOf(p.tip), T.power); onSound([p.slot], tier === 's' ? 'myShot' : 'myLaunch', tier); drone?.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() }); }
     const k = sizeOf(tier);
     // steer: the dummy room keeps turning a shot onto the chest it was drawn at; デモ試合 never does (aimed once, then straight)
     const steer = dummyTarget && match.mode !== 'demo';
@@ -212,7 +212,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const sizeOf = tier => Math.max(.2, Math.min(4, +(rules().size?.[tier] ?? 1) || 1));
   function fxShot(p, tier) { // try-out: aimed at the other player's chest so it always shows the hit too
     const T = TIER[tier], foe = other(p), aim = foe.chest.clone().sub(p.tip).normalize();
-    if (tier === 'l') { sfx()?.special(p.element, panOf(p.tip)); onSound([p.slot], 'special', p.element); } else { sfx()?.shot(p.element, panOf(p.tip), T.power); onSound([p.slot], 'shot', p.element, 0, T.power); }
+    if (tier === 'l') sfx()?.special(p.element, panOf(p.tip)); else sfx()?.shot(p.element, panOf(p.tip), T.power);
+    onSound([p.slot], tier === 's' ? 'myShot' : 'myLaunch', tier); // the shooter's phone: its own launch sounds (app.js phoneSound), not the PC's
     const k = sizeOf(tier);
     shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, test: true, homing: match.mode === 'demo', pos: p.tip.clone(), vel: aim.multiplyScalar(speedOf(T, p, tier)), born: now() });
     showAct(p, tier === 'l' ? '大！' : TIER_JA[tier]);
@@ -251,7 +252,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         log(foe.slot, 'guard', `${TIER_JA[s.tier]}にガードを貫通された`);
       }
       if (hit) {
-        fx.hit(s.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.element, panOf(s.pos), T.hit, s.tier); onSound([foe.slot, s.owner.slot], 'hit', s.element, 0, T.hit, s.tier); // both: the one hit and the one who hit
+        fx.hit(s.element, s.pos.clone(), T.hit, { tier: s.tier, target: foe.chest.clone() }); sfx()?.hit(s.element, panOf(s.pos), T.hit, s.tier); onSound([foe.slot], 'hit', s.element, 0, T.hit, s.tier);
+        if (s.tier !== 's') onSound([s.owner.slot], 'landed', s.element, 0, T.hit, s.tier); // a charged shot landing: the shooter's phone plays what the one hit hears (no light, no buzz); a 小 only had its launch sound
         drone?.event('hit', { target: foe.slot, pos: s.pos.clone(), power: T.hit });
         onHit(foe.slot, T.flash); // the phone of the player who was hit lights its torch for this many ms (app.js, server.mjs)
         if (!s.test) damage(foe, s.owner, s.tier, s.mul ?? 1); // try-out shots only show

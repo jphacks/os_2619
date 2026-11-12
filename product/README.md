@@ -82,7 +82,7 @@ npm run test:game    # ゲームのルールだけを、台本どおりのシナ
 
 弾が当たると、当たられた側のスマホのライトが光る（小 120 ms、中 250 ms、大 500 ms。`game.js` の `TIER`）。ダッシュボードが `{ type: 'flash', slot, ms }` をサーバーに送り、サーバーがそのスロットのスマホに `{ type: 'flash', ms }` を送る。iOS は端末のライトを直接、Android は ARCore のセッション設定（`Config.FlashMode`）で点ける。 同じ時間だけ画面全体が真っ赤（#FF0000）に点滅し続ける（60 ms 点灯・40 ms 消灯。続けて当たると、その分だけ長く続く。ボタンの上も覆うが操作は通す。iOS・Android とも）。
 
-ゲームの効果音のうち、そのプレイヤーに関係するもの（自分の小・中・大の発射、ガードと反射、自分が受けた・当てた命中、溜めの失敗）は、そのプレイヤーのスマホからも鳴る。ダッシュボードが PC で鳴らすのと同じ切り方・音程・フェードを `{ type: 'sfx', slot, voices }` で送り（`app.js` の `phoneSound`、`audio.js` の `describe`）、スマホは同じ音声ファイル（Android は `res/raw`、iOS はアプリ内）をその通りに再生する。溜めの失敗は `{ type: 'sfx', kind: 'chargeFail' }` で、スマホの溜めの音もそこまでの音を高速で逆再生して 0.3 秒で消える。ガードの反射音は PC では合成しているので、スマホ用には `effect-assets/procedural/make-guard-reflect.mjs` で wav にしている。
+ゲームの効果音のうち、そのプレイヤーに関係するもの（ガードと反射、自分が受けた命中、溜めの失敗）は、そのプレイヤーのスマホからも鳴る。撃った人のスマホは、受けた側とは別の音を鳴らす（振動はしない）。小は撃った瞬間に `my_shot`、中・大は撃った瞬間に `my_launch`（大は低く）を鳴らす。中・大が当たった瞬間は、受けた側と同じ命中の音と被弾の音（`damage`）を鳴らす。この 2 つの発射音は `effect-assets/procedural/make-phone-launch.mjs` で合成した仮の音で、ダッシュボードの設定の「音」で試聴できる。ダッシュボードが PC で鳴らすのと同じ切り方・音程・フェードを `{ type: 'sfx', slot, voices }` で送り（`app.js` の `phoneSound`、`audio.js` の `describe`）、スマホは同じ音声ファイル（Android は `res/raw`、iOS はアプリ内）をその通りに再生する。溜めの失敗は `{ type: 'sfx', kind: 'chargeFail' }` で、スマホの溜めの音もそこまでの音を高速で逆再生して 0.3 秒で消える。ガードの反射音は PC では合成しているので、スマホ用には `effect-assets/procedural/make-guard-reflect.mjs` で wav にしている。
 
 ## 振動
 

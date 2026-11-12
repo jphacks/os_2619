@@ -345,7 +345,7 @@ const byId = id => db.sticks.find(s => s.id === id) ?? null;
 const withStats = s => s && { ...s, stats: s.custom ? { ...s.custom } : stickStats(s.seed, s.rarity, rarityMul) };
 const ELEMENTS = ['fire', 'thunder', 'water', 'wind'], STAT_KEYS = ['hp', 'power', 'speed', 'charge'], STAT_RANGE = [.5, 2];
 // the game sounds a phone has (Android res/raw, iOS bundle): what { type: 'sfx' } may name
-const PHONE_SFX = new Set(['fire', 'lightning', 'water', 'wind'].flatMap(e => [1, 2, 3].map(i => e + i)).concat(['guard', 'guard_reflect']));
+const PHONE_SFX = new Set(['fire', 'lightning', 'water', 'wind'].flatMap(e => [1, 2, 3].map(i => e + i)).concat(['guard', 'guard_reflect', 'damage', 'my_shot', 'my_launch']));
 const assigned = () => ({ A: withStats(byId(db.assign.A)), B: withStats(byId(db.assign.B)) });
 const sticksMsg = () => JSON.stringify({ type: 'sticks', ...assigned() });
 const saveDb = () => { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(STICKS_FILE, JSON.stringify(db, null, 2)); }; // sync: two saves never interleave
