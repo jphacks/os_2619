@@ -8,6 +8,8 @@
 // mountSandbox(section, { hub, game, stage, rules: () => the game's rules }) -> { get frozen, setActive(on), frame() }
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as SU from 'three/addons/utils/SkeletonUtils.js';
 import * as W from './world.js';
 import { eulerRot } from './actions.js';
 import { qrot } from './map.js';
@@ -122,7 +124,7 @@ export function mountSandbox(section, { hub, game, stage, rules = () => ({}) }) 
   // ---- 3D wireframe ----
   const box3 = $('wire'), renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setClearColor(0xffffff); box3.append(renderer.domElement); renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
-  const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(45, 1, .05, 50); cam.position.set(0, 3.2, 4.2);
+  const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(45, 1, .05, 50); cam.position.set(0, 1.9, 2.9);
   const orbit = new OrbitControls(cam, renderer.domElement); orbit.target.set(0, .8, 0); orbit.update();
   scene.add(new THREE.GridHelper(6, 12, 0xc8cdd6, 0xeef0f4));
   // the mahoujin on the floor as it looks: its print (black lines) at its measured size, T0 toward -x as on the real floor (world.js runeTagPos)
@@ -141,27 +143,71 @@ export function mountSandbox(section, { hub, game, stage, rules = () => ({}) }) 
       scene.add(m);
     }).catch(e => console.warn('sandbox: mahoujin', e));
   const wire = c => new THREE.MeshBasicMaterial({ color: c, wireframe: true }), line = c => new THREE.LineBasicMaterial({ color: c });
-  const fig = {};
+  // each player: a wireframe person (three.js's Xbot, the rig under the game's characters: field3d.js), its stick, its chest phone
+  // (tilted 45° down and turned a little aside, as it is worn, with a line where its camera looks), the guard and charge rings
+  const fig = {}, V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z), UP = V3(0, 1, 0);
   for (const s of ['A', 'B']) {
-    const c = new THREE.Color(COL[s]), g = new THREE.Group(); scene.add(g);
-    const chest = new THREE.Mesh(new THREE.SphereGeometry(.14, 10, 8), wire(c)), head = new THREE.Mesh(new THREE.SphereGeometry(.1, 8, 6), wire(c));
-    const body = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), line(c));
-    const stick = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineBasicMaterial({ color: 0x1d2330 }));
-    const face = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), .4, c);
+    const c = new THREE.Color(COL[s]);
+    const stick = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 6), new THREE.MeshBasicMaterial({ color: 0x1d2330 }));
+    const phone = new THREE.Mesh(new THREE.BoxGeometry(.075, .15, .01), wire(0x1d2330));
+    const ray = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V3(), V3()]), new THREE.LineDashedMaterial({ color: 0x1d2330, dashSize: .05, gapSize: .04 }));
     const guard = new THREE.Mesh(new THREE.TorusGeometry(.5, .01, 4, 32), wire(0x2266ff)), charge = new THREE.Mesh(new THREE.TorusGeometry(.35, .01, 4, 32), wire(0xffaa00));
     guard.rotation.x = Math.PI / 2; charge.rotation.x = Math.PI / 2;
-    g.add(chest, head, body, stick, face, guard, charge); fig[s] = { chest, head, body, stick, face, guard, charge };
+    scene.add(stick, phone, ray, guard, charge); fig[s] = { stick, phone, ray, guard, charge, man: null, color: c };
+  }
+  new GLTFLoader().loadAsync(new URL('./assets/models/Xbot.glb', import.meta.url).href).then(g => {
+    for (const s of ['A', 'B']) {
+      const obj = SU.clone(g.scene), b = {};
+      obj.traverse(o => { if (o.isBone) b[o.name.replace(/^mixamorig:?/, '')] = o; if (o.isMesh) { o.material = new THREE.MeshBasicMaterial({ color: fig[s].color, wireframe: true, transparent: true, opacity: .6 }); o.frustumCulled = false; } });
+      obj.updateMatrixWorld(true);
+      const h = new THREE.Box3().setFromObject(obj).getSize(V3()).y, bind = {};
+      for (const n of ['RightArm', 'RightForeArm', 'LeftArm', 'LeftForeArm']) bind[n] = b[n].quaternion.clone();
+      obj.matrixAutoUpdate = false; scene.add(obj);
+      fig[s].man = { obj, b, h, bind };
+    }
+  }).catch(e => console.warn('sandbox: Xbot', e));
+  const _q = new THREE.Quaternion(), _p = new THREE.Quaternion(), _d = new THREE.Quaternion(), _m = new THREE.Matrix4(), _n = new THREE.Matrix4();
+  function aimBone(bone, to) { // turn bone (in the world) so its child points at `to`
+    const from = bone.getWorldPosition(V3()), cur = bone.children[0].getWorldPosition(V3()).sub(from).normalize(), tgt = to.clone().sub(from).normalize();
+    bone.parent.getWorldQuaternion(_p); bone.getWorldQuaternion(_q);
+    _d.setFromUnitVectors(cur, tgt); bone.quaternion.copy(_p.invert().multiply(_d.multiply(_q))); bone.updateMatrixWorld(true);
+  }
+  const wpos = bone => bone.getWorldPosition(V3());
+  function reach(M, side, hand, f) { // two-bone arm: shoulder -> elbow (bent down and out) -> hand
+    const sh = wpos(M.b[side + 'Arm']), L1 = sh.distanceTo(wpos(M.b[side + 'ForeArm'])), L2 = wpos(M.b[side + 'ForeArm']).distanceTo(wpos(M.b[side + 'Hand']));
+    const d = Math.max(.05, Math.min(hand.distanceTo(sh), (L1 + L2) * .999)), dir = hand.clone().sub(sh).normalize();
+    const a = (L1 * L1 - L2 * L2 + d * d) / (2 * d), hh = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+    const out = V3(-f.z, 0, f.x).multiplyScalar(side === 'Right' ? 1 : -1), pole = V3(0, -1, 0).addScaledVector(out, .5);
+    pole.addScaledVector(dir, -pole.dot(dir)).normalize();
+    aimBone(M.b[side + 'Arm'], sh.clone().addScaledVector(dir, a).addScaledVector(pole, hh));
+    aimBone(M.b[side + 'ForeArm'], sh.clone().addScaledVector(dir, d));
   }
   const shotPool = [], shotGeo = new THREE.IcosahedronGeometry(1, 1);
   function draw3D() {
     const w = box3.clientWidth, h = box3.clientHeight; if (!w || !h) return;
     if (renderer.domElement.width !== Math.round(w * devicePixelRatio)) { renderer.setPixelRatio(devicePixelRatio); renderer.setSize(w, h, false); cam.aspect = w / h; cam.updateProjectionMatrix(); }
     for (const s of ['A', 'B']) {
-      const p = P()[s], F = fig[s], c = p.chest, f = W.app3(p.body.R, [1, 0, 0]);
-      F.chest.position.copy(c); F.head.position.set(c.x, c.y + .35, c.z);
-      F.body.geometry.setFromPoints([new THREE.Vector3(c.x, c.y, c.z), new THREE.Vector3(c.x, 0, c.z)]);
-      F.stick.geometry.setFromPoints([p.base, p.tip]);
-      F.face.position.set(c.x, c.y, c.z); F.face.setDirection(new THREE.Vector3(f[0], 0, f[2]).normalize());
+      const p = P()[s], F = fig[s], c = p.chest, f0 = W.app3(p.body.R, [1, 0, 0]), f = V3(f0[0], 0, f0[2]).normalize();
+      const M = F.man;
+      if (M) { // the person: its height from the chest's (the chest about 0.74 of it), turned to face f, with a dodge's roll / hop / lean
+        const tall = Math.max(.6, c.y / .74), k = tall / M.h, mid = .55 * tall;
+        _m.makeTranslation(c.x, p.hop ?? 0, c.z);
+        if (p.roll) _m.multiply(_n.makeTranslation(0, mid, 0)).multiply(new THREE.Matrix4().makeRotationAxis(f, p.roll)).multiply(new THREE.Matrix4().makeTranslation(0, -mid, 0));
+        if (p.lean) _m.multiply(new THREE.Matrix4().makeRotationAxis(f, p.lean));
+        _m.multiply(_n.makeRotationY(Math.atan2(f.x, f.z))).multiply(new THREE.Matrix4().makeScale(k, k, k));
+        for (const n in M.bind) M.b[n].quaternion.copy(M.bind[n]);
+        M.obj.matrix.copy(_m); M.obj.updateMatrixWorld(true);
+        if (!p.roll) {
+          reach(M, 'Right', p.base, f); // the stick hand
+          const lsh = wpos(M.b.LeftArm), both = p.charging || p.guarding || p.preview != null; // the other hand: on the stick while both hold it, else hanging
+          reach(M, 'Left', both ? p.base.clone().addScaledVector(p.tip.clone().sub(p.base).normalize(), -.1) : lsh.clone().add(V3(0, -.55 * k * M.h / 1.8, 0)).addScaledVector(V3(f.z, 0, -f.x), .1), f);
+        }
+      }
+      F.stick.position.copy(p.base).lerp(p.tip, .5); F.stick.quaternion.setFromUnitVectors(UP, p.tip.clone().sub(p.base).normalize()); F.stick.scale.set(.012, p.base.distanceTo(p.tip), .012);
+      // the chest phone as worn: 45° down and turned 15° aside, its camera looking out along that
+      const look = f.clone().applyAxisAngle(UP, (s === 'A' ? 1 : -1) * 15 / D).multiplyScalar(Math.cos(45 / D)).add(V3(0, -Math.sin(45 / D), 0));
+      F.phone.position.copy(c).addScaledVector(f, .12); F.phone.lookAt(F.phone.position.clone().add(look));
+      F.ray.geometry.setFromPoints([F.phone.position.clone(), F.phone.position.clone().addScaledVector(look, .8)]); F.ray.computeLineDistances();
       F.guard.visible = !!p.guarding; F.guard.position.copy(p.base.clone().lerp(p.tip, .5));
       F.charge.visible = !!p.charging || p.preview != null; F.charge.position.set(c.x, .02, c.z); F.charge.scale.setScalar(.5 + (p.charge ?? .5));
     }
