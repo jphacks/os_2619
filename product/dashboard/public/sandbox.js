@@ -285,9 +285,10 @@ export function mountSandbox(section, { hub, game, stage, rules = () => ({}) }) 
       ['A 回避で B の中をかわす', async () => { A.shot('B', 'm'); await wait(.03); A.dodge('A', 1); await wait(.3); }],
     ]],
     ['属性（大が当たった瞬間）', Object.entries(EL_JA).map(([el, ja]) => [`${ja}の大`, async () => { A.element('A', el); await wait(.05); A.shot('A', 'l'); await hit('A'); }])],
+    ['属性（防御：ガード）', Object.entries(EL_JA).map(([el, ja]) => [`${ja}のガード`, async () => { A.element('A', el); await wait(.05); A.guard('A', true); await wait(.4); }])],
+    ['属性（通常攻撃：小を撃った瞬間）', Object.entries(EL_JA).map(([el, ja]) => [`${ja}の小を撃った瞬間`, async () => { A.element('A', el); await wait(.05); A.shot('A', 's'); await wait(.06); }])],
+    ['属性（チャージ 満タン）', Object.entries(EL_JA).map(([el, ja]) => [`${ja}のチャージ 満タン`, async () => { A.element('A', el); A.charge('A', true); await wait(t2() + .3); }])],
     ['その他', [
-      ['雷のチャージ 満タン', async () => { A.element('A', 'thunder'); A.charge('A', true); await wait(t2() + .3); }],
-      ['水のチャージ 満タン', async () => { A.element('A', 'water'); A.charge('A', true); await wait(t2() + .3); }],
       ['相打ち（両者の中が同時に当たる）', async () => { A.shot('A', 'm'); A.shot('B', 'm'); await until(() => shotOf('A') || shotOf('B')); await until(() => !shotOf('A') && !shotOf('B')); await wait(.06); }],
     ]],
   ];
