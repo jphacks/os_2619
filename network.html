@@ -5,57 +5,63 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Full Stick Network</title>
 <style>
-  body { margin: 0; background: #fff; color: #000; font: 14px/1.4 system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; }
-  svg { width: min(960px, 100vw - 32px); height: auto; }
-  .body { stroke: #9a9a9a; stroke-linecap: round; fill: none; }
+  body { margin: 0; background: #fff; color: #000; font: 16px/1.4 system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; }
+  svg { width: min(1000px, 100vw - 32px); height: auto; }
+  .man { fill: #9a9a9a; }
   .red { fill: #e01b1b; stroke: #e01b1b; }
-  .link { fill: none; stroke: #000; stroke-width: 1.5; stroke-dasharray: 6 5; }
-  text { fill: #000; text-anchor: middle; font-size: 12px; }
-  .name { font-size: 15px; font-weight: 600; }
+  .bar { fill: none; stroke: #e01b1b; stroke-width: 7; stroke-linecap: round; }
+  .link { fill: none; stroke: #000; stroke-width: 1.6; }
+  .sight { fill: none; stroke: #000; stroke-width: 1.6; stroke-dasharray: 2 5; stroke-linecap: round; }
+  text { fill: #000; text-anchor: middle; font-size: 16px; }
+  .name { font-size: 19px; font-weight: 600; }
 </style>
 </head>
 <body>
-<svg viewBox="0 0 900 440" role="img" aria-label="向かい合う二人が棒を持ち、棒の IMU は BLE で胸のスマホに、スマホは Wi-Fi の WebSocket で間の PC につながる">
+<svg viewBox="0 0 900 450" role="img" aria-label="向かい合う二人が棒を持つ。棒の IMU は BLE で胸のスマホに、スマホは Wi-Fi の WebSocket で間の PC につながる。胸のスマホは 45° 下を向き、床の魔法陣を見る">
   <defs>
-    <!-- a person facing right: grey silhouette; red: the stick (with its IMU) and the chest phone -->
+    <!-- a person facing right (grey silhouette), holding the stick (red, its IMU on it) out in front, the phone on the chest tilted 45° down -->
     <g id="man">
-      <circle cx="150" cy="95" r="25" fill="#9a9a9a"/>
-      <line class="body" x1="150" y1="140" x2="150" y2="245" stroke-width="58"/>
-      <line class="body" x1="140" y1="250" x2="128" y2="392" stroke-width="28"/>
-      <line class="body" x1="162" y1="250" x2="182" y2="392" stroke-width="28"/>
-      <line class="body" x1="158" y1="138" x2="238" y2="178" stroke-width="18"/>
-      <line class="red" x1="222" y1="196" x2="335" y2="80" stroke-width="7" stroke-linecap="round"/>
-      <rect class="red" x="274" y="120" width="16" height="12" rx="2" transform="rotate(-46 282 126)"/>
-      <rect class="red" x="178" y="148" width="8" height="24" rx="2"/>
+      <ellipse class="man" cx="154" cy="88" rx="20" ry="24"/>
+      <path class="man" d="M146 106 C140 122 128 126 124 142 C118 170 120 205 126 236 C128 252 124 262 126 276
+        C126 310 118 350 116 392 L114 404 L150 404 L141 391 C143 352 147 318 152 292 L156 292
+        C162 322 170 354 177 392 L176 404 L212 404 L197 390 C191 350 187 314 181 280
+        C179 262 182 248 179 232 C176 210 179 190 177 166 C176 148 170 132 162 120 C160 116 159 112 160 106 Z"/>
+      <line class="bar" x1="226" y1="194" x2="338" y2="82"/>
+      <rect class="red" x="273" y="132" width="18" height="12" rx="2" transform="rotate(-45 282 138)"/>
+      <path class="man" d="M144 128 C166 126 188 140 204 150 L234 168 C242 170 249 178 245 186 C241 193 232 191 227 188 L196 173 C178 165 160 162 148 158 Z"/>
+      <circle class="man" cx="240" cy="180" r="9"/>
+      <rect class="red" x="187" y="170" width="7" height="24" rx="2" transform="rotate(45 190 182)"/>
     </g>
   </defs>
 
-  <line x1="20" y1="406" x2="880" y2="406" stroke="#000" stroke-width="1"/>
+  <line x1="20" y1="404" x2="880" y2="404" stroke="#000" stroke-width="1"/>
+  <!-- the mahoujin mat on the floor, seen from the side -->
+  <line class="bar" x1="240" y1="399" x2="660" y2="399"/>
   <use href="#man"/>
   <use href="#man" transform="translate(900 0) scale(-1 1)"/>
 
   <!-- PC on a table -->
-  <line class="body" x1="395" y1="336" x2="505" y2="336" stroke-width="8"/>
-  <line class="body" x1="405" y1="340" x2="405" y2="404" stroke-width="6"/>
-  <line class="body" x1="495" y1="340" x2="495" y2="404" stroke-width="6"/>
+  <path class="man" d="M406 333 H494 V339 H486 V395 H480 V339 H420 V395 H414 V339 H406 Z"/>
   <rect class="red" x="420" y="284" width="60" height="40" rx="3"/>
   <path class="red" d="M412 325 H488 L494 332 H406 Z"/>
 
-  <!-- links between the red parts -->
-  <path class="link" d="M186 150 Q215 95 276 120"/>
-  <path class="link" d="M714 150 Q685 95 624 120"/>
-  <line class="link" x1="188" y1="172" x2="416" y2="298"/>
-  <line class="link" x1="712" y1="172" x2="484" y2="298"/>
+  <!-- the phone's camera looking at the mahoujin (dotted), communication (solid) -->
+  <line class="sight" x1="192" y1="188" x2="402" y2="398"/>
+  <line class="sight" x1="708" y1="188" x2="498" y2="398"/>
+  <path class="link" d="M192 176 Q252 168 276 144"/>
+  <path class="link" d="M708 176 Q648 168 624 144"/>
+  <line class="link" x1="194" y1="182" x2="416" y2="298"/>
+  <line class="link" x1="706" y1="182" x2="484" y2="298"/>
 
-  <text x="232" y="76">BLE · 100 Hz · 約 10 ms</text>
-  <text x="668" y="76">BLE · 100 Hz · 約 10 ms</text>
-  <text x="275" y="296">WebSocket（Wi-Fi）</text><text x="275" y="312">約 10–30 ms</text>
-  <text x="625" y="296">WebSocket（Wi-Fi）</text><text x="625" y="312">約 10–30 ms</text>
+  <text x="322" y="150" style="text-anchor:start">BLE</text><text x="322" y="170" style="text-anchor:start">約 10 ms</text>
+  <text x="578" y="150" style="text-anchor:end">BLE</text><text x="578" y="170" style="text-anchor:end">約 10 ms</text>
+  <text x="450" y="206">WebSocket（Wi-Fi）</text><text x="450" y="226">約 10–30 ms</text>
+  <text x="266" y="126" style="text-anchor:end">IMU</text><text x="634" y="126" style="text-anchor:start">IMU</text>
 
-  <text x="312" y="150">IMU</text><text x="588" y="150">IMU</text>
-  <text x="150" y="430" class="name">Client A</text>
-  <text x="750" y="430" class="name">Client B</text>
-  <text x="450" y="430" class="name">Server</text>
+  <text x="450" y="272" class="name">Server</text>
+  <text x="150" y="434" class="name">Client A</text>
+  <text x="750" y="434" class="name">Client B</text>
+  <text x="450" y="434">魔法陣</text>
 </svg>
 </body>
 </html>
