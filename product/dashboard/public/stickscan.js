@@ -249,7 +249,8 @@ function inHull(vs, ms, x, y, z) {
  * buildStick(views, design?) -> model, or throws an Error saying what is missing.
  * views: { img: { data RGBA, width, height }, cam: viewCamera(...) }. The stick lies on the sheets with its grip end toward tag T0 (id 0).
  * design: parseDesign(...) of the mahoujin's print; with it a stick as dark as the print is found too (designMask), without it stickMask.
- * model: { v: 3, length (m), r: [grip, tip] radius (m), nodes: [[side, along]] (m; along -length/2 at the grip .. +length/2 at the tip,
+ * model: { v: 3, length (m), r: [grip, tip] radius (m), place: [x, z, ax, az] where it lay (its middle and grip -> tip direction, mahoujin frame),
+ *          nodes: [[side, along]] (m; along -length/2 at the grip .. +length/2 at the tip,
  *          side across it, lying flat), edges: [[i, j]] node pairs joined by wood, tip: the tip's node (nodes 0..tip are the stick's own
  *          line, grip to tip; the rest are branches), views }
  */
@@ -390,5 +391,6 @@ function skeleton(P) {
   // thickness from the path's first and last quarters
   const rad = cs => Math.min(.1, Math.max(fine, median(cs.map(centre).map(c => Math.min(dt[c] * fine, top[c] / 2)))));
   const q = Math.max(1, Math.round(path.length / 4));
-  return { v: 3, length: +L.toFixed(3), r: [+rad(path.slice(0, q)).toFixed(4), +rad(path.slice(-q)).toFixed(4)], tip, nodes, edges, voxels: P.length };
+  // place: where it lay in the mahoujin's frame (m, y up): its middle (x, z) and its grip -> tip direction (x, z); side = (-az, ax)
+  return { v: 3, length: +L.toFixed(3), r: [+rad(path.slice(0, q)).toFixed(4), +rad(path.slice(-q)).toFixed(4)], tip, nodes, edges, voxels: P.length, place: [mx, mz, ax, az].map(v => +v.toFixed(4)) };
 }

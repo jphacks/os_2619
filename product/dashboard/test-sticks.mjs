@@ -81,6 +81,12 @@ assert.equal(rec2.name, '細い枝'); assert.equal(rec2.image, undefined);
 assert.equal(rec2.element, 'wind', 'server uses the scanned bow');
 assert.ok(rec2.stats.power < rec.stats.power && rec2.stats.speed > rec.stats.speed, 'the thin stick is weaker and faster');
 assert.equal((await (await json('/sticks/assign')).json()).B, null);
+{ // the kept photo's camera is saved with it (棒設定 renders the model from it); a broken one is dropped
+  const cam = { pose: { R: [1, 0, 0, 0, -1, 0, 0, 0, -1], t: [0, 1.2, .3] }, f: 900, w: 1280, h: 720 };
+  const a = await (await json('/sticks', { model: small, image: jpeg, imageCam: cam })).json(); assert.deepEqual(a.imageCam, cam);
+  const b = await (await json('/sticks', { model: small, image: jpeg, imageCam: { ...cam, f: 'x' } })).json(); assert.equal(b.imageCam, undefined);
+  for (const id of [a.id, b.id]) await json('/sticks/' + id, undefined, 'DELETE');
+}
 // trust boundary
 assert.equal((await json('/sticks', { model: { ...big, v: 2 } })).status, 400);
 assert.equal((await json('/sticks', { model: { ...big, edges: [[0, 99]] } })).status, 400);
