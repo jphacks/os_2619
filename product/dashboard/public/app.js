@@ -14,6 +14,7 @@ import { createStage, DRONE_JA } from './stage.js';
 import { POSE, CHARAS } from './field3d.js';
 import { mountSticks } from './sticks.js';
 import { mountScanFx } from './scanfx.js';
+import { mountSandbox } from './sandbox.js';
 import { createGame, PHASE_JA, POS_JA, ELEMENT_JA, RULES, TIER_JA, speedRule } from './game.js';
 import { createSmashStyle } from './fx-smash.js';
 import { createSpace } from './space3d.js';
@@ -116,7 +117,9 @@ const vfx = createVisionFx();
 const overlay = { compose: (src, w, h, dt) => vfx.compose(src, w, h, dt, vision, cfg.visOn ? { draw: cfg.visDraw, ghost: cfg.visGhost, spot: cfg.visSpot, trail: cfg.visTrail } : {}, { A: EL_COLOR[game.players.A.element] ?? EL_COLOR.thunder, B: EL_COLOR[game.players.B.element] ?? EL_COLOR.thunder }) };
 const stage = createStage({ video, cfg, hub, PA, isSetup: () => game.match.phase === 'setup', overlay });
 const hudFlash = { el: null };
-const game = createGame({ fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), onHit: (slot, ms) => hub.send?.({ type: 'flash', slot, ms }), onVibrate: (slot, kind, extra) => hub.send?.({ type: 'vibrate', slot, kind, ...extra }), onSound: phoneSound, getDummyFrame: () => vsrc.dummy?.frame });
+// the game's clock: real time, except that it stops while the sandbox shows a freeze frame (frame below)
+let simT = performance.now() / 1000;
+const game = createGame({ clock: () => simT, fx: stage.fx, drone: stage.drone, sfx: () => sfx, cfg, onFlash: el => flash(el), onHit: (slot, ms) => hub.send?.({ type: 'flash', slot, ms }), onVibrate: (slot, kind, extra) => hub.send?.({ type: 'vibrate', slot, kind, ...extra }), onSound: phoneSound, getDummyFrame: () => vsrc.dummy?.frame });
 stage.fx.addStyle('smash', createSmashStyle); stage.fx.setStyle(cfg.fxStyle); // effect sets: プログラム版 (smash, default) / 画像素材版 (textured) / いつもの (classic)
 game.command({ cmd: 'matchSec', value: cfg.matchSec });
 // A / B: keyboard / random / still (screens 3 / 4, dummy room only), through the dummy's truth input and game.command
@@ -194,7 +197,7 @@ let screen = null, sticksUi = null;
 const sentPhase = { ph: null, at: 0 }; // the game phase told to the server (phones grey out 枝 in a match)
 const sentHp = { A: { key: '', dist: null, at: -9 }, B: { key: '', dist: null, at: -9 } }; // what the phones were last told (their HP screen)
 function show(name) {
-  if (!['connect', 'space', 'game', 'final', 'sticks', 'scanfx'].includes(name)) name = 'connect';
+  if (!['connect', 'space', 'game', 'final', 'sticks', 'scanfx', 'sandbox'].includes(name)) name = 'connect';
   screen = name; cfg.screen = name; save();
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('active', s.id === 'scr-' + name);
   for (const b of document.querySelectorAll('nav.tabs button')) b.setAttribute('aria-selected', b.dataset.screen === name);
@@ -203,12 +206,15 @@ function show(name) {
   if (name === 'final') stage.attach($('#finalBox'), 'final');
   if (name === 'space') space.resize();
   scanFx.setActive(name === 'scanfx');
+  sandbox.setActive(name === 'sandbox'); // it takes the game picture into its own panel
   if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
 }
 for (const b of document.querySelectorAll('nav.tabs button')) b.onclick = () => show(b.dataset.screen);
 // 新しい枝 (screen 6): a phone starting a stick scan brings it up; its OK goes back to the game
 const scanFx = mountScanFx($('#scr-scanfx'), { onOk: () => show('game') });
 addEventListener('stickscan', e => { if (e.detail.step === 'start') show('scanfx'); });
+// サンドボックス (screen 7): every stage of the pipeline side by side, moves on buttons, freeze frames
+const sandbox = mountSandbox($('#scr-sandbox'), { hub, game, stage, rules: () => cfg.rules });
 addEventListener('hashchange', () => show(location.hash.slice(1)));
 
 // ---- game screen controls ----
@@ -464,7 +470,7 @@ const KEYS = { 1: { cmd: 'phase', phase: 'setup' }, 2: { cmd: 'phase', phase: 'd
 const held = { q: 'A', p: 'B' };
 addEventListener('keydown', e => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) || e.repeat || e.ctrlKey || e.metaKey) return;
-  if (e.altKey) { const n = { Digit1: 'connect', Digit2: 'space', Digit3: 'game', Digit4: 'final', Digit5: 'sticks', Digit6: 'scanfx' }[e.code]; if (n) { e.preventDefault(); show(n); } return; }
+  if (e.altKey) { const n = { Digit1: 'connect', Digit2: 'space', Digit3: 'game', Digit4: 'final', Digit5: 'sticks', Digit6: 'scanfx', Digit7: 'sandbox' }[e.code]; if (n) { e.preventDefault(); show(n); } return; }
   if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (held[k] && screen !== 'final') return holdCharge(held[k], true);
@@ -619,6 +625,8 @@ function frame(ts) {
   const t = performance.now() / 1000, raw = t - last, dt = Math.min(.05, raw); last = t;
   fps = .95 * fps + .05 / Math.max(raw, 1e-3);
   try { est = PA.estimate(nowS()); } catch (e) { console.warn('phonealign', e); }
+  const frozen = screen === 'sandbox' && sandbox.frozen; // a freeze frame: the game, its effects and the camera stand still
+  if (!frozen) simT += raw;
   playable.step(dt, t);
   const waiting = game.match.phase === 'setup';
   if (waiting && !frame.waiting) waitHour = WAIT_HOUR; // back to setup: noon again
@@ -634,7 +642,7 @@ function frame(ts) {
   const dummyPicture = screen !== 'game' || !!cfg.mimic || dummyScanning || t - dummyDrawnAt >= 1;
   if (dummyPicture) dummyDrawnAt = t;
   vsrc.dummy?.render(t, dummyPicture);
-  game.step(dt, raw, est, { sensorOnly: screen === 'final' });
+  game.step(frozen ? 0 : dt, frozen ? 0 : raw, est, { sensorOnly: screen === 'final' });
   if (game.match.phase !== sentPhase.ph || t - sentPhase.at > 2) { sentPhase.ph = game.match.phase; sentPhase.at = t; hub.send?.({ type: 'match', phase: sentPhase.ph }); }
   for (const p of Object.values(game.players)) { // each phone's HP screen (SensorLink): its HP, the opponent's HP, character and distance
     const foe = game.players[p.slot === 'A' ? 'B' : 'A'], h = sentHp[p.slot];
@@ -655,13 +663,15 @@ function frame(ts) {
   applyMimic(mimicOn);
   watchEnd();
   stageDt += dt;
-  if (screen === 'game' || screen === 'final') {
-    if (!cfg.crt || stageDt >= 1 / CRT_FPS - .004) { stage.render(stageDt, game, est, koShow.state(stageDt)); stageDt = 0; } // the CRT look draws 30 frames a second
+  if (frozen) stageDt = 0;
+  if (screen === 'game' || screen === 'final' || screen === 'sandbox') {
+    if (frozen || !cfg.crt || stageDt >= 1 / CRT_FPS - .004) { stage.render(stageDt, game, est, koShow.state(stageDt)); stageDt = 0; } // the CRT look draws 30 frames a second
     updateHud();
   } else { stage.fx.step(stageDt); stageDt = 0; } // effects keep their time even when nobody looks
   if (screen === 'final') finalControls.updateStatus();
   if (screen === 'space') space.frame(nowS(), est);
   if (screen === 'connect') connect.frame();
+  if (screen === 'sandbox') sandbox.frame();
   if (t - lastSlow > .2) { lastSlow = t; updateSlowUi(); $('#pillFps').textContent = `${fps.toFixed(0)} fps`; }
 }
 
