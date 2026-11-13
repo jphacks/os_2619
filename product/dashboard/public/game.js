@@ -77,7 +77,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const assigned = { A: null, B: null };
   const st = (p, k) => Math.min(3, Math.max(.3, +p?.stick?.stats?.[k] || 1)); // clamped: a bad record never stalls or breaks a match
   const hpOf = () => Math.round(rules().hp ?? RULES.hp);
-  const takeStick = p => { p.stick = assigned[p.slot]; p.element = p.stick?.element ?? ELEMENT[p.slot]; };
+  const takeStick = p => { p.stick = assigned[p.slot]; p.element = p.tryElement ?? p.stick?.element ?? ELEMENT[p.slot]; }; // tryElement: the sandbox's choice (command tryElement)
   const MOVE_GRACE = .5; // s added to chargeHold while the player steps or turns. Measured: while circling, Charge events stop for at most 1 s; a longer wait keeps a stopped charge (and the vibration) alive while just walking
   const CHARGE_LIVE = .4; // s after a Charge event the circling counts as still going (actions.js sends one every ~.15 s while it does)
   const speedMul = tier => speedRule(rules().speed)[tier];
@@ -95,6 +95,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       p.tip.fromArray(dummy.tip); p.dir.fromArray(dummy.dir);
       ownHand(p, p.base.distanceTo(p.tip));
       p.src = 'dummy'; p.stickSrc = 'ダミー映像と同じ座標';
+      dodgeOffset(p); // a dodge moves the character wherever its position comes from
       return shrink(p);
     }
     const g = est?.slots?.[p.slot] ?? {}, st = W.START[p.slot], T = p.truth;
@@ -184,7 +185,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       const dev = Math.max(...h.map(x => p.dir.angleTo(x.dir))); // the furthest any sample in the window is from now: a wobble's turning point is not still
       const level = sideways(p); // only a stick lying sideways guards; held upright or pointed forward it does nothing
       const still = level && t - h[0].t >= win - 1e-6 && dev < GUARD_STILL && t - (p.swingAt ?? -9) > AFTER_SWING; // held still for the whole hold
-      const on = canAct() && !p.charging && (p.guardKey ?? still); // a keyboard player says so itself (playable.js); a real stick guards by being held still
+      const on = (canAct() && !p.charging && (p.guardKey ?? still)) || !!p.tryGuard; // a keyboard player says so itself (playable.js); a real stick guards by being held still; tryGuard: the sandbox, any phase
       if (on && !p.guarding) { showAct(p, 'ガード'); log(p.slot, 'guard', 'ガード'); pcSfx(p)?.guard('up', panOf(p.chest)); onSound([p.slot], 'guard', 'up'); }
       p.guarding = on;
     }
@@ -423,6 +424,10 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       case 'fxCharge': if (!p) return;
         if (c.on) p.preview = now();
         else if (p.preview) { const t = now() - p.preview; p.preview = null; if (c.fire) fxShot(p, tierOf(t, p)); }
+      // the sandbox (sandbox.js), any phase: a guard held on / off, a dodge to a side (-1 left, 1 right), the element shown (null: the stick's)
+      case 'tryGuard': if (p) p.tryGuard = !!c.on; return;
+      case 'tryDodge': if (p) { p.dodge = { t0: now(), side: c.side === -1 ? -1 : 1 }; sfx()?.dodge?.(panOf(p.chest)); showAct(p, '回避'); } return;
+      case 'tryElement': if (p) { p.tryElement = c.element || null; takeStick(p); } return;
         return;
     }
   }
