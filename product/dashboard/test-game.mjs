@@ -280,6 +280,13 @@ scenario('回避（横の加速度）でキャラが横へ転がって素早く 
   if (!(mid > .1 && mid < d && S.B.hop > .2)) throw new Error(`横跳びの途中 ${mid.toFixed(2)} m、高さ ${S.B.hop}`);
   S.run(.4); if (!(S.B.chest.distanceTo(x0) < .01 && !S.B.lean && !S.B.hop && !S.B.roll)) throw new Error('元の位置に戻らない');
 });
+scenario('位置が「そのまま」（スマホなし）でも、回避のずれは積み重ならず元の位置に戻る', () => {
+  const S = setup(); S.cfg.useTruth = false; S.cfg.posSrc = 'auto'; S.fight(); S.run(.1);
+  const x0 = S.B.chest.clone();
+  S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'right', side: 1, acc: 9 });
+  S.run(.5); const d = S.B.chest.distanceTo(x0); if (!(d > 1 && d < 1.5)) throw new Error(`0.5 秒後のずれ ${d.toFixed(2)} m`);
+  S.run(1); if (!(S.B.chest.distanceTo(x0) < .01)) throw new Error(`戻らない（${S.B.chest.distanceTo(x0).toFixed(2)} m）`);
+});
 scenario('回避で弾の通り道から外れると当たらない', () => {
   const S = setup(); S.fight();
   S.swing('A'); S.g.onSensed({ slot: 'B', name: 'Dodge', dir: 'left', side: -1, acc: 9 }); S.run(1.5);

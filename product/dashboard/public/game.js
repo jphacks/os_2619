@@ -104,6 +104,8 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     if (src === 'truth') p.body = W.bodyPose(T.chest, T.yaw, T.chest[1]);
     else if (src === 'phones' && phoneOk) p.body = W.bodyPose(g.chest, g.yaw ?? st.yaw, g.chest[1]);
     else if (src === 'start' || !p.body) p.body = W.bodyPose(st.pos, st.yaw);
+    else if (src === 'hold' && p.heldBody) p.body = p.heldBody; // where it was, without last frame's dodge shift (dodgeOffset): it must not add up
+    p.heldBody = p.body;
     p.src = src === 'hold' ? (p.src === 'start' ? 'start' : 'hold') : src;
     p.chest.copy(v3(p.body.t));
     const sk = est?.stick?.[p.slot];
