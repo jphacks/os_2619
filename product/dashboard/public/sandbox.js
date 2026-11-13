@@ -31,9 +31,6 @@ export function mountSandbox(section, { hub, game, stage, rules = () => ({}) }) 
     .sbx-mode.frozen { background: #e9f0ff; color: #1d4fd8; }
     .sbx-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: minmax(260px, 1fr) minmax(260px, 1fr); gap: 10px; min-height: 0; }
     .sbx-grid > section { border: 1px solid #dde1e8; border-radius: 8px; display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; overflow: hidden; background: #fff; }
-    .sbx.solo .sbx-grid { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
-    .sbx.solo .sbx-grid > section:not(:has([data-game])) { display: none; }
-    .sbx.solo { height: 100%; }
     .sbx-grid h3 { margin: 0; padding: 6px 10px; font-size: 13px; border-bottom: 1px solid #eef0f4; color: #4a5263; font-weight: 600; }
     .sbx-split { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #eef0f4; min-height: 0; }
     .sbx canvas { width: 100%; height: 100%; display: block; background: #fff; min-height: 0; }
@@ -49,7 +46,7 @@ export function mountSandbox(section, { hub, game, stage, rules = () => ({}) }) 
   </style>
   <div class="sbx">
     <div class="sbx-bar">
-      <span class="sbx-mode" data-mode>ライブ</span><button data-live>ライブに戻る</button><button data-solo class="on" title="スクショ用：1〜3 を隠してゲーム画面を大きく">ゲーム画面だけ</button><span class="sep"></span>
+      <span class="sbx-mode" data-mode>ライブ</span><button data-live>ライブに戻る</button><span class="sep"></span>
       <span>プレイヤー</span><button data-slot="A" class="on">A</button><button data-slot="B">B</button><span class="sep"></span>
       <button data-shot="s">小を撃つ</button><button data-shot="m">中を撃つ</button><button data-shot="l">大を撃つ</button>
       <button data-charge title="押している間ためる。離すと、たまった段階で撃つ">チャージ（長押し）</button>
@@ -302,9 +299,6 @@ export function mountSandbox(section, { hub, game, stage, rules = () => ({}) }) 
   function setMode(name) { const m = $('mode'); m.textContent = name ? `フリーズ：${name}` : 'ライブ'; m.classList.toggle('frozen', !!name); }
   function goLive() { if (!frozen) return; frozen = false; running++; setMode(null); for (const b of list.querySelectorAll('button')) b.classList.remove('on'); clearAll(); }
   $('live').onclick = goLive;
-  const setSolo = on => { section.querySelector('.sbx').classList.toggle('solo', on); $('solo').classList.toggle('on', on); if (active) stage.attach($('game'), 'game'); };
-  $('solo').onclick = () => setSolo(!$('solo').classList.contains('on'));
-  setSolo(true);
   list.onclick = async e => {
     const b = e.target.closest('[data-p]'); if (!b) return;
     const my = ++running; frozen = false; setMode(null); for (const q of list.querySelectorAll('button')) q.classList.toggle('on', q === b);
