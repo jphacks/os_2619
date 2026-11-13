@@ -11,13 +11,12 @@
   .red { fill: #e01b1b; stroke: #e01b1b; }
   .bar { fill: none; stroke: #e01b1b; stroke-width: 7; stroke-linecap: round; }
   .link { fill: none; stroke: #000; stroke-width: 1.6; }
-  .sight { fill: none; stroke: #000; stroke-width: 1.6; stroke-dasharray: 2 5; stroke-linecap: round; }
   text { fill: #000; text-anchor: middle; font-size: 16px; }
   .name { font-size: 19px; font-weight: 600; }
 </style>
 </head>
 <body>
-<svg viewBox="0 0 900 450" role="img" aria-label="向かい合う二人が棒を持つ。棒の IMU は BLE で胸のスマホに、スマホは Wi-Fi の WebSocket で間の PC につながる。胸のスマホは 45° 下を向き、床の魔法陣を見る">
+<svg viewBox="0 0 900 450" role="img" aria-label="向かい合う二人が棒を持つ。棒の IMU は BLE で胸のスマホに、スマホは Wi-Fi の WebSocket で間の PC につながる">
   <defs>
     <!-- a person facing right (grey silhouette), holding the stick (red, its IMU on it) out in front, the phone on the chest tilted 45° down -->
     <g id="man">
@@ -35,8 +34,6 @@
   </defs>
 
   <line x1="20" y1="404" x2="880" y2="404" stroke="#000" stroke-width="1"/>
-  <!-- the mahoujin mat on the floor, seen from the side -->
-  <line class="bar" x1="240" y1="399" x2="660" y2="399"/>
   <use href="#man"/>
   <use href="#man" transform="translate(900 0) scale(-1 1)"/>
 
@@ -45,9 +42,7 @@
   <rect class="red" x="420" y="284" width="60" height="40" rx="3"/>
   <path class="red" d="M412 325 H488 L494 332 H406 Z"/>
 
-  <!-- the phone's camera looking at the mahoujin (dotted), communication (solid) -->
-  <line class="sight" x1="192" y1="188" x2="402" y2="398"/>
-  <line class="sight" x1="708" y1="188" x2="498" y2="398"/>
+  <!-- communication -->
   <path class="link" d="M192 176 Q252 168 276 144"/>
   <path class="link" d="M708 176 Q648 168 624 144"/>
   <line class="link" x1="194" y1="182" x2="416" y2="298"/>
@@ -61,7 +56,6 @@
   <text x="450" y="272" class="name">Server</text>
   <text x="150" y="434" class="name">Client A</text>
   <text x="750" y="434" class="name">Client B</text>
-  <text x="450" y="434">魔法陣</text>
 </svg>
 </body>
 </html>
