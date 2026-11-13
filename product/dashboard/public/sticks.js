@@ -5,6 +5,32 @@
 // mountSticks(root) draws into root.
 import { STAT_RANGE } from './stick-stats.js';
 import { stickFromPhoto } from './stickshot.js';
+import * as THREE from 'three';
+import { stickGeometry, STICK_COLOR } from './stickmesh.js';
+
+// Each card shows its stick's 3D model rocking slowly about its length, in place of the scan photo (the photo: 写真と3D). One hidden
+// renderer draws every card in turn and copies the picture into the card's canvas: a page may hold only a few WebGL contexts.
+function createTurntables() {
+  const r = new THREE.WebGLRenderer({ antialias: true, alpha: true }), scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(30, 4 / 3, .01, 10);
+  r.setClearColor(0x000000, 0);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x404050, 2.2));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(1, 2, 3); scene.add(sun);
+  const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial({ color: STICK_COLOR, roughness: .8 })), holder = new THREE.Group();
+  holder.rotation.z = Math.PI / 2; holder.add(mesh); scene.add(holder); // lying across the card
+  const geo = new Map(); // model -> its geometry, made once
+  return (canvas, m, t) => {
+    const w = canvas.clientWidth, h = canvas.clientHeight; if (!w || !h) return;
+    if (!geo.has(m)) geo.set(m, stickGeometry(m));
+    const g = geo.get(m); if (!g) return;
+    const d = devicePixelRatio, W = Math.round(w * d), H = Math.round(h * d);
+    if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+    if (r.domElement.width !== W || r.domElement.height !== H) { r.setPixelRatio(1); r.setSize(W, H, false); cam.aspect = w / h; cam.updateProjectionMatrix(); }
+    mesh.geometry = g; mesh.scale.set(1, m.length, 1); mesh.rotation.y = .6 * Math.sin(t * .7); holder.rotation.x = .25; // rocks ±35° about its flat side: the bends and branches stay in view
+    cam.position.set(0, 0, m.length * .6 / Math.tan(15 * Math.PI / 180) / Math.max(1, cam.aspect)); cam.lookAt(0, 0, 0); // the length fills the width
+    r.render(scene, cam);
+    const c = canvas.getContext('2d'); c.clearRect(0, 0, W, H); c.drawImage(r.domElement, 0, 0);
+  };
+}
 import { detectInImage } from './tagdetect.js';
 import { solveCamera } from './extrinsics.js';
 import * as W from './world.js';
@@ -112,7 +138,7 @@ export function mountSticks(root) {
     $('list').innerHTML = list.length ? list.slice().reverse().map(s => {
       const who = ['A', 'B'].filter(p => as[p]?.id === s.id);
       return `<div class="tile${who.length ? ' inuse' : ''}">
-        ${s.image ? `<img src="${esc(s.image)}" alt="" loading="lazy">` : '<div class="noimg">写真なし</div>'}
+        ${s.model ? `<canvas data-turn="${s.id}" role="img" aria-label="${esc(s.name)}の 3D モデル"></canvas>` : s.image ? `<img src="${esc(s.image)}" alt="" loading="lazy">` : '<div class="noimg">3D モデルなし</div>'}
         <div class="body">
           <span class="nm">${esc(s.name)}</span>
           <span>${el(s.element)} <span class="muted num">${size(s)}</span></span>
@@ -135,5 +161,12 @@ export function mountSticks(root) {
     } catch (e) { err(`できませんでした（${e.message}）`); }
   });
   refresh().catch(e => err(`読めませんでした（${e.message}）`));
+  // the cards' turning models: drawn only while 棒設定 shows
+  const turn = createTurntables();
+  (function spin(now) {
+    requestAnimationFrame(spin);
+    if (!root.offsetParent) return;
+    for (const c of root.querySelectorAll('canvas[data-turn]')) { const s = sticks.find(x => x.id === c.dataset.turn); if (s?.model) turn(c, s.model, now / 1000); }
+  })(performance.now());
   return { refresh };
 }

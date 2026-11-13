@@ -26,7 +26,7 @@
 .stk .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
 .stk .tile { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: grid; background: var(--bg); }
 .stk .tile.inuse { border-color: var(--text-2); }
-.stk .tile img, .stk .tile .noimg { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #000; display: block; }
+.stk .tile img, .stk .tile canvas, .stk .tile .noimg { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #000; display: block; }
 .stk .tile .noimg { display: grid; place-items: center; color: var(--muted); font-size: 12px; }
 .stk .tile .body { padding: 8px 10px 10px; display: grid; gap: 6px; }
 .stk .tile .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
