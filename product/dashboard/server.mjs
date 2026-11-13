@@ -373,6 +373,10 @@ const saveDb = () => { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(S
 const cleanName = (n, or) => String(n ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 24) || or;
 // null when over max; the rest is still read (up to 8 × max) so the client gets the 413 instead of a reset
 async function body(req, max) { let b = '', n = 0; for await (const c of req) { n += c.length; if (n > 8 * max) return req.destroy(), null; if (n <= max) b += c; } return n > max ? null : b; }
+// a photo's camera from a page: { pose: { R: 9 numbers, t: 3 }, f px, w, h } with every number finite and in range, or null
+const camOf = c => { const n = (v, lo, hi) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+  return c && Array.isArray(c.pose?.R) && c.pose.R.length === 9 && c.pose.R.every(v => n(v, -1.01, 1.01)) && Array.isArray(c.pose.t) && c.pose.t.length === 3 && c.pose.t.every(v => n(v, -20, 20))
+    && n(c.f, 10, 1e5) && n(c.w, 16, 1e4) && n(c.h, 16, 1e4) ? { pose: { R: c.pose.R, t: c.pose.t }, f: c.f, w: Math.round(c.w), h: Math.round(c.h) } : null; };
 // a JPEG data URL (up to 1 MB) -> its bytes, false when it is not one
 const jpegOf = u => { const m = typeof u === 'string' && u.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/), b = m && Buffer.from(m[1], 'base64'); return !!b && b.length <= 1048576 && b[0] === 0xff && b[1] === 0xd8 && b; };
 async function sticksRoute(req, res, path) {
@@ -405,7 +409,8 @@ async function sticksRoute(req, res, path) {
     if (jpg === false) return json(400, { ok: false, error: 'image' });
     if (snap === false) return json(400, { ok: false, error: 'snap' });
     const id = Date.now().toString(36) + randomBytes(3).toString('hex');
-    const rec = { id, createdAt: new Date().toISOString(), name: cleanName(k.name, `枝 ${db.sticks.length + 1}`), element: elementFromShape(k.model), model: k.model, ...(jpg && { image: `/sticks/img/${id}.jpg` }), ...(snap && { snap: `/sticks/img/${id}s.jpg` }) };
+    const cam = jpg && camOf(k.imageCam); // the photo's camera (stickui.js), to render the model from it (棒設定)
+    const rec = { id, createdAt: new Date().toISOString(), name: cleanName(k.name, `枝 ${db.sticks.length + 1}`), element: elementFromShape(k.model), model: k.model, ...(jpg && { image: `/sticks/img/${id}.jpg` }), ...(snap && { snap: `/sticks/img/${id}s.jpg` }), ...(cam && { imageCam: cam }) };
     if (jpg || snap) await mkdir(IMG_DIR, { recursive: true });
     if (jpg) await writeFile(join(IMG_DIR, id + '.jpg'), jpg);
     if (snap) await writeFile(join(IMG_DIR, id + 's.jpg'), snap);

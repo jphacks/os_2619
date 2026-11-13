@@ -4,6 +4,7 @@
 // same for every stick (the game screen's rules).
 // mountSticks(root) draws into root.
 import { STAT_RANGE } from './stick-stats.js';
+import { stickFromPhoto } from './stickshot.js';
 
 const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const EL = { fire: '炎', thunder: '雷', water: '水', wind: '風' };
@@ -59,6 +60,20 @@ export function mountSticks(root) {
     <div class="use"><button type="button" class="go" data-save="${s.id}">保存</button>${s.custom ? `<button type="button" data-auto="${s.id}">自動に戻す</button>` : ''}<button value="cancel">閉じる</button></div>
   </form>`;
   const openEditor = id => { const s = sticks.find(x => x.id === id); if (!s) return; dlg.innerHTML = editor(s); dlg.showModal(); };
+  // the scan's photo next to the model rendered from that photo's own camera (stickshot.js stickFromPhoto), and the two laid over each other
+  function openPhoto(id) {
+    const s = sticks.find(x => x.id === id), url = s && stickFromPhoto(s.model, s.imageCam); if (!url) return;
+    const box = 'position:relative;flex:1;min-width:0', img = 'display:block;width:100%;border-radius:6px';
+    dlg.innerHTML = `<form method="dialog" class="edit" style="width:min(1200px,92vw)">
+      <h2>${esc(s.name)}：写真と、同じ向きから見た 3D モデル</h2>
+      <div style="display:flex;gap:10px;align-items:flex-start">
+        <figure style="${box};margin:0"><img src="${esc(s.image)}" alt="スキャンの写真" style="${img}"><figcaption class="sub">写真</figcaption></figure>
+        <figure style="${box};margin:0"><img src="${url}" alt="同じ向きの 3D モデル" style="${img};background:#e9ecf1"><figcaption class="sub">3D モデル（写真のカメラから）</figcaption></figure>
+        <figure style="${box};margin:0"><div style="position:relative"><img src="${esc(s.image)}" alt="" style="${img}"><img src="${url}" alt="写真に重ねた 3D モデル" style="${img};position:absolute;inset:0;opacity:.75"></div><figcaption class="sub">重ねたもの</figcaption></figure>
+      </div>
+      <div class="use"><button value="cancel">閉じる</button></div></form>`;
+    dlg.showModal();
+  }
   async function saveEdit(id, auto) {
     const f = root.querySelector(`[data-form="${id}"]`), v = n => f.querySelector(`[data-f="${n}"]`).value;
     const body = { name: v('name'), element: v('element'), stats: auto ? null : Object.fromEntries(Object.keys(ST).map(k => [k, +v(k)])) };
@@ -82,7 +97,7 @@ export function mountSticks(root) {
           <span>${el(s.element)} <span class="muted num">${size(s)}</span></span>
           ${stats(s.stats)}
           <span class="tag">${who.length ? who.join('・') + ' が使用中' : s.custom ? '手で調整済み' : '&nbsp;'}</span>
-          <div class="use"><button data-use="A" data-id="${s.id}">A</button><button data-use="B" data-id="${s.id}">B</button><button class="del" data-edit="${s.id}" aria-haspopup="dialog">編集</button><button class="del" data-del="${s.id}" data-label="${esc(s.name)}" aria-label="${esc(s.name)}を消す">消す</button></div>
+          <div class="use"><button data-use="A" data-id="${s.id}">A</button><button data-use="B" data-id="${s.id}">B</button><button class="del" data-photo="${s.id}" aria-haspopup="dialog"${s.image && s.imageCam && s.model?.place ? '' : ' disabled title="写真のカメラの向きを残していない棒（11/13 より前のスキャン）"'}>写真と3D</button><button class="del" data-edit="${s.id}" aria-haspopup="dialog">編集</button><button class="del" data-del="${s.id}" data-label="${esc(s.name)}" aria-label="${esc(s.name)}を消す">消す</button></div>
         </div></div>`;
     }).join('') : '<p class="muted" style="margin:0">まだありません。スマホの「Scan」で作ると、ここに並びます。</p>';
   }
@@ -90,7 +105,8 @@ export function mountSticks(root) {
     const b = e.target.closest('button'); if (!b) return;
     err('');
     try {
-      if (b.dataset.edit) openEditor(b.dataset.edit);
+      if (b.dataset.photo) openPhoto(b.dataset.photo);
+      else if (b.dataset.edit) openEditor(b.dataset.edit);
       else if (b.dataset.save) await saveEdit(b.dataset.save, false);
       else if (b.dataset.auto) await saveEdit(b.dataset.auto, true);
       else if (b.dataset.use) { await api('/sticks/assign', { method: 'POST', body: JSON.stringify({ [b.dataset.use]: b.dataset.id || null }) }); await refresh(); }

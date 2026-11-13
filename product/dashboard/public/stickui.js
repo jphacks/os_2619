@@ -63,7 +63,7 @@ export function createStickScan(onText, onBuilt = () => {}) {
           const ends = model.nodes.filter((_, i) => model.edges.filter(e => e.includes(i)).length === 1).length; // grip, tip and one per branch
           const shape = `長さ ${(model.length * 100).toFixed(0)} cm、枝分かれ ${ends - 2} 本、太さ 根元 ${(2000 * model.r[0]).toFixed(0)} mm・先 ${(2000 * model.r[1]).toFixed(0)} mm（${model.views} 方向から）`;
           const image = 'data:image/jpeg;base64,' + s.jpgs[s.jpgs.length >> 1]; // a picture from the middle of the walk round
-          const r = await fetch('/sticks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, image, snap: stickSnapshot(model), slot }) }); // snap: the picture the phones' Stick menu shows
+          const r = await fetch('/sticks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, image, imageCam: (({ pose, f, w, h }) => ({ pose, f, w, h }))(s.views[s.jpgs.length >> 1].cam), snap: stickSnapshot(model), slot }) }); // imageCam: the kept photo's camera (棒設定 renders the model from it) // snap: the picture the phones' Stick menu shows
           if (!r.ok) {
             const why = (await r.json().catch(() => null))?.error ?? '';
             throw new Error(`保存できませんでした（${r.status} ${why}）。${why === 'features or image' ? 'PC のサーバーが古いままです。サーバーを再起動してください。' : ''}${shape}`);
