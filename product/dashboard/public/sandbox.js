@@ -14,6 +14,7 @@ import * as W from './world.js';
 import { eulerRot } from './actions.js';
 import { qrot } from './map.js';
 import { parseDesign } from './stickscan.js';
+import { stickGeometry, STICK_COLOR } from './stickmesh.js';
 
 const COL = { A: '#ff6600', B: '#0078ff' }, EL_JA = { fire: '炎', thunder: '雷', water: '水', wind: '風' }, D = 180 / Math.PI;
 const CIRCLE_R = .703 * W.RUNE_SCALE; // m: the mahoujin's outer ring (finished circle Ø 140.6 cm at scale 1)
@@ -126,7 +127,7 @@ export function mountSandbox(section, { hub, game, stage, rules = () => ({}) }) 
   renderer.setClearColor(0xffffff); box3.append(renderer.domElement); renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
   const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(45, 1, .05, 50); cam.position.set(0, 1.9, 2.9);
   const orbit = new OrbitControls(cam, renderer.domElement); orbit.target.set(0, .8, 0); orbit.update();
-  scene.add(new THREE.GridHelper(6, 12, 0xc8cdd6, 0xeef0f4));
+  scene.add(new THREE.GridHelper(6, 12, 0xc8cdd6, 0xeef0f4), new THREE.HemisphereLight(0xffffff, 0x8a8070, 2.6));
   // the mahoujin on the floor as it looks: its print (black lines) at its measured size, T0 toward -x as on the real floor (world.js runeTagPos)
   fetch('mahoujin-design.bin.gz')
     .then(r => r.ok ? new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer() : Promise.reject(new Error(r.status)))
@@ -153,7 +154,9 @@ export function mountSandbox(section, { hub, game, stage, rules = () => ({}) }) 
     const ray = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V3(), V3()]), new THREE.LineDashedMaterial({ color: 0x1d2330, dashSize: .05, gapSize: .04 }));
     const guard = new THREE.Mesh(new THREE.TorusGeometry(.5, .01, 4, 32), wire(0x2266ff)), charge = new THREE.Mesh(new THREE.TorusGeometry(.35, .01, 4, 32), wire(0xffaa00));
     guard.rotation.x = Math.PI / 2; charge.rotation.x = Math.PI / 2;
-    scene.add(stick, phone, ray, guard, charge); fig[s] = { stick, phone, ray, guard, charge, man: null, color: c };
+    // the player's scanned stick (its model: stickmesh.js, as the game draws it), or the plain rod above without one
+    const wood = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial({ color: STICK_COLOR, roughness: .75 }));
+    scene.add(stick, wood, phone, ray, guard, charge); fig[s] = { stick, wood, woodOf: null, phone, ray, guard, charge, man: null, color: c };
   }
   new GLTFLoader().loadAsync(new URL('./assets/models/Xbot.glb', import.meta.url).href).then(g => {
     for (const s of ['A', 'B']) {
@@ -203,7 +206,16 @@ export function mountSandbox(section, { hub, game, stage, rules = () => ({}) }) 
           reach(M, 'Left', both ? p.base.clone().addScaledVector(p.tip.clone().sub(p.base).normalize(), -.1) : lsh.clone().add(V3(0, -.55 * k * M.h / 1.8, 0)).addScaledVector(V3(f.z, 0, -f.x), .1), f);
         }
       }
-      F.stick.position.copy(p.base).lerp(p.tip, .5); F.stick.quaternion.setFromUnitVectors(UP, p.tip.clone().sub(p.base).normalize()); F.stick.scale.set(.012, p.base.distanceTo(p.tip), .012);
+      const model = p.stick?.model, along = p.tip.clone().sub(p.base).normalize(), L = p.base.distanceTo(p.tip);
+      if (model !== F.woodOf) { F.woodOf = model; F.wood.geometry.dispose(); F.wood.geometry = (model && stickGeometry(model)) || new THREE.BufferGeometry(); }
+      const scanned = !!(model && F.wood.geometry.attributes.position);
+      F.stick.visible = !scanned; F.wood.visible = scanned;
+      for (const m of [F.stick, F.wood]) { m.position.copy(p.base).lerp(p.tip, .5); m.quaternion.setFromUnitVectors(UP, along); }
+      F.stick.scale.set(.012, L, .012); F.wood.scale.set(1, L, 1);
+      if (scanned && p.up) { // its roll: up as it lay (the model's z) along the IMU's up across the stick (field3d.js does the same)
+        const up = V3(p.up.x, p.up.y, p.up.z).addScaledVector(along, -V3(p.up.x, p.up.y, p.up.z).dot(along));
+        if (up.lengthSq() > 1e-6) { up.normalize(); F.wood.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(V3().crossVectors(along, up), along, up)); }
+      }
       // the chest phone as worn: 45° down and turned 15° aside, its camera looking out along that
       const look = f.clone().applyAxisAngle(UP, (s === 'A' ? 1 : -1) * 15 / D).multiplyScalar(Math.cos(45 / D)).add(V3(0, -Math.sin(45 / D), 0));
       F.phone.position.copy(c).addScaledVector(f, .12); F.phone.lookAt(F.phone.position.clone().add(look));
