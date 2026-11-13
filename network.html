@@ -6,52 +6,56 @@
 <title>Full Stick Network</title>
 <style>
   body { margin: 0; background: #fff; color: #000; font: 14px/1.4 system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; }
-  svg { width: min(900px, 100vw - 32px); height: auto; }
-  rect { fill: #fff; stroke: #000; stroke-width: 1.5; }
-  line { stroke: #000; stroke-width: 1.5; }
-  .dash { stroke-dasharray: 6 5; }
-  text { fill: #000; text-anchor: middle; }
+  svg { width: min(960px, 100vw - 32px); height: auto; }
+  .body { stroke: #9a9a9a; stroke-linecap: round; fill: none; }
+  .red { fill: #e01b1b; stroke: #e01b1b; }
+  .link { fill: none; stroke: #000; stroke-width: 1.5; stroke-dasharray: 6 5; }
+  text { fill: #000; text-anchor: middle; font-size: 12px; }
   .name { font-size: 15px; font-weight: 600; }
-  .sub, .ms { font-size: 12px; }
-  .ms { fill: #000; }
-  .lan { fill: none; stroke: #000; stroke-width: 1; stroke-dasharray: 2 4; }
 </style>
 </head>
 <body>
-<svg viewBox="0 0 900 380" role="img" aria-label="IMU は BLE でスマホに、スマホ 2 台は LAN の WebSocket でサーバーにつながる">
-  <!-- LAN (Wi-Fi) -->
-  <rect class="lan" x="320" y="20" width="560" height="340" rx="12"/>
-  <text x="850" y="350" class="sub" style="text-anchor:end">LAN（Wi-Fi）</text>
+<svg viewBox="0 0 900 440" role="img" aria-label="向かい合う二人が棒を持ち、棒の IMU は BLE で胸のスマホに、スマホは Wi-Fi の WebSocket で間の PC につながる">
+  <defs>
+    <!-- a person facing right: grey silhouette; red: the stick (with its IMU) and the chest phone -->
+    <g id="man">
+      <circle cx="150" cy="95" r="25" fill="#9a9a9a"/>
+      <line class="body" x1="150" y1="140" x2="150" y2="245" stroke-width="58"/>
+      <line class="body" x1="140" y1="250" x2="128" y2="392" stroke-width="28"/>
+      <line class="body" x1="162" y1="250" x2="182" y2="392" stroke-width="28"/>
+      <line class="body" x1="158" y1="138" x2="238" y2="178" stroke-width="18"/>
+      <line class="red" x1="222" y1="196" x2="335" y2="80" stroke-width="7" stroke-linecap="round"/>
+      <rect class="red" x="274" y="120" width="16" height="12" rx="2" transform="rotate(-46 282 126)"/>
+      <rect class="red" x="178" y="148" width="8" height="24" rx="2"/>
+    </g>
+  </defs>
 
-  <!-- links -->
-  <line x1="150" y1="100" x2="360" y2="100" class="dash"/>
-  <line x1="150" y1="280" x2="360" y2="280" class="dash"/>
-  <line x1="520" y1="100" x2="680" y2="100"/>
-  <line x1="520" y1="280" x2="680" y2="280"/>
+  <line x1="20" y1="406" x2="880" y2="406" stroke="#000" stroke-width="1"/>
+  <use href="#man"/>
+  <use href="#man" transform="translate(900 0) scale(-1 1)"/>
 
-  <text x="255" y="90" class="sub">Bluetooth LE</text>
-  <text x="255" y="122" class="ms">100 Hz · 約 10 ms</text>
-  <text x="255" y="270" class="sub">Bluetooth LE</text>
-  <text x="255" y="302" class="ms">100 Hz · 約 10 ms</text>
+  <!-- PC on a table -->
+  <line class="body" x1="395" y1="336" x2="505" y2="336" stroke-width="8"/>
+  <line class="body" x1="405" y1="340" x2="405" y2="404" stroke-width="6"/>
+  <line class="body" x1="495" y1="340" x2="495" y2="404" stroke-width="6"/>
+  <rect class="red" x="420" y="284" width="60" height="40" rx="3"/>
+  <path class="red" d="M412 325 H488 L494 332 H406 Z"/>
 
-  <text x="600" y="90" class="sub">WebSocket</text>
-  <text x="600" y="122" class="ms">約 10–30 ms</text>
-  <text x="600" y="270" class="sub">WebSocket</text>
-  <text x="600" y="302" class="ms">約 10–30 ms</text>
+  <!-- links between the red parts -->
+  <path class="link" d="M186 150 Q215 95 276 120"/>
+  <path class="link" d="M714 150 Q685 95 624 120"/>
+  <line class="link" x1="188" y1="172" x2="416" y2="298"/>
+  <line class="link" x1="712" y1="172" x2="484" y2="298"/>
 
-  <!-- nodes -->
-  <rect x="30" y="70" width="120" height="60"/>
-  <text x="90" y="97" class="name">IMU A</text><text x="90" y="115" class="sub">WT9011DCL</text>
-  <rect x="30" y="250" width="120" height="60"/>
-  <text x="90" y="277" class="name">IMU B</text><text x="90" y="295" class="sub">WT9011DCL</text>
+  <text x="232" y="76">BLE · 100 Hz · 約 10 ms</text>
+  <text x="668" y="76">BLE · 100 Hz · 約 10 ms</text>
+  <text x="275" y="296">WebSocket（Wi-Fi）</text><text x="275" y="312">約 10–30 ms</text>
+  <text x="625" y="296">WebSocket（Wi-Fi）</text><text x="625" y="312">約 10–30 ms</text>
 
-  <rect x="360" y="70" width="160" height="60"/>
-  <text x="440" y="97" class="name">Client A</text><text x="440" y="115" class="sub">スマホ（SensorLink）</text>
-  <rect x="360" y="250" width="160" height="60"/>
-  <text x="440" y="277" class="name">Client B</text><text x="440" y="295" class="sub">スマホ（SensorLink）</text>
-
-  <rect x="680" y="70" width="170" height="240"/>
-  <text x="765" y="182" class="name">Server</text><text x="765" y="201" class="sub">PC</text><text x="765" y="218" class="sub">node server.mjs :8000</text>
+  <text x="312" y="150">IMU</text><text x="588" y="150">IMU</text>
+  <text x="150" y="430" class="name">Client A</text>
+  <text x="750" y="430" class="name">Client B</text>
+  <text x="450" y="430" class="name">Server</text>
 </svg>
 </body>
 </html>
