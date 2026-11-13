@@ -261,7 +261,7 @@ struct HpScreen: View {
         let gw: CGFloat = w - 2 * gx, gy: CGFloat = h * 0.74 - gh / 2
         let color: Color
         if remaining > 0.5 {
-            color = Color(red: 0.831, green: 1, blue: 0.863) // near-white green: the phone gives off more light (Android the same)
+            color = Color(red: 0.224, green: 1, blue: 0.078) // vivid neon green #39FF14: stays bright and readable when reflected in a clear file (Android the same)
         } else if remaining > 0.25 {
             color = Color(red: 1, green: 0.941, blue: 0.722)
         } else {

@@ -593,7 +593,7 @@ class HpBar(a: Activity) : View(a) {
         c.drawText("あなた", gx + gh * .15f, gy - gh * .3f, p)
         box.set(gx, gy, gx + gw, gy + gh)
         val color = when {
-            remaining > .5f -> 0xFFD4FFDC.toInt() // near-white green: the phone gives off more light (iOS the same)
+            remaining > .5f -> 0xFF39FF14.toInt() // vivid neon green: stays bright and readable when reflected in a clear file (iOS the same)
             remaining > .25f -> 0xFFFFF0B8.toInt()
             else -> 0xFFFFC4C4.toInt()
         }
