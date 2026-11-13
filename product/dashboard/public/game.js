@@ -119,6 +119,11 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     } else { p.dir.copy(v3(W.app3(p.body.R, [1, 0, 0]))); p.stickSrc = 'IMU なし（前向き）'; }
     p.base.copy(v3(W.handAt(p.body, p.dir.toArray(), armOf(p)))); // the hand swings with the stick, the arm turning at the shoulder: this character's arm (the drawn fist)
     if (T && cfg.useTruth) { p.base.copy(v3(T.base)); p.dir.copy(v3(T.dir)); ownHand(p); }
+    if (p.preview != null) { // the sandbox's charge button (fxCharge): the stick raised as when charging (about 75° up, leaning a little forward), whatever the IMU says
+      const f = W.app3(p.body.R, [1, 0, 0]);
+      p.dir.set(f[0] * .26, .97, f[2] * .26).normalize(); p.up = null; p.stickSrc += '・溜めボタンで上向き';
+      p.base.copy(v3(W.handAt(p.body, p.dir.toArray(), armOf(p))));
+    }
     p.tip.copy(p.base).addScaledVector(p.dir, cfg.stickLen?.[p.slot] ?? W.STICK.len);
     dodgeOffset(p);
     shrink(p);
