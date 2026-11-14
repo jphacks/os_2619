@@ -562,9 +562,9 @@ class Overlay(private val a: MainActivity) : View(a) {
 }
 
 /**
- * Match mode HP display, mirrored vertically by MainActivity: two flat bars with parallel slanted ends, no pictures.
+ * Match mode HP display, mirrored vertically by MainActivity: two pill-shaped bars (ends fully rounded), no pictures.
  * The opponent's is 80% of the own one both ways. Turned by [turn] and as big as fits this view (the top 70% of the screen):
- * the bars' outermost corners touch its edges (iOS the same).
+ * the bars' outermost points touch its edges (iOS the same).
  */
 class HpBar(a: Activity) : View(a) {
     var info = HpInfo(100.0, 100.0, null, "wizard", 100.0, 100.0, 0.0)
@@ -573,7 +573,7 @@ class HpBar(a: Activity) : View(a) {
     var turn = 0f
         set(v) { if (Math.abs(v - field) > 1e-3f) { field = v; invalidate() } }
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val slash = Path()
+    private val pill = Path()
     private val box = RectF()
     // in units of the own bar's length, centred on 0: the opponent's (80% of the own one, both ways) above, a gap, the own one
     private val foeR = RectF(-.4f, -.174f, .4f, -.046f)
@@ -584,14 +584,14 @@ class HpBar(a: Activity) : View(a) {
         val w = width.toFloat(); val h = height.toFloat()
         val slot = info.foeSlot // null: a PC too old to say who the opponent is
         val bars = if (slot != null) listOf(foeR, mineR) else listOf(mineR)
-        // the turned bars' extent, from their real corners (slants included), so the fit is exact
+        // the turned bars' exact extent: each pill is its two end circles' centres turned, plus the radius all round
         val cs = Math.cos(turn.toDouble()).toFloat(); val sn = Math.sin(turn.toDouble()).toFloat()
         var x0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
         for (r in bars) {
-            val k = slant(r.width(), r.height())
-            for ((x, y) in listOf(r.left to r.top, r.right - k to r.top, r.right to r.bottom, r.left + k to r.bottom)) {
-                val rx = x * cs - y * sn; val ry = x * sn + y * cs
-                x0 = minOf(x0, rx); x1 = maxOf(x1, rx); y0 = minOf(y0, ry); y1 = maxOf(y1, ry)
+            val rad = r.height() / 2
+            for (x in floatArrayOf(r.left + rad, r.right - rad)) {
+                val y = r.centerY(); val rx = x * cs - y * sn; val ry = x * sn + y * cs
+                x0 = minOf(x0, rx - rad); x1 = maxOf(x1, rx + rad); y0 = minOf(y0, ry - rad); y1 = maxOf(y1, ry + rad)
             }
         }
         val scale = minOf(w / (x1 - x0), h / (y1 - y0))
@@ -599,10 +599,10 @@ class HpBar(a: Activity) : View(a) {
         c.translate(w / 2 - scale * (x0 + x1) / 2, h / 2 - scale * (y0 + y1) / 2)
         c.scale(scale, scale)
         c.rotate(Math.toDegrees(turn.toDouble()).toFloat())
-        if (slot != null) drawSlashBar(c, foeR, share(info.foeHp, info.foeMax),
+        if (slot != null) drawBar(c, foeR, share(info.foeHp, info.foeMax),
             if (slot == "A") 0xFFFF8000.toInt() else 0xFF00BFFF.toInt()) // the players' colours (field3d.js TEAM), pure: vivid in the reflection (iOS the same)
         val remaining = share(info.hp, info.max)
-        drawSlashBar(c, mineR, remaining, when {
+        drawBar(c, mineR, remaining, when {
             remaining > .5f -> 0xFF00FF00.toInt() // pure colours: bright and readable when reflected in a clear file (iOS the same)
             remaining > .25f -> 0xFFFFFF00.toInt()
             else -> 0xFFFF8000.toInt() // orange: apart from the red of the HP lost
@@ -611,29 +611,20 @@ class HpBar(a: Activity) : View(a) {
     }
 
     private fun share(hp: Double, max: Double) = (hp / maxOf(1.0, max)).coerceIn(0.0, 1.0).toFloat()
-    private fun slant(w: Float, h: Float) = minOf(h * .38f, w * .25f)
-
-    private fun drawSlashBar(c: Canvas, bounds: RectF, remaining: Float, color: Int) {
-        p.shader = null; p.style = Paint.Style.FILL
-        slashPath(bounds.left, bounds.top, bounds.right, bounds.bottom)
-        p.color = 0xFFFF0000.toInt() // the HP lost: red (iOS the same)
-        c.drawPath(slash, p)
+    /** the red pill (the HP lost), and the HP left filled in from the left inside the same pill (iOS the same) */
+    private fun drawBar(c: Canvas, r: RectF, remaining: Float, color: Int) {
+        p.style = Paint.Style.FILL
+        val rad = r.height() / 2
+        p.color = 0xFFFF0000.toInt()
+        c.drawRoundRect(r, rad, rad, p)
         if (remaining > 0f) {
-            slashPath(bounds.left, bounds.top, bounds.left + bounds.width() * remaining, bounds.bottom)
+            pill.reset(); pill.addRoundRect(r, rad, rad, Path.Direction.CW)
+            c.save(); c.clipPath(pill)
+            box.set(r.left, r.top, r.left + r.width() * remaining, r.bottom)
             p.color = color
-            c.drawPath(slash, p)
+            c.drawRect(box, p)
+            c.restore()
         }
-    }
-
-    private fun slashPath(left: Float, top: Float, right: Float, bottom: Float) {
-        val slant = slant(right - left, bottom - top)
-        slash.reset()
-        // MainActivity mirrors this view vertically, so these edges appear as / on screen.
-        slash.moveTo(left, top)
-        slash.lineTo(right - slant, top)
-        slash.lineTo(right, bottom)
-        slash.lineTo(left + slant, bottom)
-        slash.close()
     }
 
 }
