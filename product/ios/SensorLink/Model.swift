@@ -32,6 +32,10 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     @Published var hp = HpInfo()
     /// how much the screen faces up (its normal · gravity's up, from ARKit): 1 flat face up, 0 upright; strapped 45° up-forward ≈ .71. Main thread
     @Published private(set) var screenUp = 0.71
+    /// how far the opponent is from the chest's facing, rad, + = to the left: the PC's foeYaw once it places this player on the magic
+    /// circle, else the chest's turn since Calibrate (the player faces the opponent then). Main thread; the HP screen turns by it
+    @Published private(set) var foeTurn = 0.0
+    private var yawNow: Double?, yaw0: Double? // the chest's heading (ARKit, rad, + = counter-clockwise from above); under lock
     @Published private(set) var matchPhase = "setup"
     private var brightnessBefore: CGFloat?
     private var hitRedUntil = Date.distantPast
@@ -94,11 +98,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         link.onCharge = { [weak self] el, tier, level in self?.chargeSound.charge(element: el, tier: tier, level: level) }
         link.onSound = { [weak self] voices in self?.gameSound.play(voices) }
         link.onChargeFail = { [weak self] in self?.chargeSound.fail() }
-        link.onHp = { [weak self] info in
-            guard let self = self else { return }
-            self.lock.lock(); let pose = self.camPose; self.lock.unlock()
-            DispatchQueue.main.async { if let pose = pose { self.screenUp = Double(abs(pose.columns.2.y)) }; self.hp = info } // +z: out of the screen
-        }
+        link.onHp = { [weak self] info in DispatchQueue.main.async { self?.hp = info } }
         link.onPhase = { [weak self] p in DispatchQueue.main.async {
             guard let self = self else { return }
             self.matchPhase = p
@@ -197,9 +197,18 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         // -z forward) in a gravity-aligned world (y up), so it goes out as wp/wq unchanged.
         let world = cam.transform
         lock.lock()
-        if tracking == "TRACKING" { camPose = world }
+        let z = world.columns.2 // +z: out of the screen; the camera looks along -z
+        if tracking == "TRACKING" { camPose = world; yawNow = atan2(Double(z.z), -Double(z.x)) }
         let origin = arOrigin
+        let local: Double? = yaw0.flatMap { y0 in yawNow.map { atan2(sin(y0 - $0), cos(y0 - $0)) } }
         lock.unlock()
+        let tracked = tracking == "TRACKING"
+        DispatchQueue.main.async { [weak self] in // every frame, so the display keeps up with the body's turn
+            guard let self = self, self.hpOpen else { return }
+            let turn = self.hp.foeYaw ?? local ?? 0
+            if abs(turn - self.foeTurn) > 0.005 { self.foeTurn = turn }
+            if tracked && abs(Double(abs(z.y)) - self.screenUp) > 0.01 { self.screenUp = Double(abs(z.y)) }
+        }
         let rel = origin.map { simd_mul(simd_inverse($0), world) } ?? world
         let planes = frame.anchors.filter { $0 is ARPlaneAnchor }.count
         let (p, q) = Model.pose(rel)
@@ -270,6 +279,7 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         imu.calibrate()
         lock.lock()
         arOrigin = camPose
+        yaw0 = yawNow
         let tracked = camPose != nil
         lock.unlock()
         link.send(["type": "calib", "t": link.pcTime()])
