@@ -4,7 +4,6 @@
 //  tip:  a translucent sphere with a bright rim, a saw-tooth corona, a star inside and jagged bolts crackling outward
 import * as THREE from 'three';
 import { createKit, RAMP, TAU, V, rand, blend } from './effect-kit.js';
-import { CHEST_H } from './world.js';
 
 const PALETTE = {
   fire: { pillar: [[1, .72, .08], [1, .38, .03], [1, .9, .55]], wisp: [1, .42, .06], glow: [1, .5, .1],
@@ -36,6 +35,7 @@ export function createChargeEffects(scene) {
   const geometries = { sphere: new THREE.SphereGeometry(1, 32, 20), plane: new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2) };
   const states = new Map(); let time = 0, sequence = 0;
   const point = V(), axis = V(), UP = V(0, 1, 0);
+  // on the ground (y = 0) under the chest: the chest passed in is the shrunk character's, so chest - CHEST_H put it under the floor
   const glow = (p, w, h, opacity, color, intensity = 1.4, occ = 0) => kit.sprite('glow', p, w, h, { opacity, intensity, color, ramp: RAMP.flat, occ });
   const floorRing = (p, r, opacity, color) => {
     const m = kit.mesh('ring', () => { const m = new THREE.Mesh(geometries.plane, new THREE.ShaderMaterial({ ...blend, vertexShader: RVS, fragmentShader: RFS,
@@ -44,7 +44,7 @@ export function createChargeEffects(scene) {
   };
 
   function body(s, L, P, full) {
-    const c = s.chest, floor = c.y - CHEST_H, boost = full ? 1 + .35 * Math.max(0, Math.sin(time * 9 + s.seed)) : 1;
+    const c = s.chest, floor = 0, boost = full ? 1 + .35 * Math.max(0, Math.sin(time * 9 + s.seed)) : 1;
     // light pillars: thin vertical streaks on a cylinder round the body, each one rising and fading on its own cycle
     const pillars = 8 + Math.round(16 * L);
     for (let i = 0; i < pillars; i++) {
