@@ -144,13 +144,16 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     }
     /** The player looks at the opponent (in the acrylic's reflection), the chest and its phone are turned foeYaw off that:
      *  the HP display turns on the screen by that turn as seen on the tilted screen (a turn about the vertical shows on it
-     *  times how much the screen faces up), and shrinks to stay inside its half of the screen. */
+     *  times how much the screen faces up), as big as it fits in the top 70% of the screen, centred there (iOS the same). */
     private fun turnHp(foeYaw: Double) {
-        val a = Math.atan2(Math.sin(foeYaw) * screenUp, Math.cos(foeYaw))
-        val w = hpBar.width.toDouble(); val h = hpBar.height.toDouble()
-        val c = Math.abs(Math.cos(a)); val s = Math.abs(Math.sin(a))
-        val fit = if (w > 0 && h > 0) minOf(w / (w * c + h * s), h / (w * s + h * c)).toFloat() else 1f
-        // + rotation is clockwise on the screen: the reflection mirrors it back, so a foe to the left turns the display left as seen
+        val a = -Math.atan2(Math.sin(foeYaw) * screenUp, Math.cos(foeYaw)) // tried on the rig: a foe to the left turns it anticlockwise on the screen
+        val w = hpBar.width.toFloat(); val area = hpScreen.height * .7f
+        if (w <= 0f || area <= 0f) return
+        val b = hpBar.contentBox(w, hpBar.height.toFloat()) // what is drawn, not the whole view: lets it grow
+        val c = Math.abs(Math.cos(a)).toFloat(); val s = Math.abs(Math.sin(a)).toFloat()
+        val fit = minOf(w / (b.width() * c + b.height() * s), area / (b.width() * s + b.height() * c))
+        hpBar.pivotX = b.centerX(); hpBar.pivotY = b.centerY() // the flip (scaleY -) about it keeps the content's centre there
+        hpBar.translationX = w / 2 - b.centerX(); hpBar.translationY = area / 2 - b.centerY()
         hpBar.rotation = Math.toDegrees(a).toFloat(); hpBar.scaleX = fit; hpBar.scaleY = -fit
     }
     private fun closeHp() {
@@ -591,27 +594,36 @@ class HpBar(a: Activity) : View(a) {
     }
 
     private fun share(hp: Double, max: Double) = (hp / maxOf(1.0, max)).coerceIn(0.0, 1.0).toFloat()
+    private fun foeSize(w: Float, h: Float) = minOf(h * .42f, w * .3f)
+    private fun mineH(w: Float, h: Float) = minOf(h * .2f, w * .16f) // thick: easier to read in the reflection
+
+    /** Where anything is drawn (before the flip): the avatar's top or the あなた label's, down to the own bar's bottom. MainActivity.turnHp fits it */
+    fun contentBox(w: Float, h: Float): RectF {
+        val gh = mineH(w, h)
+        val top = minOf(h * .27f - foeSize(w, h) / 2, h * .74f - gh / 2 - gh * .64f)
+        return RectF(w * .03f, top, w * .97f, h * .74f + gh / 2)
+    }
 
     private fun drawFoe(c: Canvas, w: Float, h: Float, slot: String) {
-        val size = minOf(h * .42f, w * .3f)
+        val size = foeSize(w, h)
         val cy = h * .27f
         val x0 = w * .05f
         val bmp = avatars[if (info.foeChara == "chaoben") "chaoben" else "wizard_$slot"]!!.value
         box.set(x0, cy - size / 2, x0 + size, cy + size / 2)
         p.shader = null; p.style = Paint.Style.FILL
         c.drawBitmap(bmp, null, box, p)
-        val bh = size * .2f
+        val bh = size * .35f
         val bx = x0 + size + w * .04f
         box.set(bx, cy - bh / 2, w * .95f, cy + bh / 2)
         drawSlashBar(c, box, share(info.foeHp, info.foeMax),
-            if (slot == "A") 0xFFFFD9BF.toInt() else 0xFFBFDDFF.toInt()) // field3d.js TEAM, near white: the phone gives off more light (iOS the same)
+            if (slot == "A") 0xFFFF8000.toInt() else 0xFF00BFFF.toInt()) // the players' colours (field3d.js TEAM), pure: vivid in the reflection (iOS the same)
     }
 
     private fun drawMine(c: Canvas, w: Float, h: Float) {
         val remaining = share(info.hp, info.max)
         val gx = w * .03f
         val gw = w - 2 * gx
-        val gh = minOf(h * .12f, w * .095f)
+        val gh = mineH(w, h)
         val gy = h * .74f - gh / 2
         p.shader = null; p.style = Paint.Style.FILL
         p.color = 0xD9FFFFFF.toInt(); p.textSize = gh * .42f
@@ -619,9 +631,9 @@ class HpBar(a: Activity) : View(a) {
         c.drawText("あなた", gx + gh * .15f, gy - gh * .3f, p)
         box.set(gx, gy, gx + gw, gy + gh)
         val color = when {
-            remaining > .5f -> 0xFF39FF14.toInt() // vivid neon green: stays bright and readable when reflected in a clear file (iOS the same)
-            remaining > .25f -> 0xFFFFF0B8.toInt()
-            else -> 0xFFFFC4C4.toInt()
+            remaining > .5f -> 0xFF00FF00.toInt() // pure colours: bright and readable when reflected in a clear file (iOS the same)
+            remaining > .25f -> 0xFFFFFF00.toInt()
+            else -> 0xFFFF8000.toInt() // orange: apart from the red of the HP lost
         }
         drawSlashBar(c, box, remaining, color)
     }
@@ -629,7 +641,7 @@ class HpBar(a: Activity) : View(a) {
     private fun drawSlashBar(c: Canvas, bounds: RectF, remaining: Float, color: Int) {
         p.shader = null; p.style = Paint.Style.FILL
         slashPath(bounds.left, bounds.top, bounds.right, bounds.bottom)
-        p.color = 0xFFE52B2B.toInt() // the HP lost: red (iOS the same)
+        p.color = 0xFFFF0000.toInt() // the HP lost: red (iOS the same)
         c.drawPath(slash, p)
         if (remaining > 0f) {
             slashPath(bounds.left, bounds.top, bounds.left + bounds.width() * remaining, bounds.bottom)

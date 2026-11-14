@@ -202,15 +202,18 @@ struct LanSheet: View {
 
 /// The player looks at the opponent (in the acrylic's reflection), the chest and its phone are turned foeYaw off that (Model.foeTurn): the HP
 /// display turns on the screen by that turn as seen on the tilted screen (a turn about the vertical shows on it times how much the
-/// screen faces up), and shrinks to stay inside its half of the screen (Android's turnHp the same).
+/// screen faces up), as big as it fits in the top 70% of the screen, centred there (Android's turnHp the same).
 struct TurnHp: ViewModifier {
-    let foeYaw: Double, screenUp: Double, w: CGFloat, h: CGFloat
+    let foeYaw: Double, screenUp: Double, w: CGFloat, h: CGFloat, screenH: CGFloat
     func body(content: Content) -> some View {
-        let a = atan2(sin(foeYaw) * screenUp, cos(foeYaw))
+        let a = -atan2(sin(foeYaw) * screenUp, cos(foeYaw)) // tried on the rig: a foe to the left turns it anticlockwise on the screen
+        let b = HpScreen.contentBox(w: w, h: h), area = screenH * 0.7
         let c = CGFloat(abs(cos(a))), s = CGFloat(abs(sin(a)))
-        let fit = w > 0 && h > 0 ? Swift.min(w / (w * c + h * s), h / (w * s + h * c)) : 1
-        // + is clockwise on the screen: the reflection mirrors it back, so a foe to the left turns the display left as seen
-        content.scaleEffect(fit).rotationEffect(.radians(a))
+        let fit = w > 0 && h > 0 ? Swift.min(w / (b.width * c + b.height * s), area / (b.width * s + b.height * c)) : 1
+        let mid = CGPoint(x: b.midX, y: h - b.midY) // the content's centre after the vertical flip (about the frame's middle)
+        let anchor = UnitPoint(x: mid.x / Swift.max(1, w), y: mid.y / Swift.max(1, h))
+        content.scaleEffect(fit, anchor: anchor).rotationEffect(.radians(a), anchor: anchor)
+            .offset(x: w / 2 - mid.x, y: area / 2 - mid.y)
     }
 }
 
@@ -235,7 +238,7 @@ struct HpScreen: View {
                 }
                 .frame(width: w, height: h, alignment: .topLeading)
                 .scaleEffect(x: 1, y: -1) // mirror the HP display vertically, as Android's HpBar does
-                .modifier(TurnHp(foeYaw: model.foeTurn, screenUp: model.screenUp, w: w, h: h))
+                .modifier(TurnHp(foeYaw: model.foeTurn, screenUp: model.screenUp, w: w, h: h, screenH: g.size.height))
                 if model.matchPhase != "countdown" && model.matchPhase != "fight" {
                     VStack {
                         Spacer()
@@ -253,12 +256,21 @@ struct HpScreen: View {
     }
 
     private func share(_ v: Double, _ m: Double) -> CGFloat { CGFloat(Swift.max(0, Swift.min(1, v / Swift.max(1, m)))) }
+    private static func foeSize(_ w: CGFloat, _ h: CGFloat) -> CGFloat { Swift.min(h * 0.42, w * 0.3) }
+    private static func mineH(_ w: CGFloat, _ h: CGFloat) -> CGFloat { Swift.min(h * 0.2, w * 0.16) } // thick: easier to read in the reflection
+
+    /// Where anything is drawn (before the flip): the avatar's top or the あなた label's, down to the own bar's bottom. TurnHp fits it (Android's contentBox the same)
+    static func contentBox(w: CGFloat, h: CGFloat) -> CGRect {
+        let gh = mineH(w, h)
+        let top = Swift.min(h * 0.27 - foeSize(w, h) / 2, h * 0.74 - gh / 2 - gh * 0.64)
+        return CGRect(x: w * 0.03, y: top, width: w * 0.94, height: h * 0.74 + gh / 2 - top)
+    }
 
     private func foe(_ info: HpInfo, slot: String, w: CGFloat, h: CGFloat) -> some View {
-        let size: CGFloat = Swift.min(h * 0.42, w * 0.3), cy: CGFloat = h * 0.27, x0: CGFloat = w * 0.05
-        let bh: CGFloat = size * 0.2, bx: CGFloat = x0 + size + w * 0.04
+        let size: CGFloat = HpScreen.foeSize(w, h), cy: CGFloat = h * 0.27, x0: CGFloat = w * 0.05
+        let bh: CGFloat = size * 0.35, bx: CGFloat = x0 + size + w * 0.04
         let bw: CGFloat = w * 0.95 - bx
-        let color: Color = slot == "A" ? Color(red: 1, green: 0.851, blue: 0.749) : Color(red: 0.749, green: 0.867, blue: 1) // the players' colours (field3d.js TEAM), near white: the phone gives off more light (Android the same)
+        let color: Color = slot == "A" ? Color(red: 1, green: 0.502, blue: 0) : Color(red: 0, green: 0.749, blue: 1) // the players' colours (field3d.js TEAM), pure #FF8000 / #00BFFF: vivid in the reflection (Android the same)
         let picture: String = info.foeChara == "chaoben" ? "AvatarChaoben" : "AvatarWizard" + slot
         return ZStack(alignment: .topLeading) {
             Image(picture).resizable().interpolation(.high)
@@ -272,15 +284,15 @@ struct HpScreen: View {
 
     private func mine(_ info: HpInfo, w: CGFloat, h: CGFloat) -> some View {
         let remaining = share(info.hp, info.max)
-        let gx: CGFloat = w * 0.03, gh: CGFloat = Swift.min(h * 0.12, w * 0.095)
+        let gx: CGFloat = w * 0.03, gh: CGFloat = HpScreen.mineH(w, h)
         let gw: CGFloat = w - 2 * gx, gy: CGFloat = h * 0.74 - gh / 2
         let color: Color
         if remaining > 0.5 {
-            color = Color(red: 0.224, green: 1, blue: 0.078) // vivid neon green #39FF14: stays bright and readable when reflected in a clear file (Android the same)
+            color = Color(red: 0, green: 1, blue: 0) // pure colours: bright and readable when reflected in a clear file (Android the same)
         } else if remaining > 0.25 {
-            color = Color(red: 1, green: 0.941, blue: 0.722)
+            color = Color(red: 1, green: 1, blue: 0)
         } else {
-            color = Color(red: 1, green: 0.769, blue: 0.769)
+            color = Color(red: 1, green: 0.502, blue: 0) // orange #FF8000: apart from the red of the HP lost
         }
         return ZStack(alignment: .topLeading) {
             Text("あなた")
@@ -302,7 +314,7 @@ private struct SlashBar: View {
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .leading) {
-                SlashShape().fill(Color(red: 0.898, green: 0.169, blue: 0.169)) // the HP lost: red (Android the same)
+                SlashShape().fill(Color(red: 1, green: 0, blue: 0)) // the HP lost: red (Android the same)
                     .frame(width: g.size.width, height: g.size.height)
                 if progress > 0 {
                     SlashShape().fill(color)
