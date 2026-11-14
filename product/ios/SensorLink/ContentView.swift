@@ -207,7 +207,7 @@ struct LanSheet: View {
 /// are as big as fits: their outermost points touch the area's edges (Android's HpBar the same). Each bar: a white outline, a little
 /// gap, the HP left filled from the left with a light running across it; green, yellow at half, blinking red at a quarter, and a big
 /// warning sign (yellow triangle, black !) at a tenth. Instead, as big as fits: 3, 2, 1 in the countdown, FULLSTICK! as the fight
-/// starts, YOU WIN / YOU LOSE when it is over. A long press calibrates, mid-match too.
+/// starts, YOU WIN / YOU LOSE when it is over, turned like the bars. A long press calibrates, mid-match too.
 struct HpScreen: View {
     @EnvironmentObject var model: Model
     // in units of the own bar's length, centred on 0: the opponent's (80% of the own one, both ways) above, a gap, the own one
@@ -233,9 +233,9 @@ struct HpScreen: View {
                 TimelineView(.animation) { tl in
                     let t = tl.date.timeIntervalSinceReferenceDate, since = tl.date.timeIntervalSince(model.phaseAt)
                     Group {
-                        if info.result == "win" || info.result == "lose" { words("YOU\n" + (info.result == "win" ? "WIN" : "LOSE")) }
-                        else if model.matchPhase == "countdown" { words("\(Swift.max(1, 3 - Int(since)))") } // the dashboard's countdown is 3 s
-                        else if model.matchPhase == "fight" && since < HpScreen.goS { words("FULLSTICK!") }
+                        if info.result == "win" || info.result == "lose" { words(["YOU", info.result == "win" ? "WIN" : "LOSE"], turn, w, h) }
+                        else if model.matchPhase == "countdown" { words(["\(Swift.max(1, 3 - Int(since)))"], turn, w, h) } // the dashboard's countdown is 3 s
+                        else if model.matchPhase == "fight" && since < HpScreen.goS { words(["FULLSTICK!"], turn, w, h) }
                         else { Canvas { ctx, size in draw(ctx, size, info, turn, t) } }
                     }
                     .frame(width: w, height: h)
@@ -257,10 +257,16 @@ struct HpScreen: View {
         .ignoresSafeArea()
     }
 
-    /// white bold lines, as big as fit the area, centred
-    private func words(_ s: String) -> some View {
-        Text(s).font(.system(size: 1000, weight: .black)).foregroundColor(.white).multilineTextAlignment(.center)
-            .lineLimit(2).minimumScaleFactor(0.01).frame(maxWidth: .infinity, maxHeight: .infinity)
+    /// white bold lines, turned by `turn` like the bars and as big as fits w x h (the turned block's corners touch its edges), centred
+    /// (Android's drawWords the same)
+    private func words(_ lines: [String], _ turn: Double, _ w: CGFloat, _ h: CGFloat) -> some View {
+        let f = UIFont.systemFont(ofSize: 100, weight: .black)
+        let tw = lines.map { ($0 as NSString).size(withAttributes: [.font: f]).width }.max() ?? 1, th = CGFloat(lines.count) * f.lineHeight
+        let cs = CGFloat(abs(cos(turn))), sn = CGFloat(abs(sin(turn)))
+        let size = 100 * Swift.min(w / (tw * cs + th * sn), h / (tw * sn + th * cs)) * 0.98 // a hair under: SwiftUI's lines are a little taller
+        return Text(lines.joined(separator: "\n")).font(.system(size: size, weight: .black)).foregroundColor(.white)
+            .multilineTextAlignment(.center).lineLimit(lines.count).fixedSize()
+            .rotationEffect(.radians(turn)).frame(width: w, height: h)
     }
 
     private func share(_ v: Double, _ m: Double) -> CGFloat { CGFloat(Swift.max(0, Swift.min(1, v / Swift.max(1, m)))) }

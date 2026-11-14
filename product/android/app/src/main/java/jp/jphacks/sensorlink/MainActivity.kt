@@ -572,7 +572,8 @@ class Overlay(private val a: MainActivity) : View(a) {
  * The opponent's is 80% of the own one both ways. Turned by [turn] and as big as fits this view (the top 70% of the screen):
  * the bars' outermost points touch its edges (iOS the same). Each bar: a white outline, a little gap, the HP left filled from the left
  * with a light running across it; green, yellow at half, blinking red at a quarter, and a big warning sign (yellow triangle, black !)
- * at a tenth. Instead, as big as fits: 3, 2, 1 in the countdown, FULLSTICK! as the fight starts, YOU WIN / YOU LOSE when it is over.
+ * at a tenth. Instead, as big as fits: 3, 2, 1 in the countdown, FULLSTICK! as the fight starts, YOU WIN / YOU LOSE when it is over
+ * (turned by [turn] too, like the bars).
  */
 class HpBar(a: Activity) : View(a) {
     var info = HpInfo(100.0, 100.0, null, "wizard", 100.0, 100.0, 0.0)
@@ -666,13 +667,17 @@ class HpBar(a: Activity) : View(a) {
         c.drawCircle(x, y + .36f * hh, bw * 1.1f, p)
     }
 
-    /** [lines] in white bold, as big as fit the view, centred */
+    /** [lines] in white bold, turned by [turn] like the bars and as big as fits the view (the turned block's corners touch its edges), centred */
     private fun drawWords(c: Canvas, w: Float, h: Float, lines: List<String>) {
         p.shader = null; p.style = Paint.Style.FILL; p.color = Color.WHITE; p.typeface = bold; p.textAlign = Paint.Align.CENTER; p.textSize = 100f
         val fm = p.fontMetrics
-        p.textSize = 100f * minOf(w / lines.maxOf { p.measureText(it) }, h / (lines.size * (fm.descent - fm.ascent)))
-        val f = p.fontMetrics; val lh = f.descent - f.ascent; val top = (h - lines.size * lh) / 2
-        lines.forEachIndexed { i, l -> c.drawText(l, w / 2, top + i * lh - f.ascent, p) }
+        val tw = lines.maxOf { p.measureText(it) }; val th = lines.size * (fm.descent - fm.ascent)
+        val cs = Math.abs(Math.cos(turn.toDouble())).toFloat(); val sn = Math.abs(Math.sin(turn.toDouble())).toFloat()
+        p.textSize = 100f * minOf(w / (tw * cs + th * sn), h / (tw * sn + th * cs))
+        val f = p.fontMetrics; val lh = f.descent - f.ascent; val top = -lines.size * lh / 2
+        c.save(); c.translate(w / 2, h / 2); c.rotate(Math.toDegrees(turn.toDouble()).toFloat())
+        lines.forEachIndexed { i, l -> c.drawText(l, 0f, top + i * lh - f.ascent, p) }
+        c.restore()
     }
 
     companion object {
