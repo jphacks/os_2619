@@ -224,7 +224,7 @@ gameCtrl.innerHTML = `
   <h3>試合の進行</h3>
   <div class="phase">
     <button data-phase="setup">準備中<kbd>1</kbd></button>
-    <button data-phase="demo" class="go bigstart" title="自動照準の試合。魔法は撃った瞬間に相手の方向へ真っすぐ飛び、撃ったあとに素早く動けば避けられる">試合開始<kbd>2</kbd></button><button class="go bigstart" id="chaobenStart" title="B をチャオベンにして、自動照準の試合を始める">チャオベン開始</button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
+    <button data-phase="demo" class="go bigstart" title="自動照準の試合。魔法は撃った瞬間に相手の方向へ真っすぐ飛び、撃ったあとに素早く動けば避けられる">試合開始<kbd>2</kbd></button><button class="go bigstart" id="chaobenStart" title="B をチャオベン（炎）、A を雷にして、自動照準の試合を始める">チャオベン開始</button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
   </div>
   <div class="row" style="margin-top:6px"><button data-cmd="reset">やり直し<kbd>R</kbd></button><label class="kv">試合時間 <input id="secIn" type="number" min="10" max="600" step="10" style="width:64px"> 秒</label></div>
   <p class="why" id="why"></p>
@@ -280,7 +280,9 @@ ${['s', 'm', 'l'].map(t => `<label title="${TIER_JA[t]}の弾の速さ。1 が�
   <h3>攻撃・防御の記録</h3>
   <ul class="log" id="gameLog"></ul>`;
 tutorial.mountButton($('#tutRow'));
-for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.onclick = () => { game.command({ cmd: 'phase', phase: b.dataset.phase }); matchFullscreen(b.dataset.phase); };
+let chaobenEl = false; // チャオベン開始 set the elements: starting any other match (button or key 2 / 3) puts them back to the sticks'
+const plainStart = phase => { if (phase !== 'setup' && chaobenEl) { chaobenEl = false; for (const s of ['A', 'B']) game.command({ cmd: 'tryElement', slot: s, element: null }); } };
+for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.onclick = () => { plainStart(b.dataset.phase); game.command({ cmd: 'phase', phase: b.dataset.phase }); matchFullscreen(b.dataset.phase); };
 /** A match started on screen 3 (button or key) shows the game box fullscreen; Esc leaves it (the browser does that itself). */
 function matchFullscreen(phase) {
   if ((phase === 'demo' || phase === 'fight') && screen === 'game' && !document.fullscreenElement) $('#gameBox').requestFullscreen?.().catch(() => {});
@@ -343,7 +345,11 @@ for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.onclick = () => {
 for (const b of gameCtrl.querySelectorAll('[data-backdrop]')) b.onclick = () => { cfg.backdrop = b.dataset.backdrop; save(); };
 const showCharas = () => { for (const s of ['A', 'B']) stage.field.setChara(s, cfg.chara[s]); };
 for (const b of gameCtrl.querySelectorAll('[data-chara]')) b.onclick = () => { cfg.chara[b.dataset.s] = b.dataset.chara; save(); showCharas(); b.blur(); };
-$('#chaobenStart').onclick = () => { cfg.chara.B = 'chaoben'; save(); showCharas(); game.command({ cmd: 'phase', phase: 'demo' }); matchFullscreen('demo'); }; // B as チャオベン, then 試合開始 (auto aim)
+$('#chaobenStart').onclick = () => { // B as チャオベン with fire, A with thunder, then 試合開始 (auto aim)
+  cfg.chara.B = 'chaoben'; save(); showCharas();
+  game.command({ cmd: 'tryElement', slot: 'A', element: 'thunder' }); game.command({ cmd: 'tryElement', slot: 'B', element: 'fire' }); chaobenEl = true;
+  game.command({ cmd: 'phase', phase: 'demo' }); matchFullscreen('demo');
+};
 showCharas();
 $('#todAuto').onclick = () => { cfg.todAuto = !cfg.todAuto; save(); };
 for (const b of gameCtrl.querySelectorAll('[data-todspeed]')) b.onclick = () => { cfg.todSpeed = +b.dataset.todspeed; save(); };
@@ -475,7 +481,7 @@ addEventListener('keydown', e => {
   if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (held[k] && screen !== 'final') return holdCharge(held[k], true);
-  if (KEYS[k]) { game.command(KEYS[k]); if (KEYS[k].cmd === 'phase') matchFullscreen(KEYS[k].phase); return; }
+  if (KEYS[k]) { if (KEYS[k].cmd === 'phase') plainStart(KEYS[k].phase); game.command(KEYS[k]); if (KEYS[k].cmd === 'phase') matchFullscreen(KEYS[k].phase); return; }
   if (k === 'k') scan();
   else if (k === 'c') document.querySelector('[data-tog="crt"]').click(); // ブラウン管風 on / off
   else if (k === 'm') $('#bgmPreview').click(); // 試合 BGM を流す / 止める (also while the slides are open: tutorial.js lets M through); the minimap is its button only
