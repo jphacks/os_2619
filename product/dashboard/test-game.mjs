@@ -117,6 +117,16 @@ scenario('小の連打は0.25秒おきまで。速すぎる振りは無視され
   return '0.05秒おき5回→1発、0.3秒おき4回→4発';
 });
 
+// ---- チャオベン開始: B の HP は 0 にならない ----
+scenario('immortal の B は大を何発受けても HP が 1 より上に残り、試合が終わらない', () => {
+  const S = setup(); S.g.command({ cmd: 'immortal', slot: 'B', on: true }); S.fight();
+  S.chargeShot('A', 6); const one = S.B.hp;
+  expect(one < 100 && one > 1, `大1発のあとの HP ${one}`);
+  for (let i = 0; i < 6; i++) S.chargeShot('A', 6);
+  expect(S.B.hp > 1 && S.B.hp < one, `大7発のあとの HP ${S.B.hp}`);
+  eq(S.g.match.phase, 'fight', '試合の段階');
+});
+
 // ---- 溜めの段階 ----
 for (const [sec, tier, dmg] of [[1.5, '小', 5], [3, '中', 20], [6, '大', 60]]) {
   scenario(`${sec}秒溜めて振ると${tier}になり、${dmg}ダメージ`, () => {

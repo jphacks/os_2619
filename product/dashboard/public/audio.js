@@ -12,11 +12,11 @@
 // admin.html are not gestures. unlock() is idempotent; the first pointerdown / keydown / touchend on the page calls it.
 
 const FILES = ['bgm', 'charge', 'fire1', 'fire2', 'fire3', 'lightning1', 'lightning2', 'lightning3', 'water1', 'water2', 'water3', 'wind1', 'wind2', 'wind3', 'guard',
-  'charge_fire', 'charge_thunder', 'charge_water', 'charge_wind', 'full_fire', 'full_thunder', 'full_water', 'full_wind', 'damage', 'my_shot', 'my_launch', 'swing', 'win', 'youwin1', 'youwin2', 'youwin3', 'youwin4']; // youwin1-4: a voice saying "YOU WIN!" (app.js picks one)
+  'charge_fire', 'charge_thunder', 'charge_water', 'charge_wind', 'full_fire', 'full_thunder', 'full_water', 'full_wind', 'damage', 'my_shot', 'my_launch', 'swing', 'win', 'youwin1', 'youwin2', 'youwin3', 'youwin4', 'bgm_chaoben']; // bgm_chaoben: チャオベン開始's music (Diabolos_free.ogg, 11/15) // youwin1-4: a voice saying "YOU WIN!" (app.js picks one)
 const EXT = { my_shot: 'wav', my_launch: 'wav' }; // per-file extension when not mp3 (damage, my_shot, my_launch: only the phones play them, here only auditioned)
 // integrated loudness (LUFS) of the part we actually play; re-measure if a file changes:
 //   ffmpeg -ss A -to B -i f.mp3 -af ebur128 -f null -
-const LUFS = { bgm: -4.0, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2,
+const LUFS = { bgm: -4.0, bgm_chaoben: -12.5, charge: -13.7, fire1: -12.8, fire2: -8.9, fire3: -10.9, lightning1: -5.1, lightning2: -12.8, lightning3: -7.2,
   water1: -13.5, water2: -13.2, water3: -14.9, wind1: -13.5, wind2: -17.2, wind3: -13.7, guard: -18.0,
   charge_fire: -15.2, charge_thunder: -15.3, charge_water: -15.5, charge_wind: -15.1, full_fire: -14.2, full_thunder: -13.3, full_water: -13.4, full_wind: -14.5, swing: -18.8, win: -15.3, youwin1: -17.5, youwin2: -17.7, youwin3: -19.4, youwin4: -18.4 }; // water / wind / charge_* / full_*: audio/README.md // fire3: its first 3 s (BED); lightning3: 0-6 s faded from 3 s (BIG_HIT)
 // fire3 is also the 大 hit: its 0-6 s faded from 3 s measures differently from the 3 s bed, so that use is corrected by this
@@ -38,6 +38,7 @@ const LOOPS = { charge: [.2, 4.4, .35], charge_fire: [.25, 4.75, .4], charge_thu
 // the bed (fire3) plays once from the top: full until fadeAt, down to silence at end (s), no loop (10/18)
 const BED = { fadeAt: 2, end: 3 };
 const BGM_LOOP = [.03, 311.33]; // 情動カタルシス: the whole track, 5 min 11 s; both ends are below -45 dBFS
+const LOOP_OF = { bgm: BGM_LOOP, bgm_chaoben: [0, 0] }; // [0, 0]: the whole buffer
 // mix in dB relative to REF (hit at full power = 0 dB anchor)
 const CHARGE_PITCH = { s: .85, m: 1.1, l: 1.45 }; // playback rate (pitch) per charge tier
 const MIX = { shot: -5, shotSpan: 4, hit: 0, hitSpan: 6, special: 3, charge: -10, chargeSpan: 5, full: -4, bed: -17, bgm: -8 };
@@ -175,7 +176,9 @@ export function createAudio({ base = 'audio/' } = {}) {
     v.src.stop(t + tc * 7);
     v.src.onended = () => { v.src.disconnect(); v.g.disconnect(); v.p.disconnect(); };
   }
-  let music = null, musicOn = false, preview = false, gameOn = false;
+  let music = null, musicOn = false, preview = false, gameOn = false, track = 'bgm';
+  /** Which music the match plays: 'bgm', or 'bgm_chaoben' (チャオベン開始, app.js). A change restarts what is playing. */
+  function bgmTrack(name) { if (name === track || !LOOP_OF[name]) return; track = name; if (musicOn) { release(music, .3); music = null; musicOn = false; setMusic(gameOn || preview); } }
   /** The match asks for its music every frame. The preview (the button) plays the same music outside a match; when the match
    *  starts it stops and the match's music starts from the top as usual. */
   function bgm(on) {
@@ -187,9 +190,9 @@ export function createAudio({ base = 'audio/' } = {}) {
   function previewBgm(on) { if (gameOn) return; preview = !!on; setMusic(preview); }
   function setMusic(on) {
     if (on === musicOn && (!on || music)) return; // cheap enough to call every frame
-    if (on && (!buf.bgm || ctx.state !== 'running')) return; // retried on the next call after unlock / load
+    if (on && (!buf[track] || ctx.state !== 'running')) return; // retried on the next call after unlock / load
     musicOn = on;
-    if (on) { music = loopVoice('bgm', duckG, { start: BGM_LOOP[0], end: BGM_LOOP[1] }); music.g.gain.setValueAtTime(db(MIX.bgm) * norm.bgm, ctx.currentTime); } // full level from its first sample, no fade-in
+    if (on) { const [start, end] = LOOP_OF[track]; music = loopVoice(track, duckG, { start, end }); music.g.gain.setValueAtTime(db(MIX.bgm) * norm[track], ctx.currentTime); } // full level from its first sample, no fade-in
     else { release(music, .6); music = null; } // ~2 s to silence
   }
   const chg = { A: null, B: null };
@@ -372,7 +375,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     load, unlock,
     get unlocked() { return ctx.state === 'running'; }, get loaded() { return loaded; },
     setVolume, get volumes() { return { ...vol }; }, setMuted, get muted() { return muted; },
-    bgm, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, chargeFail, describe, aura, guard, play, countdown, dodge, stopAll, dispose,
+    bgm, bgmTrack, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, chargeFail, describe, aura, guard, play, countdown, dodge, stopAll, dispose,
     peak, // output peak (linear) over the last ~43 ms, for meters / tests
     ctx,
   };

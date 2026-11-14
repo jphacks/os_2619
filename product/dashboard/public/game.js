@@ -262,6 +262,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     from.hits++; from.dealt += n; log(from.slot, 'hit', `${foe.slot} に${mul !== 1 ? '反射した' : ''}${TIER_JA[tier]}が命中 ${n} ダメージ`);
     onFlash(from.element);
     if (match.phase !== 'fight' || cfg.test) return; // test mode: hits show but HP never drops
+    if (foe.immortal) { foe.hp = 1 + (foe.hp - 1) * Math.exp(-n / foe.hpMax); return; } // チャオベン開始: each hit takes a share of what is left above 1, so it creeps toward 1 and never reaches 0
     foe.hp = Math.max(0, foe.hp - n);
     if (foe.hp === 0) finish(from);
   }
@@ -435,6 +436,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       case 'tryGuard': if (p) p.tryGuard = !!c.on; return;
       case 'tryDodge': if (p) { p.dodge = { t0: now(), side: c.side === -1 ? -1 : 1 }; sfx()?.dodge?.(panOf(p.chest)); showAct(p, '回避'); } return;
       case 'tryElement': if (p) { p.tryElement = c.element || null; takeStick(p); } return;
+      case 'immortal': if (p) p.immortal = !!c.on; return; // チャオベン開始 (app.js): HP that never runs out (damage)
     }
   }
 
