@@ -120,7 +120,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         }
     }
 
-    // match mode: the whole screen black, no camera picture (the camera still runs: ARCore places the player), the top half the HP display
+    // match mode: the whole screen black, no camera picture (the camera still runs: ARCore places the player), the top 70% the HP display
     // (HpBar) turned upside down (flipped top to bottom only), at full brightness while it is up. Opened by the HP button or when the dashboard starts a match.
     // Taps cannot close it during countdown or fight; setup closes it automatically. The red hit blink stays over it.
     private val hpBar by lazy { HpBar(this).apply { scaleY = -1f } }
@@ -129,7 +129,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
             setBackgroundColor(Color.BLACK); visibility = View.GONE
             isClickable = true; setOnClickListener { closeHp() } // consume touches even when closing is disabled during the match
             setOnLongClickListener { calibrate(); true } // a long press calibrates, mid-match too (iOS the same)
-            addView(hpBar, FrameLayout.LayoutParams(-1, 0, Gravity.TOP)) // the top half: sized once the screen's height is known
+            addView(hpBar, FrameLayout.LayoutParams(-1, 0, Gravity.TOP)) // the top 70%: sized once the screen's height is known
             addView(hpClose, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = (48 * resources.displayMetrics.density).toInt() })
         }
     }
@@ -143,19 +143,9 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         window.attributes = window.attributes.apply { screenBrightness = 1f } // as bright as it goes
     }
     /** The player looks at the opponent (in the acrylic's reflection), the chest and its phone are turned foeYaw off that:
-     *  the HP display turns on the screen by that turn as seen on the tilted screen (a turn about the vertical shows on it
-     *  times how much the screen faces up), as big as it fits in the top 70% of the screen, centred there (iOS the same). */
-    private fun turnHp(foeYaw: Double) {
-        val a = -Math.atan2(Math.sin(foeYaw) * screenUp, Math.cos(foeYaw)) // tried on the rig: a foe to the left turns it anticlockwise on the screen
-        val w = hpBar.width.toFloat(); val area = hpScreen.height * .7f
-        if (w <= 0f || area <= 0f) return
-        val b = hpBar.contentBox(w, hpBar.height.toFloat()) // what is drawn, not the whole view: lets it grow
-        val c = Math.abs(Math.cos(a)).toFloat(); val s = Math.abs(Math.sin(a)).toFloat()
-        val fit = minOf(w / (b.width() * c + b.height() * s), area / (b.width() * s + b.height() * c))
-        hpBar.pivotX = b.centerX(); hpBar.pivotY = b.centerY() // the flip (scaleY -) about it keeps the content's centre there
-        hpBar.translationX = w / 2 - b.centerX(); hpBar.translationY = area / 2 - b.centerY()
-        hpBar.rotation = Math.toDegrees(a).toFloat(); hpBar.scaleX = fit; hpBar.scaleY = -fit
-    }
+     *  the HP display turns by that turn as seen on the tilted screen (a turn about the vertical shows on it times how much
+     *  the screen faces up). HpBar fits the turned bars to its area. Tried on the rig: a foe to the left turns it anticlockwise on the screen. */
+    private fun turnHp(foeYaw: Double) { hpBar.turn = Math.atan2(Math.sin(foeYaw) * screenUp, Math.cos(foeYaw)).toFloat() }
     private fun closeHp() {
         if (link.phase == "countdown" || link.phase == "fight") return
         hpScreen.visibility = View.GONE; overlay.visibility = View.VISIBLE
@@ -244,12 +234,12 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         }
         val root = FrameLayout(this).apply {
             addView(column, FrameLayout.LayoutParams(-1, -1))
-            addView(hpScreen, FrameLayout.LayoutParams(-1, -1)) // all of it: black, the HP display in its top half
+            addView(hpScreen, FrameLayout.LayoutParams(-1, -1)) // all of it: black, the HP display in its top 70%
             addView(hitRed, FrameLayout.LayoutParams(-1, -1)) // last: over everything, buttons and the HP display too
         }
         root.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
-            val half = (bottom - top) / 2
-            if (hpBar.layoutParams.height != half) hpBar.post { hpBar.layoutParams = hpBar.layoutParams.apply { height = half } }
+            val area = (bottom - top) * 7 / 10
+            if (hpBar.layoutParams.height != area) hpBar.post { hpBar.layoutParams = hpBar.layoutParams.apply { height = area } }
         }
         setContentView(root)
 
@@ -572,71 +562,56 @@ class Overlay(private val a: MainActivity) : View(a) {
 }
 
 /**
- * Match mode HP display, mirrored vertically by MainActivity. Both HP bars are flat,
- * with parallel slanted ends; the opponent and avatar still shrink with distance.
+ * Match mode HP display, mirrored vertically by MainActivity: two flat bars with parallel slanted ends, no pictures.
+ * The opponent's is 80% of the own one both ways. Turned by [turn] and as big as fits this view (the top 70% of the screen):
+ * the bars' outermost corners touch its edges (iOS the same).
  */
 class HpBar(a: Activity) : View(a) {
     var info = HpInfo(100.0, 100.0, null, "wizard", 100.0, 100.0, 0.0)
         set(v) { field = v; invalidate() }
-    private val avatars = mapOf("chaoben" to R.drawable.avatar_chaoben, "wizard_A" to R.drawable.avatar_wizard_a, "wizard_B" to R.drawable.avatar_wizard_b)
-        .mapValues { (_, id) -> lazy { android.graphics.BitmapFactory.decodeResource(resources, id) } }
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    /** rad, + = clockwise as drawn here (MainActivity flips this view vertically, so anticlockwise on the screen) */
+    var turn = 0f
+        set(v) { if (Math.abs(v - field) > 1e-3f) { field = v; invalidate() } }
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val slash = Path()
     private val box = RectF()
+    // in units of the own bar's length, centred on 0: the opponent's (80% of the own one, both ways) above, a gap, the own one
+    private val foeR = RectF(-.4f, -.174f, .4f, -.046f)
+    private val mineR = RectF(-.5f, .014f, .5f, .174f)
 
     override fun onDraw(c: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
         c.drawColor(Color.BLACK)
-        val slot = info.foeSlot
-        if (slot != null) drawFoe(c, w, h, slot) // null: a PC too old to say who the opponent is. Full size however far (no perspective; iOS the same)
-        drawMine(c, w, h)
-    }
-
-    private fun share(hp: Double, max: Double) = (hp / maxOf(1.0, max)).coerceIn(0.0, 1.0).toFloat()
-    private fun foeSize(w: Float, h: Float) = minOf(h * .42f, w * .3f)
-    private fun mineH(w: Float, h: Float) = minOf(h * .2f, w * .16f) // thick: easier to read in the reflection
-
-    /** Where anything is drawn (before the flip): the avatar's top or the あなた label's, down to the own bar's bottom. MainActivity.turnHp fits it */
-    fun contentBox(w: Float, h: Float): RectF {
-        val gh = mineH(w, h)
-        val top = minOf(h * .27f - foeSize(w, h) / 2, h * .74f - gh / 2 - gh * .64f)
-        return RectF(w * .03f, top, w * .97f, h * .74f + gh / 2)
-    }
-
-    private fun drawFoe(c: Canvas, w: Float, h: Float, slot: String) {
-        val size = foeSize(w, h)
-        val cy = h * .27f
-        val x0 = w * .05f
-        val bmp = avatars[if (info.foeChara == "chaoben") "chaoben" else "wizard_$slot"]!!.value
-        box.set(x0, cy - size / 2, x0 + size, cy + size / 2)
-        p.shader = null; p.style = Paint.Style.FILL
-        c.drawBitmap(bmp, null, box, p)
-        val bh = size * .35f
-        val bx = x0 + size + w * .04f
-        box.set(bx, cy - bh / 2, w * .95f, cy + bh / 2)
-        drawSlashBar(c, box, share(info.foeHp, info.foeMax),
+        val w = width.toFloat(); val h = height.toFloat()
+        val slot = info.foeSlot // null: a PC too old to say who the opponent is
+        val bars = if (slot != null) listOf(foeR, mineR) else listOf(mineR)
+        // the turned bars' extent, from their real corners (slants included), so the fit is exact
+        val cs = Math.cos(turn.toDouble()).toFloat(); val sn = Math.sin(turn.toDouble()).toFloat()
+        var x0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
+        for (r in bars) {
+            val k = slant(r.width(), r.height())
+            for ((x, y) in listOf(r.left to r.top, r.right - k to r.top, r.right to r.bottom, r.left + k to r.bottom)) {
+                val rx = x * cs - y * sn; val ry = x * sn + y * cs
+                x0 = minOf(x0, rx); x1 = maxOf(x1, rx); y0 = minOf(y0, ry); y1 = maxOf(y1, ry)
+            }
+        }
+        val scale = minOf(w / (x1 - x0), h / (y1 - y0))
+        c.save()
+        c.translate(w / 2 - scale * (x0 + x1) / 2, h / 2 - scale * (y0 + y1) / 2)
+        c.scale(scale, scale)
+        c.rotate(Math.toDegrees(turn.toDouble()).toFloat())
+        if (slot != null) drawSlashBar(c, foeR, share(info.foeHp, info.foeMax),
             if (slot == "A") 0xFFFF8000.toInt() else 0xFF00BFFF.toInt()) // the players' colours (field3d.js TEAM), pure: vivid in the reflection (iOS the same)
-    }
-
-    private fun drawMine(c: Canvas, w: Float, h: Float) {
         val remaining = share(info.hp, info.max)
-        val gx = w * .03f
-        val gw = w - 2 * gx
-        val gh = mineH(w, h)
-        val gy = h * .74f - gh / 2
-        p.shader = null; p.style = Paint.Style.FILL
-        p.color = 0xD9FFFFFF.toInt(); p.textSize = gh * .42f
-        p.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-        c.drawText("あなた", gx + gh * .15f, gy - gh * .3f, p)
-        box.set(gx, gy, gx + gw, gy + gh)
-        val color = when {
+        drawSlashBar(c, mineR, remaining, when {
             remaining > .5f -> 0xFF00FF00.toInt() // pure colours: bright and readable when reflected in a clear file (iOS the same)
             remaining > .25f -> 0xFFFFFF00.toInt()
             else -> 0xFFFF8000.toInt() // orange: apart from the red of the HP lost
-        }
-        drawSlashBar(c, box, remaining, color)
+        })
+        c.restore()
     }
+
+    private fun share(hp: Double, max: Double) = (hp / maxOf(1.0, max)).coerceIn(0.0, 1.0).toFloat()
+    private fun slant(w: Float, h: Float) = minOf(h * .38f, w * .25f)
 
     private fun drawSlashBar(c: Canvas, bounds: RectF, remaining: Float, color: Int) {
         p.shader = null; p.style = Paint.Style.FILL
@@ -651,7 +626,7 @@ class HpBar(a: Activity) : View(a) {
     }
 
     private fun slashPath(left: Float, top: Float, right: Float, bottom: Float) {
-        val slant = minOf((bottom - top) * .38f, (right - left) * .25f)
+        val slant = slant(right - left, bottom - top)
         slash.reset()
         // MainActivity mirrors this view vertically, so these edges appear as / on screen.
         slash.moveTo(left, top)
