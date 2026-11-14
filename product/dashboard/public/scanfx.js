@@ -45,6 +45,7 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
     <div class="scanfx-title" data-title>New Stick</div>
     <div class="scanfx-name" data-name></div>
     <div data-fade style="position:absolute;inset:0;background:#000;opacity:0;pointer-events:none"></div>
+    <button data-try style="position:absolute;right:12px;top:12px;opacity:.5" title="最後に保存した棒で、スキャンから New Stick までの演出を流す（音の確認・リハーサル用）">演出を試す</button>
   </div>`;
   const $ = s => section.querySelector(`[data-${s}]`), canvas = section.querySelector('canvas');
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -212,6 +213,14 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
     }
     holder.visible = true; go('boom'); boom(); chime();
   }
+  // 演出を試す: the show with the last saved stick, as if a phone had scanned it (its click also lets the page make sound)
+  $('try').onclick = async e => {
+    e.currentTarget.blur(); audio();
+    const l = await fetch('sticks').then(r => r.json()).catch(() => []), rec = (Array.isArray(l) ? l : []).filter(r => r.model).at(-1);
+    if (!rec) { $('msg').textContent = '保存した棒がありません（先に一度スキャンする）'; return; }
+    const tell = (step, more) => dispatchEvent(new CustomEvent('stickscan', { detail: { slot: rec.slot ?? 'A', step, ...more, try: true } }));
+    tell('start'); setTimeout(() => tell('building'), 2500); setTimeout(() => tell('built', { rec }), 5000);
+  };
   addEventListener('stickscan', e => {
     const k = e.detail;
     if (k.step === 'start') { reset(); go('scan'); $('msg').textContent = 'スキャン中… 枝のまわりを歩いて撮影してください'; }
