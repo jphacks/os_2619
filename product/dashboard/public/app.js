@@ -224,7 +224,7 @@ gameCtrl.innerHTML = `
   <h3>試合の進行</h3>
   <div class="phase">
     <button data-phase="setup">準備中<kbd>1</kbd></button>
-    <button data-phase="demo" class="go bigstart" title="自動照準の試合。魔法は撃った瞬間に相手の方向へ真っすぐ飛び、撃ったあとに素早く動けば避けられる">試合開始<kbd>2</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
+    <button data-phase="demo" class="go bigstart" title="自動照準の試合。魔法は撃った瞬間に相手の方向へ真っすぐ飛び、撃ったあとに素早く動けば避けられる">試合開始<kbd>2</kbd></button><button class="go bigstart" id="chaobenStart" title="B をチャオベンにして、自動照準の試合を始める">チャオベン開始</button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
   </div>
   <div class="row" style="margin-top:6px"><button data-cmd="reset">やり直し<kbd>R</kbd></button><label class="kv">試合時間 <input id="secIn" type="number" min="10" max="600" step="10" style="width:64px"> 秒</label></div>
   <p class="why" id="why"></p>
@@ -343,6 +343,7 @@ for (const b of gameCtrl.querySelectorAll('[data-fxstyle]')) b.onclick = () => {
 for (const b of gameCtrl.querySelectorAll('[data-backdrop]')) b.onclick = () => { cfg.backdrop = b.dataset.backdrop; save(); };
 const showCharas = () => { for (const s of ['A', 'B']) stage.field.setChara(s, cfg.chara[s]); };
 for (const b of gameCtrl.querySelectorAll('[data-chara]')) b.onclick = () => { cfg.chara[b.dataset.s] = b.dataset.chara; save(); showCharas(); b.blur(); };
+$('#chaobenStart').onclick = () => { cfg.chara.B = 'chaoben'; save(); showCharas(); game.command({ cmd: 'phase', phase: 'demo' }); matchFullscreen('demo'); }; // B as チャオベン, then 試合開始 (auto aim)
 showCharas();
 $('#todAuto').onclick = () => { cfg.todAuto = !cfg.todAuto; save(); };
 for (const b of gameCtrl.querySelectorAll('[data-todspeed]')) b.onclick = () => { cfg.todSpeed = +b.dataset.todspeed; save(); };
