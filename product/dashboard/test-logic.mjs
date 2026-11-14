@@ -58,8 +58,7 @@ import { STICK } from './public/world.js';
   const charges = () => ev.filter(e => e.name === 'Charge').length;
   run(1, () => ({ euler: [0, -50, 0], gyro: [0, 0, 0] }));
   run(1.5, i => ({ euler: [0, -50, 0], gyro: [0, 150 + shake(i, 200), 0] }), 1); // walking and turning at 150°/s: the raw gyro is 350 / -50
-  assert.ok(charges() > 0, 'a shake while turning did not start a charge');
-  assert.ok(ev.filter(e => e.name === 'Dodge').length === 0, 'walking at 1 m/s dodged');
+  assert.ok(charges() > 0, 'a shake while turning did not start a charge'); // (this walk is sideways at 1 m/s: since 11/14 that is a dodge)
 
   run(1, i => ({ euler: [0, -50, 0], gyro: [0, 150 + shake(i, 100), 0] }), 1); // a smaller shake keeps it on the move
   ev.length = 0; run(.6, i => ({ euler: [0, -50, 0], gyro: [0, shake(i, 100), 0] }), 1);
@@ -72,24 +71,29 @@ import { STICK } from './public/world.js';
 
   console.log('charge on the move ok: a shake counts while turning, footsteps do not');
 
-  { // a quick sidestep from standing (12 m/s² for 0.2 s, then stopping: 0.48 m in 0.4 s) is one dodge to that side; walking sideways at 1 m/s was none
-    const D = createActions(), out = []; let tt = 900, xx = 0, v = 0;
-    for (let i = 0; i < 180; i++, tt += .01) {
-      const j = i - 80; v = j < 0 ? 0 : j < 20 ? v - .12 : j < 40 ? Math.min(0, v + .12) : 0; xx += v * .01; // to the left (-x): the chest faces -z, so its right is +x
-      out.push(...D.ingest({ type: 'ar', slot: 'A', t: tt, tracking: 'TRACKING', wp: [xx, 1.3, 0], wq: [0, 0, 0, 1] }));
-    }
-    const d = out.filter(e => e.name === 'Dodge');
-    assert.equal(d.length, 1, `sidestep: ${d.length} dodges`); assert.equal(d[0].dir, 'left'); assert.equal(d[0].side, -1);
-    console.log(`dodge ok: a sidestep dodges ${d[0].dir} (${d[0].dist.toFixed(2)} m), walking does not`);
+  { // a sidestep from standing: accelerating at a m/s² for 0.4 s, then stopping as fast (a × 0.16 m in 0.8 s). 0.96 m (6 m/s²) is one
+    // dodge to that side; 0.48 m (3 m/s², a dodge before 11/14) is none
+    const sidestep = a => {
+      const D = createActions(), out = []; let tt = 900, xx = 0, v = 0;
+      for (let i = 0; i < 250; i++, tt += .01) {
+        const j = i - 80; v = j < 0 ? 0 : j < 40 ? v - a / 100 : j < 80 ? Math.min(0, v + a / 100) : 0; xx += v * .01; // to the left (-x): the chest faces -z, so its right is +x
+        out.push(...D.ingest({ type: 'ar', slot: 'A', t: tt, tracking: 'TRACKING', wp: [xx, 1.3, 0], wq: [0, 0, 0, 1] }));
+      }
+      return out.filter(e => e.name === 'Dodge');
+    };
+    const d = sidestep(6);
+    assert.equal(d.length, 1, `0.96 m sidestep: ${d.length} dodges`); assert.equal(d[0].dir, 'left'); assert.equal(d[0].side, -1);
+    assert.equal(sidestep(3).length, 0, '0.48 m sidestep dodged');
+    console.log(`dodge ok: a 0.96 m sidestep dodges ${d[0].dir} (${d[0].dist.toFixed(2)} m), 0.48 m does not`);
   }
-  { // one player's recorded moves (11/13, the chest phone's ARCore pose): 9 dodges in the good take, none in the two bad ones
-    // (side-walking back and forth, turning, stepping on)
+  { // one player's recorded moves (11/13, the chest phone's ARCore pose). Their 9 dodges were 0.35-0.5 m steps, so under the 11/14 rule
+    // (0.8 m in 1 s) only 3 still count; of the moves that are not (side-walking back and forth, turning, stepping on), bad-2 walks 0.8 m
+    // sideways 3 times, which now counts
     const take = n => gunzipSync(readFileSync(new URL(`./test-data/dodge-${n}.jsonl.gz`, import.meta.url))).toString().trim().split('\n').map(x => ({ type: 'ar', slot: 'A', ...JSON.parse(x) }));
     const dodges = n => { const D = createActions(); return take(n).flatMap(k => D.ingest(k)).filter(e => e.name === 'Dodge'); };
-    const good = dodges('good');
-    assert.deepEqual(good.map(e => e.dir[0].toUpperCase()).join(''), 'RLRLRLRLL', `good take: ${good.map(e => `${e.t.toFixed(2)}${e.dir}`).join(' ')}`);
-    for (const n of ['bad-1', 'bad-2']) assert.equal(dodges(n).length, 0, `${n}: ${dodges(n).map(e => `${e.t.toFixed(2)}${e.dir}`).join(' ')}`);
-    console.log('dodge recordings ok: 9 / 9 dodges, 0 in the moves that are not');
+    const seq = n => dodges(n).map(e => e.dir[0].toUpperCase()).join('');
+    assert.equal(seq('good'), 'LRL', 'good take'); assert.equal(seq('bad-1'), '', 'bad-1'); assert.equal(seq('bad-2'), 'LRR', 'bad-2');
+    console.log('dodge recordings ok: 3 of the 9 old dodges reach 0.8 m, 3 side-walks in bad-2 do');
   }
 
   // walking does not raise the bar: a smaller shake keeps the charge through a step and a long walk; and a running charge survives the stick dipping to 40°

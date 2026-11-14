@@ -11,11 +11,11 @@ const CHARGE_RMS = { start: 120, keep: 90 }; // °/s: see the gyro charge below
 // under `turn`, from nearly still (under `still` m in the `pre` s before); one per `cool` s. Every setting near these caught all 9 dodges
 // and none of the 20 other moves (side-walking, turning, stepping on): the old test, a 0.16 s acceleration spike, read ARCore's bursty
 // samples (10 a second, gaps up to 0.33 s) and caught 4 of the 9 while firing on walking.
-const DODGE = { win: .3, dist: .35, ratio: .7, turn: 30 * D, still: .25, pre: .35, cool: .8 };
+const DODGE = { win: 1, dist: .8, ratio: .7, turn: 30 * D, still: .25, pre: .35, cool: 1 }; // 11/14: win .3 → 1, dist .35 → .8 (a dodge is a bigger sidestep: 80 cm within 1 s), cool .8 → 1 (one per window)
 export const ACTIONS = [
   { name: 'Charge', how: 'only while the stick is raised 45° or more; gyro only: starts when the stick moved 120°/s RMS over the last second and changed its turning direction 4+ times (stick circled or shaken at the base), then keeps going at 90°/s and 3+ times; slower than a swing' },
   { name: 'Swing', how: 'stick turns faster than 300°/s through more than 60° and stops dead (from over 250°/s to under 100°/s within 0.12 s); direction plus start and stop position' },
-  { name: 'Dodge', how: 'the chest phone moves 0.35 m or more sideways within 0.3 s, from nearly still, mostly sideways and without turning; left / right' },
+  { name: 'Dodge', how: 'the chest phone moves 0.8 m or more sideways within 1 s, from nearly still, mostly sideways and without turning; left / right' },
   { name: 'Guard', how: 'stick within 45° of horizontal (above or below) and still (under 60°/s) for 1 s; held upright it does nothing' },
 ];
 
