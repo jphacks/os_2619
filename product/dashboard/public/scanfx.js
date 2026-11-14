@@ -105,6 +105,15 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
   // ---- sound (synthesised): rising blips while scanning, a whoosh into the point, a boom and a chime as the stick appears ----
   let ac = null, humV = null;
   const audio = () => { try { ac ??= new AudioContext(); if (ac.state === 'suspended') ac.resume(); return ac.state === 'running' ? ac : null; } catch { return null; } };
+  // "New Stick!" (a recorded voice, audio/new_stick.mp3, 11/15): said once as the words fade in
+  let voiceBuf = null, voiceRaw = null, said = false;
+  fetch('audio/new_stick.mp3').then(r => r.ok ? r.arrayBuffer() : null).then(b => { voiceRaw = b; }).catch(() => {});
+  async function sayNewStick() {
+    const c = audio(); if (!c || !voiceRaw && !voiceBuf) return;
+    try { voiceBuf ??= await c.decodeAudioData(voiceRaw); } catch { return; }
+    const src = c.createBufferSource(), g = c.createGain(); g.gain.value = .8; // the file peaks at 0 dBFS
+    src.buffer = voiceBuf; src.connect(g).connect(c.destination); src.start();
+  }
   // the scanning music: soft bell notes rising a semitone at a time, four to a group, each group starting a semitone above the last
   // (C C# D D#, C# D D# E, D D# E F, ...), for ever: every note is a Shepard tone (the same note in five octaves, the middle ones loudest), so the
   // climb never runs out of range. A bell, not a chip: sines, with the slightly out-of-tune partials of a celesta that sparkle and die first, and an
@@ -186,6 +195,7 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
     go('idle'); pictures = 0; level = 0; rec = null; came.fill(-1); sparks.visible = false; holder.visible = false; stickMat.emissiveIntensity = 0;
     lineMat.color.copy(BLACK); glowMat.opacity = 0; $('flash').style.opacity = 0; $('fade').style.opacity = 0;
     for (const k of ['title', 'name']) $(k).classList.remove('on');
+    said = false;
     $('msg').textContent = ''; $('msg').classList.remove('off');
   }
   function rush() { // every mote, out or not yet, from where it is now
@@ -275,7 +285,7 @@ export function mountScanFx(section, { onOk = () => {} } = {}) {
     cam.position.lerpVectors(far.p, near.p, z); cam.lookAt(V().lerpVectors(far.at, near.at, z));
     const shake = B < 0 ? 0 : .06 * Math.exp(-5 * B); // the screen shakes with the boom
     if (shake > .001) cam.position.add(o.set((Math.random() - .5) * shake, (Math.random() - .5) * shake, (Math.random() - .5) * shake));
-    if (B > 1.6) { $('title').classList.add('on'); $('name').classList.add('on'); }
+    if (B > 1.6) { $('title').classList.add('on'); $('name').classList.add('on'); if (!said) { said = true; sayNewStick(); } }
     if (B > LEAVE) $('fade').style.opacity = ease((B - LEAVE) / FADE).toFixed(3); // 4 s after the stick appears: fade to black, then the game
     if (B > LEAVE + FADE) { reset(); onOk(); }
     renderer.render(scene, cam);
