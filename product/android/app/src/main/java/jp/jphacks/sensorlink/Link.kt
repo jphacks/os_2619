@@ -110,7 +110,7 @@ class Link(private val id: String, private val name: String) {
                 "match" -> { val p = k.optString("phase", phase); if (p != phase) { phase = p; onPhase?.invoke(p) } }
                 "hp" -> onHp?.invoke(HpInfo(k.optDouble("hp", 100.0), k.optDouble("max", 100.0),
                     k.optString("foeSlot").takeIf { it == "A" || it == "B" }, k.optString("foeChara", "wizard"),
-                    k.optDouble("foeHp", 100.0), k.optDouble("foeMax", 100.0), k.optDouble("dist", 0.0)))
+                    k.optDouble("foeHp", 100.0), k.optDouble("foeMax", 100.0), k.optDouble("dist", 0.0), k.optDouble("foeYaw", 0.0)))
                 "flash" -> onFlash?.invoke(k.optInt("ms"))
                 "sfx" -> if (k.optString("kind") == "chargeFail") onChargeFail?.invoke() else k.optJSONArray("voices")?.let { onSound?.invoke(it) }
                 "vibrate" -> {
@@ -170,5 +170,6 @@ class Link(private val id: String, private val name: String) {
     }
 }
 
-/** The `hp` message: this player's HP and its most; the opponent (foeSlot null: a PC too old to tell), its HP and character; their distance along the floor, m. */
-data class HpInfo(val hp: Double, val max: Double, val foeSlot: String?, val foeChara: String, val foeHp: Double, val foeMax: Double, val dist: Double)
+/** The `hp` message: this player's HP and its most; the opponent (foeSlot null: a PC too old to tell), its HP and character; their distance along the floor, m;
+ *  foeYaw: where the opponent is from the chest's facing, rad, + = to the left. */
+data class HpInfo(val hp: Double, val max: Double, val foeSlot: String?, val foeChara: String, val foeHp: Double, val foeMax: Double, val dist: Double, val foeYaw: Double = 0.0)

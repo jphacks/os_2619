@@ -92,6 +92,8 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     private var texSession: Session? = null
     @Volatile private var camPose: ArPose? = null
     @Volatile private var arOrigin: ArPose? = null
+    // how much the screen faces up (its normal · gravity's up, from ARCore): 1 flat face up, 0 upright; strapped 45° up-forward ≈ .71
+    @Volatile private var screenUp = .71f
     @Volatile var arText = "AR: starting"
     // a hit: the torch stays on until this time (elapsedRealtime, ms). ARCore owns the camera, so the GL thread switches it through the session config.
     @Volatile private var torchUntilMs = 0L
@@ -136,6 +138,17 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         syncHpClose()
         window.attributes = window.attributes.apply { screenBrightness = 1f } // as bright as it goes
     }
+    /** The player looks at the opponent (in the acrylic's reflection), the chest and its phone are turned foeYaw off that:
+     *  the HP display turns on the screen by that turn as seen on the tilted screen (a turn about the vertical shows on it
+     *  times how much the screen faces up), and shrinks to stay inside its half of the screen. */
+    private fun turnHp(foeYaw: Double) {
+        val a = Math.atan2(Math.sin(foeYaw) * screenUp, Math.cos(foeYaw))
+        val w = hpBar.width.toDouble(); val h = hpBar.height.toDouble()
+        val c = Math.abs(Math.cos(a)); val s = Math.abs(Math.sin(a))
+        val fit = if (w > 0 && h > 0) minOf(w / (w * c + h * s), h / (w * s + h * c)).toFloat() else 1f
+        // + rotation is clockwise on the screen: the reflection mirrors it back, so a foe to the left turns the display left as seen
+        hpBar.animate().rotation(Math.toDegrees(a).toFloat()).scaleX(fit).scaleY(-fit).setDuration(80).start()
+    }
     private fun closeHp() {
         if (link.phase == "countdown" || link.phase == "fight") return
         hpScreen.visibility = View.GONE; overlay.visibility = View.VISIBLE
@@ -167,7 +180,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         link.onSound = { gameSound.play(it) }
         link.onChargeFail = { chargeSound.fail() }
         hitSound; chargeSound; gameSound // load the sounds now, so the first hit / charge is not silent
-        link.onHp = { info -> runOnUiThread { hpBar.info = info } }
+        link.onHp = { info -> runOnUiThread { hpBar.info = info; turnHp(info.foeYaw) } }
         link.onPhase = { p -> runOnUiThread { syncHpClose(); if (p == "countdown" || p == "fight") openHp() else if (p == "setup") closeHp() } } // a match starts / is over
         link.onFlash = { ms ->
             // at least TORCH_MIN_MS: switching the torch reconfigures ARCore's camera, which takes a moment, so a 小's 120 ms was often
@@ -323,7 +336,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         val t = link.pcTime(if (ageMs in 0.0..500.0) now - ageMs.toLong() else now)
 
         val tracking = cam.trackingState
-        if (tracking == TrackingState.TRACKING) camPose = cam.pose
+        if (tracking == TrackingState.TRACKING) { camPose = cam.pose; screenUp = Math.abs(cam.pose.zAxis[1]) } // +z: out of the screen
         val p = arOrigin?.inverse()?.compose(cam.pose) ?: cam.pose
         val planes = s.getAllTrackables(Plane::class.java).count { it.trackingState == TrackingState.TRACKING && it.subsumedBy == null }
         val reason = cam.trackingFailureReason.name
