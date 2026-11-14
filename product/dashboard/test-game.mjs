@@ -240,9 +240,11 @@ scenario('大も横に1.2m動けば外れる', () => {
   const S = setup(); S.fight(); S.charge('A'); S.run(5.5); S.walk('B', 0, 1.2, .3); S.swing('A'); S.run(1.8);
   eq(S.B.hp, 100, 'B の HP');
 });
-scenario('45cmずれても小は当たる（玉の当たり判定は見た目より少し大きい）', () => {
-  const S = setup(); S.fight(); S.walk('B', 0, .45, .3); S.swing('A'); S.run(1.8);
+scenario('35cmずれても小は当たり、45cmなら避けられる（玉の当たり判定は見た目より少し大きい）', () => {
+  const S = setup(); S.fight(); S.walk('B', 0, .35, .3); S.swing('A'); S.run(1.8);
   eq(S.B.hp, 95, 'B の HP');
+  const T = setup(); T.fight(); T.walk('B', 0, .45, .3); T.swing('A'); T.run(1.8);
+  eq(T.B.hp, 100, '45cm 避けた B の HP');
 });
 scenario('棒を背中側で止めた振りでは撃たず、体の前で止めれば撃つ', () => {
   const S = setup(); S.fight();

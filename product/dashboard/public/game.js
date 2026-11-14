@@ -274,9 +274,9 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
         s.pos.addScaledVector(s.vel, Math.min(dt, distance / speedOf(T, s.owner, s.tier)));
       } else s.pos.addScaledVector(s.vel, dt);
       fx.moveShot(s.id, s.pos);
-      // hit: distance to the opponent's vertical body segment (capsule radius .3 + the shot's own radius), the body at its character's size
+      // hit: distance to the opponent's vertical body segment (capsule radius .2 + the shot's own radius), the body at its character's size (11/14: .3 → .2, easier to dodge)
       const fk = foe.scale ?? 1, a = foe.chest.clone().setY(foe.chest.y - 1.05 * fk), b = foe.chest.clone().setY(foe.chest.y + .15 * fk);
-      const hit = (match.phase === 'fight' || s.test) && new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .3 * fk + T.radius * (s.size ?? 1);
+      const hit = (match.phase === 'fight' || s.test) && new THREE.Line3(a, b).closestPointToPoint(s.pos, true, V()).distanceTo(s.pos) < .2 * fk + T.radius * (s.size ?? 1);
       if (hit && foe.guarding) { // 小 bounces back at its shooter; 中 / 大 go through the guard and hit
         fx.block(foe.element, s.pos.clone());
         if (s.tier === 's') {
