@@ -1,4 +1,4 @@
-// The round charge gauge at the end of a player's HP bar: a disc with the staff mark, and an open ring that tapers from a thick end at
+// The round charge gauge at the end of a player's HP bar: a disc with the scanned stick's silhouette, and an open ring that tapers from a thick end at
 // nine o'clock, round the bottom and the right, to a point near the top. It fills the other way with the charge: from the point, clockwise, to the thick end. 1 / 2 / Full over it name the tier.
 // Tier 1 is plain yellow. Tier 2 is deep yellow to orange with a faint soap film's sheen swaying in it, inside the frame. Tier 3 is a rainbow on fire: the thick end burns up past the frame as one flame with swaying tongues, the rest of the ring's edge ripples. Both are drawn each frame on a canvas over the ring.
 const C = [72, 64], R = 42, FROM = Math.PI, SWEEP = 250 * Math.PI / 180, STEPS = 64; // centre and inner radius, in the drawing's units; where the ring starts, how far it runs (counter-clockwise on screen)
@@ -68,23 +68,43 @@ function paintFire(g, time, shadowX) {
   flamePath(g, time, 1); g.fill();
   g.strokeStyle = '#fff'; g.lineWidth = 1.25; g.lineJoin = 'round'; g.stroke();
 }
-const STAFF = '49,96 77,42 80,27 83,41 92,46 82,49 55,98';
+const STICK_TINT = { fire: '#ff8a46', thunder: '#ffe56a', water: '#6dbaff', wind: '#c8ffff' };
+const FALLBACK_STICK = { v: 3, length: 1, r: [.025, .02], nodes: [[0, -.5], [.01, 0], [0, .5]], edges: [[0, 1], [1, 2]] };
+const SVG = 'http://www.w3.org/2000/svg';
+
+// Project the scan's side/length tree into the disc. Every branch and bend gets its own tapered-looking segment.
+function stickSegments(model) {
+  const m = model?.v === 3 && model.length > 0 && Array.isArray(model.nodes) && Array.isArray(model.edges) && Array.isArray(model.r) ? model : FALLBACK_STICK;
+  const L = m.length, point = ([side, along]) => {
+    const t = along / L + .5, offset = side * 64 / L;
+    return [55 + 30 * t + .9 * offset, 94 - 60 * t + .45 * offset];
+  };
+  const radius = along => Math.max(2, (m.r[0] + (m.r[1] - m.r[0]) * Math.max(0, Math.min(1, along / L + .5))) * 64 / L * 1.5);
+  return m.edges.flatMap(([i, j]) => {
+    const a = m.nodes[i], b = m.nodes[j];
+    if (!a || !b || !a.every(Number.isFinite) || !b.every(Number.isFinite)) return [];
+    const [x1, y1] = point(a), [x2, y2] = point(b);
+    return [{ d: `M${x1.toFixed(2)} ${y1.toFixed(2)}L${x2.toFixed(2)} ${y2.toFixed(2)}`, width: radius((a[1] + b[1]) / 2) * 2 }];
+  });
+}
 
 /** createGauge(el): draws into el; set(level 0..1, tier 's' | 'm' | 'l' | null). */
 export function createGauge(el) {
   const ring = ringPath(0), id = 'gauge-ring-' + ++count;
   el.innerHTML = `<svg viewBox="0 0 132 130" aria-hidden="true">
     <clipPath id="${id}"><path d="${ring}"/></clipPath>
+    <clipPath id="${id}-disc"><circle cx="${C[0]}" cy="${C[1]}" r="${R - 6}"/></clipPath>
+    <linearGradient id="${id}-stick"><stop offset="0" stop-color="#fff"/><stop class="stick-tint" offset=".5" stop-color="#ff8a46"/><stop offset="1" stop-color="#514331"/></linearGradient>
     <path class="track" d="${ring}"/><path class="fill"/>
     <g clip-path="url(#${id})"><path class="glow" d="${ring}"/></g>
     <path class="frame" d="${ring}"/>
     <circle class="edge" cx="${C[0]}" cy="${C[1]}" r="${R - 2}"/><circle class="disc" cx="${C[0]}" cy="${C[1]}" r="${R - 6}"/>
-    <polygon class="staff" points="${STAFF}"/>
+    <g class="staff" clip-path="url(#${id}-disc)"/>
   </svg><canvas width="${Math.round(W * S)}" height="${Math.round(H * S)}" style="left:${-PAD / 1.32}%;top:${-PAD / 1.3}%;width:${W / 1.32}%;height:${H / 1.3}%"></canvas><b class="lv"></b>`;
-  const fill = el.querySelector('.fill'), lv = el.querySelector('.lv');
+  const fill = el.querySelector('.fill'), lv = el.querySelector('.lv'), staff = el.querySelector('.staff'), tint = el.querySelector('.stick-tint');
   const g = el.querySelector('canvas').getContext('2d'), film = Object.assign(document.createElement('canvas'), { width: 48, height: 48 });
   const shadowX = el.closest('.pl.B') ? -SHADOW : SHADOW; // B's canvas is mirrored
-  let key = '', painted = false;
+  let key = '', painted = false, shownModel, shownElement;
   function paint(level, tier) {
     const on = tier === 'm' || tier === 'l';
     if (!on && !painted) return;
@@ -95,6 +115,20 @@ export function createGauge(el) {
     else paintFire(g, time, shadowX);
   }
   return {
+    setStick(model, element) {
+      if (model === shownModel && element === shownElement) return;
+      shownModel = model; shownElement = element;
+      tint.setAttribute('stop-color', STICK_TINT[element] ?? '#fff');
+      staff.replaceChildren();
+      for (const { d, width } of stickSegments(model)) {
+        for (const [extra, stroke] of [[2.5, '#13151d'], [0, `url(#${id}-stick)`]]) {
+          const path = document.createElementNS(SVG, 'path');
+          path.setAttribute('d', d); path.setAttribute('fill', 'none'); path.setAttribute('stroke', stroke);
+          path.setAttribute('stroke-width', width + extra); path.setAttribute('stroke-linecap', 'round');
+          staff.append(path);
+        }
+      }
+    },
     set(level, tier) {
       paint(level, tier);
       const k = `${level.toFixed(3)}|${tier}`; if (k === key) return; key = k;

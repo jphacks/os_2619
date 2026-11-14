@@ -1,7 +1,6 @@
-// Charging, after Cloud's Limit Charge (body) and Kirby's Spark ball (wand tip).
+// Charging around the player's body. The stick itself glows in field3d.js.
 //  body: thin vertical light pillars rising around the player, squiggly element-coloured wisps round the legs, dust puffing
 //        off the floor, a floor ring; denser and brighter as the charge grows, pulsing once it is full
-//  tip:  a translucent sphere with a bright rim, a saw-tooth corona, a star inside and jagged bolts crackling outward
 import * as THREE from 'three';
 import { createKit, RAMP, TAU, V, rand, blend } from './effect-kit.js';
 
@@ -15,12 +14,6 @@ const PALETTE = {
   wind: { pillar: [[.85, .95, .96], [.55, .85, .88], [1, 1, 1]], wisp: [.75, .92, .92], glow: [.6, .82, .85],
     shell: [.5, .75, .78], rim: [.95, 1, 1], bolt: [.9, .97, 1], core: [1, 1, 1] },
 };
-const SVS = `varying vec3 vP,vN,vEye;void main(){vP=position;vec4 p=modelViewMatrix*vec4(position,1.);vN=normalize(normalMatrix*normal);vEye=normalize(-p.xyz);gl_Position=projectionMatrix*p;}`;
-// Spark ball shell: see-through tint inside, a bright rim, faint moving bands
-const SFS = `varying vec3 vP,vN,vEye;uniform vec3 uShell,uRim;uniform float uOpacity,uTime;
-void main(){float rim=1.-abs(dot(normalize(vN),normalize(vEye)));float band=.5+.5*sin(vP.y*9.+vP.x*5.-uTime*7.);
- float line=smoothstep(.72,.96,rim);vec3 c=mix(uShell*(.7+.3*band),uRim*1.15,line);float a=mix(.38,1.,smoothstep(.45,.95,rim))*uOpacity;
- gl_FragColor=vec4(c*a,a*.6);}`;
 // Floor ring: the shock-ring texture on a horizontal plane
 const RVS = `varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
 const RFS = `varying vec2 vUv;uniform sampler2D uMap;uniform vec3 uColor;uniform float uOpacity;
@@ -32,10 +25,9 @@ export function createChargeEffects(scene) {
     ['aura', 'aura-wisp.png'], ['filament', 'electric-filament.png'], ['glow', 'glow.png'], ['spark', 'spark.png'], ['smoke', 'smoke-puff.png'],
     ['star', 'star-flare.png'], ['spike', 'spike-burst.png'], ['corona', 'spark-corona.png'], ['ring', 'shock-ring.png'],
   ], { label: 'Charge' });
-  const geometries = { sphere: new THREE.SphereGeometry(1, 32, 20), plane: new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2) };
+  const geometries = { plane: new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2) };
   const states = new Map(); let time = 0, sequence = 0;
-  const point = V(), axis = V(), UP = V(0, 1, 0);
-  // on the ground (y = 0) under the chest: the chest passed in is the shrunk character's, so chest - CHEST_H put it under the floor
+  const point = V();
   const glow = (p, w, h, opacity, color, intensity = 1.4, occ = 0) => kit.sprite('glow', p, w, h, { opacity, intensity, color, ramp: RAMP.flat, occ });
   const floorRing = (p, r, opacity, color) => {
     const m = kit.mesh('ring', () => { const m = new THREE.Mesh(geometries.plane, new THREE.ShaderMaterial({ ...blend, vertexShader: RVS, fragmentShader: RFS,
@@ -43,6 +35,7 @@ export function createChargeEffects(scene) {
     m.material.uniforms.uColor.value.setRGB(...color); m.material.uniforms.uOpacity.value = opacity;
   };
 
+  // on the ground (y = 0) under the chest: the chest passed in is the shrunk character's, so chest - CHEST_H put it under the floor
   function body(s, L, P, full) {
     const c = s.chest, floor = 0, boost = full ? 1 + .35 * Math.max(0, Math.sin(time * 9 + s.seed)) : 1;
     // light pillars: thin vertical streaks on a cylinder round the body, each one rising and fading on its own cycle
@@ -84,43 +77,6 @@ export function createChargeEffects(scene) {
     }
   }
 
-  function tip(s, L, P, full) {
-    const p = s.tip, f = Math.floor(time * 15), pulse = 1 + (full ? .07 * Math.sin(time * 20 + s.seed) : .025 * Math.sin(time * 9 + s.seed)), r = (.06 + .15 * L) * pulse;
-    glow(p, r * 4, r * 4, .22 + .12 * L, P.shell, 1.1);
-    const m = kit.mesh('sphere', () => { const m = new THREE.Mesh(geometries.sphere, new THREE.ShaderMaterial({ ...blend, side: THREE.FrontSide, vertexShader: SVS, fragmentShader: SFS,
-      uniforms: { uShell: { value: new THREE.Color() }, uRim: { value: new THREE.Color() }, uOpacity: { value: 1 }, uTime: { value: 0 } } })); m.renderOrder = 3; return m; }, p, r);
-    const u = m.material.uniforms; u.uShell.value.setRGB(...P.shell); u.uRim.value.setRGB(...P.rim); u.uOpacity.value = .95; u.uTime.value = time; m.rotation.y = time * 1.5;
-    // star burst inside and a small hot core
-    kit.sprite('star', p, r * 2.2, r * 2.2, { opacity: .85, intensity: 1.3, color: P.core, occ: 0, rot: time * 1.2 });
-    kit.sprite('spike', p, r * .8, r * .8, { opacity: .45, intensity: 1.1, color: P.core, occ: .1, rot: f * .7 });
-    glow(p, r * .6, r * .6, .7, P.core, 1.3);
-    // saw-tooth corona, flickering between two angles
-    const cs = r * 2 / .66 * 1.02;
-    kit.sprite('corona', p, cs, cs, { opacity: .95, intensity: 1.15 - .2 * L, color: P.rim, occ: .2, rot: (f % 2) * .09 + time * .6 });
-    if (L > .25) kit.sprite('corona', p, cs * 1.12, cs * 1.12, { opacity: .3 * L, intensity: 1.1, color: P.shell, occ: 0, rot: -time * .8 + .05 });
-    // jagged bolts out of the surface; a few long ones once charged
-    const n = 3 + Math.round(5 * L);
-    for (let i = 0; i < n; i++) {
-      const j = s.seed * 37 + i * 7 + f * 131, a = rand(j) * TAU, z = rand(j + 1) * 2 - 1, rr = Math.sqrt(1 - z * z), long = i < Math.round(3 * L);
-      axis.set(Math.cos(a) * rr, z, Math.sin(a) * rr);
-      const from = point.copy(p).addScaledVector(axis, r * .95).clone(), to = V().copy(p).addScaledVector(axis, r + (long ? .22 + .45 * L : r * (.8 + rand(j + 2) * 1.2)));
-      kit.bolt(from, to, j, { jag: .3, count: long ? 7 : 5, w: (long ? .022 : .013) * (.7 + .5 * L), w1: .003, color: P.bolt, intensity: 1.4, core: .25, opacity: .95, branches: long ? .5 : 0, branchLen: .4 });
-    }
-    // small arcs crawling over the surface
-    for (let i = 0; i < 2; i++) {
-      const j = s.seed * 19 + i * 3 + f * 17, a = rand(j) * TAU, b = a + .8 + rand(j + 1);
-      kit.bolt(V(p.x + Math.cos(a) * r, p.y + (rand(j + 2) - .5) * r, p.z + Math.sin(a) * r), V(p.x + Math.cos(b) * r, p.y + (rand(j + 3) - .5) * r, p.z + Math.sin(b) * r), j,
-        { jag: .4, count: 5, w: .008, w1: .004, color: P.rim, intensity: 1.5, core: .5, opacity: .8 });
-    }
-    // sparks orbiting
-    for (let i = 0; i < 4 + Math.round(8 * L); i++) {
-      const a = i * 2.399 + time * (2.4 + rand(i + s.seed)), y = Math.sin(i * 1.7 + time * 1.4) * .6;
-      axis.set(Math.cos(a), y, Math.sin(a)).normalize(); point.copy(p).addScaledVector(axis, r * (1.3 + .7 * rand(i + s.seed * 3)));
-      kit.sprite('spark', point, .014, .06 + .04 * L, { opacity: .8, intensity: 2, color: P.bolt, ramp: RAMP.flat, occ: 0, axis });
-    }
-    if (full) { const ph = (time * 1.7 + s.seed) % 1, rs = (r * 2.2 + .7 * ph); kit.sprite('ring', p, rs, rs, { opacity: (1 - ph) * .7, intensity: 1.4, color: P.rim, occ: 0 }); }
-  }
-
   return {
     request(element, chest, tip, level, key = element) { let s = states.get(key); if (!s) { s = { element, chest: V(), tip: V(), level: 0, seen: 0, seed: ++sequence }; states.set(key, s); } s.element = element; s.chest.copy(chest); s.tip.copy(tip); s.level = Math.max(0, Math.min(1, level)); s.seen = time; },
     step(dt) {
@@ -128,7 +84,7 @@ export function createChargeEffects(scene) {
       for (const [key, s] of states) {
         if (time - s.seen > .18) { states.delete(key); continue; }
         const P = PALETTE[s.element] ?? PALETTE.thunder, full = s.level >= .999;
-        body(s, s.level, P, full); tip(s, s.level, P, full);
+        body(s, s.level, P, full);
       }
       kit.end();
     },

@@ -400,12 +400,33 @@ function makeAvatar(slot) {
   const metal = slot === 'A' ? 0xc8ccd2 : 0xd4af37; // A silver, B gold
   const stickMat = new THREE.MeshStandardMaterial({ color: metal, metalness: .15, roughness: .42, emissive: STICK_LIGHT.fire, emissiveIntensity: 2 });
   const stick = mesh(new THREE.CylinderGeometry(1, 1, 1, 6), stickMat, world); stick.userData.r = .02;
+  const haloMat = [0.38, 0.18].map((opacity, i) => new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(STICK_LIGHT.fire) }, uOpacity: { value: opacity },
+      uWidth: { value: new THREE.Vector3(i ? 1.2 : .4, i ? .05 : .025, i ? 1.2 : .4) },
+    },
+    vertexShader: 'uniform vec3 uWidth; void main() { vec3 p = position + normal * uWidth; gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.); }',
+    fragmentShader: 'uniform vec3 uColor; uniform float uOpacity; void main() { gl_FragColor = vec4(uColor * uOpacity, uOpacity); }',
+    transparent: true, side: THREE.BackSide, blending: THREE.AdditiveBlending,
+    depthWrite: false, toneMapped: false,
+  }));
+  const halos = haloMat.map(mat => {
+    const shell = new THREE.Mesh(stick.geometry, mat);
+    stick.add(shell);
+    return shell;
+  });
   const plainStick = stick.geometry;
   /** The scanned model (stickscan.js) in place of the metal rod, or back to the rod with null. */
   function setStick(m) {
     if (stick.geometry !== plainStick) stick.geometry.dispose();
     const g = m && stickGeometry(m);
     stick.geometry = g || plainStick;
+    for (const shell of halos) shell.geometry = stick.geometry;
+    haloMat.forEach((mat, i) => {
+      const w = mat.uniforms.uWidth.value;
+      if (g) w.setScalar(i ? .035 : .012);
+      else w.set(i ? 1.2 : .4, i ? .05 : .025, i ? 1.2 : .4);
+    });
     stickMat.color.set(g ? STICK_COLOR : metal); stickMat.metalness = g ? 0 : .15; stickMat.roughness = g ? .8 : .42;
     stick.userData.r = g ? 1 : .02; stick.userData.scanned = !!g;
     stickMat.needsUpdate = true;
@@ -492,9 +513,11 @@ function makeAvatar(slot) {
         st.element = p.element;
         const color = STICK_LIGHT[p.element] ?? STICK_LIGHT.fire;
         stickMat.emissive.setHex(color);
+        for (const mat of haloMat) mat.uniforms.uColor.value.setHex(color);
       }
       const pulse = p.charging ? (p.charge ?? 0) * (.85 + .15 * Math.sin(st.time * 24)) : 0;
       stickMat.emissiveIntensity = p.lit ? 2 + 2.4 * pulse : 0; // the stick itself glows in its element's colour only during a match; plain wood otherwise
+      halos.forEach((shell, i) => { shell.visible = !!p.lit; haloMat[i].uniforms.uOpacity.value = (i ? .18 : .38) * (1 + pulse); });
     }
     stick.visible = !!(base && tipP);
     const online = p.online !== false;

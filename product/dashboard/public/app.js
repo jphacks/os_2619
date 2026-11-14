@@ -224,7 +224,7 @@ gameCtrl.innerHTML = `
   <h3>試合の進行</h3>
   <div class="phase">
     <button data-phase="setup">準備中<kbd>1</kbd></button>
-    <button data-phase="demo" class="go bigstart" title="試合と同じだが、魔法は撃った瞬間に相手の方向へ真っすぐ飛ぶ。撃ったあとに素早く動けば避けられる">デモ試合開始<kbd>2</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
+    <button data-phase="demo" class="go bigstart" title="自動照準の試合。魔法は撃った瞬間に相手の方向へ真っすぐ飛び、撃ったあとに素早く動けば避けられる">試合開始<kbd>2</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
   </div>
   <div class="row" style="margin-top:6px"><button data-cmd="reset">やり直し<kbd>R</kbd></button><label class="kv">試合時間 <input id="secIn" type="number" min="10" max="600" step="10" style="width:64px"> 秒</label></div>
   <p class="why" id="why"></p>
@@ -433,7 +433,7 @@ drawer.innerHTML = `
     <div class="row"><button id="mute">消音</button><button id="bgmPreview" title="M キーでも押せる。試合の BGM を、試合とは関係なく流す。試合が始まると自動で止まり、試合の BGM が頭から流れる">試合 BGM を流す<kbd>M</kbd></button><span class="note" id="audioInfo"></span></div>
     <div class="row" style="margin-top:6px">${[['shotFire', '炎の発射'], ['shotThunder', '雷の発射'], ['hitFire', '炎の命中'], ['hitThunder', '雷の命中'], ['specialFire', '炎の大'], ['specialThunder', '雷の大'], ['shotWater', '水の発射'], ['hitWater', '水の命中'], ['specialWater', '水の大'], ['shotWind', '風の発射'], ['hitWind', '風の命中'], ['specialWind', '風の大']].map(([k, n]) => `<button data-sound="${k}">${n}</button>`).join('')}<button id="damageSound" title="ダメージを受けたときに、スマホ A・B がライトと一緒に鳴らす音">被弾（スマホの音）</button><button data-own="my_shot" title="小を撃った人のスマホが鳴らす音">小の発射（撃った人のスマホ）</button><button data-own="my_launch" title="中・大を撃った人のスマホが鳴らす音（大は低く）">溜め技の発射（撃った人のスマホ）</button></div></section>
   <section><h3>キー操作</h3><table class="keys">
-    <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・デモ試合開始（撃った瞬間に相手を狙う）・試合開始・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
+    <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・試合開始（自動照準）・試合開始（自由照準）・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
     <tr><td>Space / Enter</td><td>A / B が小の攻撃（溜めなし）</td></tr><tr><td>Q / P 長押し</td><td>A / B が溜める（離した時の溜め時間で小・中・大）</td></tr>
     <tr><td>K</td><td>タグでスキャン</td></tr><tr><td>M</td><td>試合 BGM を流す / 止める</td></tr>
     <tr><td>A のキーボード操作</td><td>WASD で移動、F 長押しで溜め・離して撃つ、止まって G 長押しでガード</td></tr><tr><td>B のキーボード操作</td><td>十字キーで移動、. 長押しで溜め・離して撃つ、止まって / 長押しでガード</td></tr></table></section>`;
@@ -517,6 +517,7 @@ function updateHud() {
   const m = game.match;
   for (const p of Object.values(game.players)) {
     const h = hudP[p.slot];
+    h.gauge.setStick(p.stick?.model, p.element);
     h.hp.style.width = 100 * p.hp / (p.hpMax || 100) + '%'; setText(h.hpn, String(Math.round(p.hp)));
     h.hp.classList.toggle('low', p.hp / (p.hpMax || 100) <= .2);
     // the try-out button fills it as well, as far as a real charge of that length would (game.js effects())
@@ -526,7 +527,7 @@ function updateHud() {
   }
   const showTimer = m.phase === 'fight' || m.phase === 'result';
   setText(hud.querySelector('.timer'), showTimer ? String(Math.ceil(m.left)) : '');
-  const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : m.mode === 'demo' ? 'デモ試合（相手を狙って撃つ）' : '';
+  const pp = hud.querySelector('.phasepill'), pt = m.phase === 'setup' ? (stage.state.scanned ? '準備中（スキャン済み）' : '準備中') : m.mode === 'demo' ? '試合（自動照準）' : '';
   setText(pp, pt); pp.style.display = pt ? '' : 'none';
   const bt = game.bannerText(), bn = hud.querySelector('.banner');
   bn.style.display = bt && !koShow.active ? 'grid' : 'none'; setText(bn, bt); // the end of a match is ko-show.js's
@@ -624,9 +625,9 @@ function frame(ts) {
   frame.at = ts;
   const t = performance.now() / 1000, raw = t - last, dt = Math.min(.05, raw); last = t;
   fps = .95 * fps + .05 / Math.max(raw, 1e-3);
-  try { est = PA.estimate(nowS()); } catch (e) { console.warn('phonealign', e); }
   const frozen = screen === 'sandbox' && sandbox.frozen; // a freeze frame: the game, its effects and the camera stand still
   if (!frozen) simT += raw;
+  try { est = PA.estimate(nowS()); } catch (e) { console.warn('phonealign', e); }
   playable.step(dt, t);
   const waiting = game.match.phase === 'setup';
   if (waiting && !frame.waiting) waitHour = WAIT_HOUR; // back to setup: noon again
@@ -674,8 +675,8 @@ function frame(ts) {
   } else { stage.fx.step(stageDt); stageDt = 0; } // effects keep their time even when nobody looks
   if (screen === 'final') finalControls.updateStatus();
   if (screen === 'space') space.frame(nowS(), est);
-  if (screen === 'connect') connect.frame();
   if (screen === 'sandbox') sandbox.frame();
+  if (screen === 'connect') connect.frame();
   if (t - lastSlow > .2) { lastSlow = t; updateSlowUi(); $('#pillFps').textContent = `${fps.toFixed(0)} fps`; }
 }
 

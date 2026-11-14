@@ -66,7 +66,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   const players = { A: makePlayer('A'), B: makePlayer('B') };
   const other = p => p === players.A ? players.B : players.A;
   const shots = [];
-  // mode 'demo' (デモ試合): the same match, but every shot is aimed at the other player's chest when it is fired, then flies
+  // mode 'demo' (the auto-aim match): every shot is aimed at the other player's chest when it is fired, then flies
   // straight (for showing it off; a quick enough sidestep after the shot still dodges it)
   const match = { phase: 'setup', mode: 'normal', ready: false, paused: false, sec: 60, left: 60, until: 0, fightAt: -9 };
   let winner = null;
@@ -167,12 +167,11 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     const s = sfx();
     // try-out charge (fxTest, any phase): the same level / tier the real charge would have after that long
     const pv = p.preview ? Math.max(0, now() - p.preview) : null;
-    const charging = p.charging || pv !== null, chargeT = pv ?? p.chargeT, level = pv !== null ? Math.min(1, pv / t2Of(p)) : p.charge;
-    const tier = charging ? (pv !== null ? tierOf(pv, p) : p.tier) : null;
-    if ((match.phase !== 'setup' && (p.online || p.imu || p.charging)) || pv !== null) { // no effects while setting up (except the try-out); a button / keyboard charge (no phone) shows too
-      fx.aura(p.element, p.base, p.tip, charging ? .6 + .4 * level : .5, p.element,
-        { charging, level, tier, chest: p.chest, feet: V(p.chest.x, 0, p.chest.z) });
-      if (charging) fx.charge(p.element, p.tip, level, p.element, { tier, chargeT });
+    const charging = p.charging || pv !== null, level = pv !== null ? Math.min(1, pv / t2Of(p)) : p.charge;
+    if ((match.phase !== 'setup' && (p.online || p.imu || p.charging)) || pv !== null) { // no effects while setting up (except the try-out)
+      // The scanned mesh in field3d.js carries the element glow. Keep the body charge effect,
+      // but leave the stick free of particle auras and a ball on its tip.
+      if (charging) fx.charging?.(p.element, p.chest, p.tip, level, p.slot);
       s?.aura(p.slot, p.element, match.paused ? 0 : p.charging ? .6 + .4 * p.charge : .4, panOf(p.chest));
     } else s?.aura(p.slot, p.element, 0, 0);
     if (p.guarding) { const f = W.app3(p.body.R, [1, 0, 0]); fx.guard(p.element, p.base.clone().lerp(p.tip, .5), 1, undefined, V(f[0], 0, f[2]).normalize()); } // facing: the shield stands square to it
@@ -213,7 +212,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     if (tier === 'l') { s?.special(p.element, panOf(p.tip)); onSound([p.slot], 'myLaunch', tier); drone?.event('special', { owner: p.slot, from: p.tip.clone(), to: p.tip.clone().addScaledVector(aim, 6) }); }
     else { pcSfx(p)?.shot(p.element, panOf(p.tip), T.power); onSound([p.slot], tier === 's' ? 'myShot' : 'myLaunch', tier); drone?.event('shot', { owner: p.slot, pos: p.tip.clone(), dir: aim.clone() }); }
     const k = sizeOf(tier);
-    // steer: the dummy room keeps turning a shot onto the chest it was drawn at; デモ試合 never does (aimed once, then straight)
+    // steer: the dummy room keeps turning a shot onto the chest it was drawn at; the auto-aim match never does (aimed once, then straight)
     const steer = dummyTarget && match.mode !== 'demo';
     shots.push({ id: fx.shot(p.element, p.tip.clone(), aim.clone(), T.power, T.big * k, { tier, scale: k }), owner: p, element: p.element, tier, size: k, pos: p.tip.clone(), vel: aim.multiplyScalar(speedOf(T, p, tier)), born: now(), dummyTarget, homing, steer });
     log(p.slot, tier === 'l' ? 'special' : 'shot', `${TIER_JA[tier]}の攻撃${tier === 's' ? '' : `（溜め ${p.chargeT.toFixed(1)} 秒）`}`);
@@ -269,7 +268,7 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
   function stepShots(dt) {
     for (let i = shots.length - 1; i >= 0; i--) {
       const s = shots[i], foe = other(s.owner), T = TIER[s.tier];
-      if (s.steer && getDummyFrame()) { // dummy room (not デモ試合): steer at the chest every frame
+      if (s.steer && getDummyFrame()) { // dummy room (not the auto-aim match): steer at the chest every frame
         const distance = s.pos.distanceTo(foe.chest);
         s.vel.copy(foe.chest).sub(s.pos).normalize().multiplyScalar(speedOf(T, s.owner, s.tier));
         s.pos.addScaledVector(s.vel, Math.min(dt, distance / speedOf(T, s.owner, s.tier)));
@@ -377,12 +376,12 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
     for (const p of Object.values(players)) { p.buzzAt = null; onVibrate(p.slot, 'off'); } // also ends a winner's vibration
     for (const p of Object.values(players)) p.preview = null;
   }
-  /** ph: 'setup' | 'fight' | 'demo' (デモ試合: a fight where every shot is aimed at the other player when fired) */
+  /** ph: 'setup' | 'fight' | 'demo' (auto-aim match: each shot aims at the other player when fired) */
   function setPhase(ph) {
     if (ph === 'demo' || ph === 'fight') match.mode = ph === 'demo' ? 'demo' : 'normal';
     reset(); match.paused = false;
     if (ph === 'fight' || ph === 'demo') { match.phase = 'countdown'; match.until = now() + 3; match.left = match.sec; } else { match.phase = ph; match.left = match.sec; }
-    log(null, 'phase', { setup: '準備中にした', fight: '試合開始（3 秒前）', demo: 'デモ試合開始（3 秒前・魔法は撃った瞬間に相手を狙う）' }[ph] ?? ph);
+    log(null, 'phase', { setup: '準備中にした', fight: '試合開始（自由照準・3 秒前）', demo: '試合開始（自動照準・3 秒前）' }[ph] ?? ph);
   }
   function finish(w) {
     winner = w; match.phase = 'result';
@@ -431,11 +430,11 @@ export function createGame({ fx, drone, sfx = () => null, cfg, onFlash = () => {
       case 'fxCharge': if (!p) return;
         if (c.on) p.preview = now();
         else if (p.preview) { const t = now() - p.preview; p.preview = null; if (c.fire) fxShot(p, tierOf(t, p)); }
+        return;
       // the sandbox (sandbox.js), any phase: a guard held on / off, a dodge to a side (-1 left, 1 right), the element shown (null: the stick's)
       case 'tryGuard': if (p) p.tryGuard = !!c.on; return;
       case 'tryDodge': if (p) { p.dodge = { t0: now(), side: c.side === -1 ? -1 : 1 }; sfx()?.dodge?.(panOf(p.chest)); showAct(p, '回避'); } return;
       case 'tryElement': if (p) { p.tryElement = c.element || null; takeStick(p); } return;
-        return;
     }
   }
 

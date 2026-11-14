@@ -929,7 +929,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
     shot: (s, dt) => { if (texMod(s.el)) s.prev.copy(s.pos); else noTex().shot(s, dt); },
     end: (s, reason) => { if (texMod(s.el)) texMod(s.el).endShot(s.id); else noTex().end(s, reason); },
     hit: (el, pos, power, opt) => { if (texMod(el)) texMod(el).hit(pos, power); else noTex().hit(el, pos, power, opt); },
-    charge: (c, dt) => { if (!texMod(c.el)) noTex().charge(c, dt); }, // fire / thunder: the tip sphere is part of charge-effects.js, requested from aura()
+    charge: (c, dt) => { if (!texMod(c.el)) noTex().charge(c, dt); },
     aura: (a, dt) => { if (!texMod(a.el)) noTex().aura(a, dt); else if (a.opt?.charging) charging.request(a.el, a.opt.chest, a.tip, a.opt.level, a.el); }, // no stick glow when not charging
   };
   const styles = { classic, textured }; let style = textured, styleName = 'textured';
@@ -1022,7 +1022,7 @@ export function createFx(renderer, scene, camera, opts = {}) {
     aura(element, base, tip, intensity = 1, key = element, opt = {}) { const st = request(auras, key, element); st.base.copy(base); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, intensity)); st.opt = opt; },
     /** opt: { tier, chargeT } */
     charge(element, tip, level, key = element, opt = {}) { const st = request(charges, key, element); st.tip.copy(tip); st.v = Math.min(1, Math.max(0, level)); st.opt = opt; },
-    /** The textured set's body aura + tip sphere directly (charge-effects.js); the 'textured' style also reaches it through aura(). */
+    /** The textured set's body charge aura (charge-effects.js). */
     charging(element, chest, tip, level, key = element) { charging.request(element, chest, tip, level, key); },
     /** big: overall size of the projectile (1 = the usual shot; the game's 小・中・大 tiers pass different sizes). opt: { tier, scale } — scale:
      *  the dashboard's ball size for styles that draw their own sizes (fx-smash.js); 'classic' gets it through big. */

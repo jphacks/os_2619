@@ -409,43 +409,43 @@ scenario('ガードの音：中と大が当たっても鳴らず、小の反射�
   eq(sounds.join(), 'reflect', '小で鳴ったガードの音');
 });
 
-// ---- デモ試合（ホーミング） ----
-scenario('デモ試合では、撃つ前に横へ1m動いた相手にも、狙って小が当たる', () => {
+// ---- 試合（自動照準） ----
+scenario('試合（自動照準）では、撃つ前に横へ1m動いた相手にも、狙って小が当たる', () => {
   const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
   eq(S.g.match.phase, 'fight', '状態'); eq(S.g.match.mode, 'demo', 'モード');
   S.walk('B', 0, 1, .3); S.swing('A'); S.run(1.5);
   eq(S.B.hp, 95, 'B の HP');
 });
-scenario('デモ試合でも、大を撃たれた直後に素早く1.2m横へ動けば避けられる（弾は曲がらない）', () => {
+scenario('試合（自動照準）でも、大を撃たれた直後に素早く1.2m横へ動けば避けられる（弾は曲がらない）', () => {
   const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
   S.charge('A'); S.run(5.5); S.swing('A'); S.walk('B', 0, 1.2, .15); S.run(1.8);
   eq(S.B.hp, 100, 'B の HP');
 });
-scenario('デモ試合で、撃たれたあとゆっくり動いても大は当たる', () => {
+scenario('試合（自動照準）で、撃たれたあとゆっくり動いても大は当たる', () => {
   const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
   S.charge('A'); S.run(5.5); S.swing('A'); S.walk('B', 0, .3, .4); S.run(1.5);
   eq(S.B.hp, 40, 'B の HP');
 });
-scenario('デモ試合では、下に振り下ろしても相手に飛んで大が当たる', () => {
+scenario('試合（自動照準）では、下に振り下ろしても相手に飛んで大が当たる', () => {
   const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
   S.charge('A'); S.run(5.5);
   S.sweep('A', .2, () => [-1.0, 1.2, 0], u => { const a = Math.PI / 2 * (1 - u); return [Math.cos(a), Math.sin(a), 0]; });
   eq(S.B.hp, 40, 'B の HP');
 });
-scenario('デモ試合でやり直すと、デモ試合のまま3秒数える', () => {
+scenario('試合（自動照準）でやり直すと、同じ照準方式のまま3秒数える', () => {
   const S = setup(); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(4); S.g.command({ cmd: 'reset' });
   eq(S.g.match.phase, 'countdown', '状態'); eq(S.g.match.mode, 'demo', 'モード');
   S.g.command({ cmd: 'phase', phase: 'fight' }); eq(S.g.match.mode, 'normal', '試合開始で戻るモード');
 });
 
-scenario('ダミーの部屋でも、デモ試合の大は撃った直後に素早く動けば避けられる（追いかけない）', () => {
+scenario('ダミーの部屋でも、試合（自動照準）の大は撃った直後に素早く動けば避けられる（追いかけない）', () => {
   const S = setup({ dummy: true }); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
   S.g.command({ cmd: 'special', slot: 'A' }); // the 大 button: charges, then swings just past the 大 line
   for (let i = 0; i < 800 && !S.A.shots; i++) S.run(1 / 60);
   eq(S.A.shots, 1, '発射数'); S.walk('B', 0, 1.2, .15); S.run(1.8);
   eq(S.B.hp, 100, 'B の HP');
 });
-scenario('ダミーの部屋でも、デモ試合で動かなければ大は当たる', () => {
+scenario('ダミーの部屋でも、試合（自動照準）で動かなければ大は当たる', () => {
   const S = setup({ dummy: true }); S.g.command({ cmd: 'phase', phase: 'demo' }); S.run(3.05);
   S.g.command({ cmd: 'special', slot: 'A' }); S.run(7);
   eq(S.B.hp, 40, 'B の HP');
