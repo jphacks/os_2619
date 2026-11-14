@@ -29,7 +29,8 @@ import { createGauge } from './hudgauge.js';
 import { PRESETS, DEFAULT_HOUR, clock } from './sky.js';
 // the sky: before a match (waiting) it is noon (WAIT_HOUR); when the match starts it is the time on the side panel's meter (cfg.timeOfDay),
 // sunset by default. 時刻を自動で進める runs both clocks (the waiting one starts at noon again whenever the match goes back to setup).
-const WAIT_HOUR = DEFAULT_HOUR, SUNSET = PRESETS.find(([n]) => n === '夕焼け')[1];
+const WAIT_HOUR = DEFAULT_HOUR, SUNSET = PRESETS.find(([n]) => n === '夕焼け')[1], NIGHT = PRESETS.find(([n]) => n === '夜')[1];
+const CHAOBEN_DUSK = 20; // s: チャオベン開始's sky goes from sunset to night in this long, then stays night
 import { createKoShow } from './ko-show.js';
 import { createSwingSense, SWING_DEFAULT, SWING_GAIN, ATTACK_SPEED } from './swing-sense.js';
 const TOD_SPEEDS = [['ゆっくり', 2], ['ふつう', 6], ['はやい', 24]]; // hours per minute: ふつう = a 60 s match from sunset into the night
@@ -280,8 +281,9 @@ ${['s', 'm', 'l'].map(t => `<label title="${TIER_JA[t]}の弾の速さ。1 が�
   <h3>攻撃・防御の記録</h3>
   <ul class="log" id="gameLog"></ul>`;
 tutorial.mountButton($('#tutRow'));
+let chaobenHour = null; // チャオベン開始's sky: sunset, running into night, then night for good (frame loop)
 let chaobenEl = false; // チャオベン開始 set the elements: starting any other match (button or key 2 / 3) puts them back to the sticks'
-const plainStart = phase => { if (phase !== 'setup' && chaobenEl) { chaobenEl = false; for (const s of ['A', 'B']) game.command({ cmd: 'tryElement', slot: s, element: null }); game.command({ cmd: 'immortal', slot: 'B', on: false }); sfx?.bgmTrack?.('bgm'); sfx?.chaobenBgm?.(false); } };
+const plainStart = phase => { if (phase !== 'setup' && chaobenEl) { chaobenEl = false; for (const s of ['A', 'B']) game.command({ cmd: 'tryElement', slot: s, element: null }); game.command({ cmd: 'immortal', slot: 'B', on: false }); sfx?.bgmTrack?.('bgm'); sfx?.chaobenBgm?.(false, { fromTop: true }); } };
 for (const b of gameCtrl.querySelectorAll('[data-phase]')) b.onclick = () => { plainStart(b.dataset.phase); game.command({ cmd: 'phase', phase: b.dataset.phase }); matchFullscreen(b.dataset.phase); };
 /** A match started on screen 3 (button or key) shows the game box fullscreen; Esc leaves it (the browser does that itself). */
 function matchFullscreen(phase) {
@@ -352,14 +354,14 @@ chaobenBlack.style.cssText = 'position:absolute;inset:0;background:#000;z-index:
 $('#gameBox').append(chaobenBlack);
 const chaobenWaiting = () => chaobenBlack.style.display !== 'none';
 $('#chaobenStart').onclick = e => {
-  game.command({ cmd: 'phase', phase: 'setup' }); chaobenBlack.style.display = 'block'; e.currentTarget.blur();
+  game.command({ cmd: 'phase', phase: 'setup' }); chaobenEl = false; sfx?.chaobenBgm?.(false, { fromTop: true }); chaobenBlack.style.display = 'block'; e.currentTarget.blur();
   if (screen === 'game' && !document.fullscreenElement) $('#gameBox').requestFullscreen?.().catch(() => {});
 };
 function chaobenGo() { // B as チャオベン with fire (HP creeps toward 1, never 0), A with thunder, 試合開始 (auto aim) under チャオベン's music
   chaobenBlack.style.display = 'none';
   cfg.chara.B = 'chaoben'; save(); showCharas();
   game.command({ cmd: 'tryElement', slot: 'A', element: 'thunder' }); game.command({ cmd: 'tryElement', slot: 'B', element: 'fire' }); game.command({ cmd: 'immortal', slot: 'B', on: true });
-  sfx?.unlock?.(); sfx?.bgmTrack?.(null); sfx?.chaobenBgm?.(true); chaobenEl = true; // no match music: Diabolos plays instead
+  sfx?.unlock?.(); sfx?.bgmTrack?.(null); sfx?.chaobenBgm?.(true); chaobenEl = true; chaobenHour = SUNSET; // no match music: Diabolos plays instead (the frame loop keeps it to the match); the sky: sunset into night
   game.command({ cmd: 'phase', phase: 'demo' }); matchFullscreen('demo');
 }
 showCharas();
@@ -658,8 +660,13 @@ function frame(ts) {
   if (waiting && !frame.waiting) waitHour = WAIT_HOUR; // back to setup: noon again
   frame.waiting = waiting;
   if (cfg.todAuto && cfg.backdrop !== 'plain' && waiting) waitHour = (waitHour + dt * (cfg.todSpeed ?? TOD_SPEEDS[1][1]) / 60) % 24; // the waiting clock runs too
-  stage.setHour(waiting ? waitHour : null); // null: the meter's time (cfg.timeOfDay)
-  if (cfg.todAuto && cfg.backdrop !== 'plain' && !waiting) { // the clock runs by itself: hours per minute; saved now and then, not every frame
+  if (chaobenEl) { // チャオベン開始: its music plays while the match runs (stops on 準備中 / 一時停止, resumes on 再開), and its own sky
+    const play = !waiting && !game.match.paused;
+    if (play !== !!sfx?.chaobenBgmOn) sfx?.chaobenBgm?.(play, { fromTop: waiting });
+    if (!waiting && !game.match.paused) chaobenHour = Math.min(NIGHT, chaobenHour + dt * (NIGHT - SUNSET) / CHAOBEN_DUSK);
+  }
+  stage.setHour(chaobenEl && !waiting ? chaobenHour : waiting ? waitHour : null); // null: the meter's time (cfg.timeOfDay)
+  if (cfg.todAuto && cfg.backdrop !== 'plain' && !waiting && !chaobenEl) { // the clock runs by itself: hours per minute; saved now and then, not every frame
     cfg.timeOfDay = +(((cfg.timeOfDay ?? SUNSET) + dt * (cfg.todSpeed ?? TOD_SPEEDS[1][1]) / 60) % 24).toFixed(4);
     if (t - (frame.todSaved ?? 0) > 5) { frame.todSaved = t; save(); }
   }

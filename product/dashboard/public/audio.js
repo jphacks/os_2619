@@ -197,12 +197,19 @@ export function createAudio({ base = 'audio/' } = {}) {
     else { release(music, .6); music = null; } // ~2 s to silence
   }
   /** チャオベン BGM (its own button, app.js): Diabolos on its own voice, any time, apart from the match's music */
-  let demon = null;
-  function chaobenBgm(on) {
-    if (!on) { release(demon, .6); demon = null; return; }
-    if (demon || !buf.bgm_chaoben) return;
-    if (ctx.state !== 'running') { ctx.resume().then(() => chaobenBgm(true)).catch(() => {}); return; } // the click's own unlock may still be resuming
-    demon = loopVoice('bgm_chaoben', duckG); demon.g.gain.setValueAtTime(db(MIX.bgm) * norm.bgm_chaoben, ctx.currentTime);
+  // off keeps the place it reached (a pause resumes from there); { fromTop: true } starts it over
+  let demon = null, demonAt = 0, demonPos = 0, demonWaking = false;
+  function chaobenBgm(on, { fromTop = false } = {}) {
+    if (fromTop) demonPos = 0;
+    if (!on) {
+      if (demon) { demonPos = (demonPos + ctx.currentTime - demonAt) % buf.bgm_chaoben.duration; release(demon, .15); demon = null; }
+      if (fromTop) demonPos = 0;
+      return;
+    }
+    if (demon || !buf.bgm_chaoben || demonWaking) return;
+    if (ctx.state !== 'running') { demonWaking = true; ctx.resume().then(() => { demonWaking = false; chaobenBgm(true); }).catch(() => { demonWaking = false; }); return; } // the click's own unlock may still be resuming
+    demon = loopVoice('bgm_chaoben', duckG, { start: demonPos }); demonAt = ctx.currentTime;
+    demon.g.gain.setValueAtTime(db(MIX.bgm) * norm.bgm_chaoben, ctx.currentTime);
   }
   const chg = { A: null, B: null };
   function charge(slot, on, level = 0, pan = 0, tier = 's', element = '') {
