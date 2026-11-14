@@ -177,8 +177,8 @@ export function createAudio({ base = 'audio/' } = {}) {
     v.src.onended = () => { v.src.disconnect(); v.g.disconnect(); v.p.disconnect(); };
   }
   let music = null, musicOn = false, preview = false, gameOn = false, track = 'bgm';
-  /** Which music the match plays: 'bgm', or 'bgm_chaoben' (チャオベン開始, app.js). A change restarts what is playing. */
-  function bgmTrack(name) { if (name === track || !LOOP_OF[name]) return; track = name; if (musicOn) { release(music, .3); music = null; musicOn = false; setMusic(gameOn || preview); } }
+  /** Which music the match plays: 'bgm', or null for none (チャオベン開始, app.js). A change restarts what is playing. */
+  function bgmTrack(name) { if (name === track || (name && !LOOP_OF[name])) return; track = name; if (musicOn) { release(music, .3); music = null; musicOn = false; setMusic(gameOn || preview); } }
   /** The match asks for its music every frame. The preview (the button) plays the same music outside a match; when the match
    *  starts it stops and the match's music starts from the top as usual. */
   function bgm(on) {
@@ -189,11 +189,20 @@ export function createAudio({ base = 'audio/' } = {}) {
   }
   function previewBgm(on) { if (gameOn) return; preview = !!on; setMusic(preview); }
   function setMusic(on) {
+    if (!track) on = false; // no match music (チャオベン開始)
     if (on === musicOn && (!on || music)) return; // cheap enough to call every frame
     if (on && (!buf[track] || ctx.state !== 'running')) return; // retried on the next call after unlock / load
     musicOn = on;
     if (on) { const [start, end] = LOOP_OF[track]; music = loopVoice(track, duckG, { start, end }); music.g.gain.setValueAtTime(db(MIX.bgm) * norm[track], ctx.currentTime); } // full level from its first sample, no fade-in
     else { release(music, .6); music = null; } // ~2 s to silence
+  }
+  /** チャオベン BGM (its own button, app.js): Diabolos on its own voice, any time, apart from the match's music */
+  let demon = null;
+  function chaobenBgm(on) {
+    if (!on) { release(demon, .6); demon = null; return; }
+    if (demon || !buf.bgm_chaoben) return;
+    if (ctx.state !== 'running') { ctx.resume().then(() => chaobenBgm(true)).catch(() => {}); return; } // the click's own unlock may still be resuming
+    demon = loopVoice('bgm_chaoben', duckG); demon.g.gain.setValueAtTime(db(MIX.bgm) * norm.bgm_chaoben, ctx.currentTime);
   }
   const chg = { A: null, B: null };
   function charge(slot, on, level = 0, pan = 0, tier = 's', element = '') {
@@ -375,7 +384,7 @@ export function createAudio({ base = 'audio/' } = {}) {
     load, unlock,
     get unlocked() { return ctx.state === 'running'; }, get loaded() { return loaded; },
     setVolume, get volumes() { return { ...vol }; }, setMuted, get muted() { return muted; },
-    bgm, bgmTrack, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, chargeFail, describe, aura, guard, play, countdown, dodge, stopAll, dispose,
+    bgm, bgmTrack, chaobenBgm, get chaobenBgmOn() { return !!demon; }, previewBgm, get previewingBgm() { return preview; }, shot, hit, special, charge, chargeFail, describe, aura, guard, play, countdown, dodge, stopAll, dispose,
     peak, // output peak (linear) over the last ~43 ms, for meters / tests
     ctx,
   };

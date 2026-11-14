@@ -224,7 +224,7 @@ gameCtrl.innerHTML = `
   <h3>試合の進行</h3>
   <div class="phase">
     <button data-phase="setup">準備中<kbd>1</kbd></button>
-    <button data-phase="demo" class="go bigstart" title="自動照準の試合。魔法は撃った瞬間に相手の方向へ真っすぐ飛び、撃ったあとに素早く動けば避けられる">試合開始<kbd>2</kbd></button><button class="go bigstart" id="chaobenStart" title="B をチャオベン（炎・HP が 0 にならない）、A を雷にして、自動照準の試合を始める">チャオベン開始</button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
+    <button data-phase="demo" class="go bigstart" title="自動照準の試合。魔法は撃った瞬間に相手の方向へ真っすぐ飛び、撃ったあとに素早く動けば避けられる">試合開始<kbd>2</kbd></button><button class="go bigstart" id="chaobenStart" title="B をチャオベン（炎・HP が 0 にならない）、A を雷にして、自動照準の試合を BGM なしで始める">チャオベン開始</button><button id="chaobenBgm" title="チャオベンの BGM（Diabolos）を、試合とは関係なく流す / 止める">チャオベン BGM を流す</button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
   </div>
   <div class="row" style="margin-top:6px"><button data-cmd="reset">やり直し<kbd>R</kbd></button><label class="kv">試合時間 <input id="secIn" type="number" min="10" max="600" step="10" style="width:64px"> 秒</label></div>
   <p class="why" id="why"></p>
@@ -347,7 +347,7 @@ const showCharas = () => { for (const s of ['A', 'B']) stage.field.setChara(s, c
 for (const b of gameCtrl.querySelectorAll('[data-chara]')) b.onclick = () => { cfg.chara[b.dataset.s] = b.dataset.chara; save(); showCharas(); b.blur(); };
 $('#chaobenStart').onclick = () => { // B as チャオベン with fire, A with thunder, then 試合開始 (auto aim)
   cfg.chara.B = 'chaoben'; save(); showCharas();
-  game.command({ cmd: 'tryElement', slot: 'A', element: 'thunder' }); game.command({ cmd: 'tryElement', slot: 'B', element: 'fire' }); game.command({ cmd: 'immortal', slot: 'B', on: true }); sfx?.bgmTrack?.('bgm_chaoben'); chaobenEl = true; // B's HP creeps toward 1, never 0; its own music
+  game.command({ cmd: 'tryElement', slot: 'A', element: 'thunder' }); game.command({ cmd: 'tryElement', slot: 'B', element: 'fire' }); game.command({ cmd: 'immortal', slot: 'B', on: true }); sfx?.bgmTrack?.(null); chaobenEl = true; // B's HP creeps toward 1, never 0; no match music (チャオベン BGM has its own button)
   game.command({ cmd: 'phase', phase: 'demo' }); matchFullscreen('demo');
 };
 showCharas();
@@ -462,6 +462,7 @@ for (const r of drawer.querySelectorAll('[data-vol]')) r.oninput = () => {
 $('#mute').onclick = () => sfx?.setMuted(!sfx.muted);
 $('#tutRow').append($('#bgmPreview')); // the match BGM button sits next to 発表用スライド on screen 3 (moved out of the settings drawer)
 $('#bgmPreview').onclick = () => { if (!sfx) return; sfx.unlock?.(); sfx.previewBgm(!sfx.previewingBgm); };
+$('#chaobenBgm').onclick = e => { if (!sfx) return; sfx.unlock?.(); sfx.chaobenBgm(!sfx.chaobenBgmOn); e.currentTarget.blur(); };
 for (const b of drawer.querySelectorAll('[data-sound]')) b.onclick = () => {
   if (!sfx) return; sfx.unlock?.();
   const [, kind, E] = b.dataset.sound.match(/^(shot|hit|special)(\w+)$/) ?? [], el = E?.toLowerCase(); // e.g. hitWater
@@ -587,6 +588,7 @@ function updateSlowUi() {
   for (const r of drawer.querySelectorAll('[data-vol]')) { const v = sfx?.volumes?.[r.dataset.vol]; if (v != null && document.activeElement !== r) r.value = v; drawer.querySelector(`[data-volout=${r.dataset.vol}]`).textContent = v != null ? Math.round(v * 100) : '--'; }
   $('#mute').textContent = sfx?.muted ? '消音を解除' : '消音';
   setHtml($('#bgmPreview'), (sfx?.previewingBgm ? '試合 BGM を止める' : '試合 BGM を流す') + '<kbd>M</kbd>');
+  setHtml($('#chaobenBgm'), sfx?.chaobenBgmOn ? 'チャオベン BGM を止める' : 'チャオベン BGM を流す');
   const v = vision.state;
   $('#mimicStatus').textContent = !cfg.mimic ? '' : !v.on ? '待機中（カメラの映像が届くと動く）' : v.error ? v.error : !v.ready ? 'MediaPipe を読み込み中…（初回は数十秒）'
     : `${v.delegate} ${v.hz.toFixed(0)} 回/秒 · 1回 ${v.ms.toFixed(0)} ms · 反映 ${['A', 'B'].filter(s => game.players[s].skel).join('・') || 'なし'}`;
