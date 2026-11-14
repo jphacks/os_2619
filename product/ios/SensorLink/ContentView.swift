@@ -206,7 +206,7 @@ struct LanSheet: View {
 /// by that turn as seen on the tilted screen (a turn about the vertical shows on it times how much the screen faces up) and
 /// are as big as fits: their outermost points touch the area's edges (Android's HpBar the same). Each bar: a white outline, a little
 /// gap, the HP left filled from the left with a light running across it; green, yellow at half, blinking red at a quarter, and a big
-/// warning sign (yellow triangle, black !) at a tenth. Instead, as big as fits: 3, 2, 1 in the countdown, FULLSTICK! as the fight
+/// warning sign (yellow triangle, black !, blinking) at a tenth. Instead, as big as fits: 3, 2, 1 in the countdown, FULLSTICK! as the fight
 /// starts, YOU WIN / YOU LOSE when it is over, turned like the bars. A long press calibrates, mid-match too.
 struct HpScreen: View {
     @EnvironmentObject var model: Model
@@ -215,7 +215,7 @@ struct HpScreen: View {
     private static let mineR = CGRect(x: -0.5, y: 0.014, width: 1, height: 0.16)
     private static let line: CGFloat = 0.07, pad: CGFloat = 0.09 // the outline's width and the gap inside it, x the bar's height
     private static let shine = 1.4, shineW: CGFloat = 0.25 // the light: seconds per crossing, its width x the inner pill's length
-    private static let signH: CGFloat = 1.5, signR = HpScreen.signH / sqrt(3) + 0.1 // the warning sign's height, and a circle round it (the fit keeps room for it), x the bar's height
+    private static let signH: CGFloat = 3, signR = HpScreen.signH / sqrt(3) + 0.1 // the warning sign's height, and a circle round it (the fit keeps room for it), x the bar's height
     private static let goS = 1.2 // FULLSTICK! shows this long as the fight starts, s
 
     /// how many bars show the warning sign (a tenth of the HP or less)
@@ -314,7 +314,7 @@ struct HpScreen: View {
             inside.fill(fill, with: .linearGradient(Gradient(colors: [.white.opacity(0), .white.opacity(0.6), .white.opacity(0)]),
                                                     startPoint: CGPoint(x: x, y: 0), endPoint: CGPoint(x: x + HpScreen.shineW * inner.width, y: 0)))
         }
-        if s <= 0.1 { sign(c, CGPoint(x: r.midX, y: r.midY), HpScreen.signH * bh) }
+        if s <= 0.1 && (t * 2).truncatingRemainder(dividingBy: 1) < 0.5 { sign(c, CGPoint(x: r.midX, y: r.midY), HpScreen.signH * bh) } // blinks with the red, for as long as it shows (at 0 HP too)
     }
 
     /// a warning sign of height hh centred on p: a yellow triangle with rounded corners, a black ! (Android the same)

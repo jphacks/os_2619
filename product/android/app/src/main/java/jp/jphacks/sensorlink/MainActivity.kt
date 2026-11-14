@@ -571,7 +571,7 @@ class Overlay(private val a: MainActivity) : View(a) {
  * Match mode HP display, mirrored vertically by MainActivity: two pill-shaped bars (ends fully rounded), no pictures.
  * The opponent's is 80% of the own one both ways. Turned by [turn] and as big as fits this view (the top 70% of the screen):
  * the bars' outermost points touch its edges (iOS the same). Each bar: a white outline, a little gap, the HP left filled from the left
- * with a light running across it; green, yellow at half, blinking red at a quarter, and a big warning sign (yellow triangle, black !)
+ * with a light running across it; green, yellow at half, blinking red at a quarter, and a big warning sign (yellow triangle, black !, blinking)
  * at a tenth. Instead, as big as fits: 3, 2, 1 in the countdown, FULLSTICK! as the fight starts, YOU WIN / YOU LOSE when it is over
  * (turned by [turn] too, like the bars).
  */
@@ -652,7 +652,7 @@ class HpBar(a: Activity) : View(a) {
             c.drawRect(box, p); p.shader = null
             c.restore()
         }
-        if (s <= .1f) drawSign(c, r.centerX(), r.centerY(), SIGN_H * bh)
+        if (s <= .1f && (t * 2) % 1f < .5f) drawSign(c, r.centerX(), r.centerY(), SIGN_H * bh) // blinks with the red, for as long as it shows (at 0 HP too)
     }
 
     /** a warning sign of height hh centred on (x, y): a yellow triangle with rounded corners, a black ! (iOS the same) */
@@ -687,6 +687,6 @@ class HpBar(a: Activity) : View(a) {
         const val LINE = .07f; const val PAD = .09f // the outline's width and the gap inside it, x the bar's height
         const val SHINE = 1.4f; const val SHINE_W = .25f // the light: seconds per crossing, its width x the inner pill's length
         // the warning sign: its height x the bar's height, and the circle round it (the fit keeps room for it)
-        const val SIGN_H = 1.5f; val SIGN_R = SIGN_H / Math.sqrt(3.0).toFloat() + .1f
+        const val SIGN_H = 3f; val SIGN_R = SIGN_H / Math.sqrt(3.0).toFloat() + .1f
     }
 }
