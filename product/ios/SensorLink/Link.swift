@@ -156,7 +156,7 @@ final class Link: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate 
                 let num: (String, Double) -> Double = { key, d in (k[key] as? NSNumber)?.doubleValue ?? d }
                 let fs = k["foeSlot"] as? String
                 onHp?(HpInfo(hp: hp, max: mx, foeSlot: fs == "A" || fs == "B" ? fs : nil, foeChara: (k["foeChara"] as? String) ?? "wizard",
-                             foeHp: num("foeHp", 100), foeMax: num("foeMax", 100), dist: num("dist", 0), foeYaw: num("foeYaw", 0)))
+                             foeHp: num("foeHp", 100), foeMax: num("foeMax", 100), dist: num("dist", 0), foeYaw: (k["foeYaw"] as? NSNumber)?.doubleValue))
             }
         case "flash":
             if let ms = (k["ms"] as? NSNumber)?.intValue { onFlash?(ms) }
@@ -246,6 +246,6 @@ struct HpInfo: Equatable {
     var foeHp = 100.0
     var foeMax = 100.0
     var dist = 0.0
-    /// where the opponent is from the chest's facing, rad, + = to the left
-    var foeYaw = 0.0
+    /// where the opponent is from the chest's facing, rad, + = to the left; nil: the PC does not know (not aligned to the magic circle)
+    var foeYaw: Double? = nil
 }

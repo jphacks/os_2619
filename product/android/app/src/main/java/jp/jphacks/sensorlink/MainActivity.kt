@@ -94,6 +94,10 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     @Volatile private var arOrigin: ArPose? = null
     // how much the screen faces up (its normal · gravity's up, from ARCore): 1 flat face up, 0 upright; strapped 45° up-forward ≈ .71
     @Volatile private var screenUp = .71f
+    // the chest's heading (ARCore, rad, + = counter-clockwise from above) now and at Calibrate (the player faces the opponent then)
+    @Volatile private var yawNow: Double? = null
+    @Volatile private var yaw0: Double? = null
+    @Volatile private var pcFoeYaw: Double? = null // from the PC once it places this player on the magic circle; it wins over yaw0
     @Volatile var arText = "AR: starting"
     // a hit: the torch stays on until this time (elapsedRealtime, ms). ARCore owns the camera, so the GL thread switches it through the session config.
     @Volatile private var torchUntilMs = 0L
@@ -147,7 +151,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         val c = Math.abs(Math.cos(a)); val s = Math.abs(Math.sin(a))
         val fit = if (w > 0 && h > 0) minOf(w / (w * c + h * s), h / (w * s + h * c)).toFloat() else 1f
         // + rotation is clockwise on the screen: the reflection mirrors it back, so a foe to the left turns the display left as seen
-        hpBar.animate().rotation(Math.toDegrees(a).toFloat()).scaleX(fit).scaleY(-fit).setDuration(80).start()
+        hpBar.rotation = Math.toDegrees(a).toFloat(); hpBar.scaleX = fit; hpBar.scaleY = -fit
     }
     private fun closeHp() {
         if (link.phase == "countdown" || link.phase == "fight") return
@@ -180,7 +184,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         link.onSound = { gameSound.play(it) }
         link.onChargeFail = { chargeSound.fail() }
         hitSound; chargeSound; gameSound // load the sounds now, so the first hit / charge is not silent
-        link.onHp = { info -> runOnUiThread { hpBar.info = info; turnHp(info.foeYaw) } }
+        link.onHp = { info -> pcFoeYaw = info.foeYaw; runOnUiThread { hpBar.info = info } }
         link.onPhase = { p -> runOnUiThread { syncHpClose(); if (p == "countdown" || p == "fight") openHp() else if (p == "setup") closeHp() } } // a match starts / is over
         link.onFlash = { ms ->
             // at least TORCH_MIN_MS: switching the torch reconfigures ARCore's camera, which takes a moment, so a 小's 120 ms was often
@@ -336,7 +340,15 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         val t = link.pcTime(if (ageMs in 0.0..500.0) now - ageMs.toLong() else now)
 
         val tracking = cam.trackingState
-        if (tracking == TrackingState.TRACKING) { camPose = cam.pose; screenUp = Math.abs(cam.pose.zAxis[1]) } // +z: out of the screen
+        if (tracking == TrackingState.TRACKING) {
+            camPose = cam.pose
+            val z = cam.pose.zAxis // +z: out of the screen; the camera looks along -z
+            screenUp = Math.abs(z[1]); yawNow = Math.atan2(z[2].toDouble(), -z[0].toDouble())
+        }
+        if (hpScreen.visibility == View.VISIBLE) { // every frame, so the display keeps up with the body's turn
+            val turn = pcFoeYaw ?: yaw0?.let { y0 -> yawNow?.let { Math.atan2(Math.sin(y0 - it), Math.cos(y0 - it)) } } ?: 0.0
+            hpBar.post { turnHp(turn) }
+        }
         val p = arOrigin?.inverse()?.compose(cam.pose) ?: cam.pose
         val planes = s.getAllTrackables(Plane::class.java).count { it.trackingState == TrackingState.TRACKING && it.subsumedBy == null }
         val reason = cam.trackingFailureReason.name
@@ -421,6 +433,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     private fun calibrate() {
         imu.calibrate()
         arOrigin = camPose
+        yaw0 = yawNow
         link.send(JSONObject().put("type", "calib").put("t", link.pcTime()))
         Toast.makeText(this, if (camPose == null) "IMU zeroed (AR not tracking yet)" else "IMU zeroed, AR origin set here", Toast.LENGTH_SHORT).show()
     }
