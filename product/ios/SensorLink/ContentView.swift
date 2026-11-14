@@ -200,6 +200,20 @@ struct LanSheet: View {
     }
 }
 
+/// The player looks at the opponent (in the acrylic's reflection), the chest and its phone are turned foeYaw off that: the HP
+/// display turns on the screen by that turn as seen on the tilted screen (a turn about the vertical shows on it times how much the
+/// screen faces up), and shrinks to stay inside its half of the screen (Android's turnHp the same).
+struct TurnHp: ViewModifier {
+    let foeYaw: Double, screenUp: Double, w: CGFloat, h: CGFloat
+    func body(content: Content) -> some View {
+        let a = atan2(sin(foeYaw) * screenUp, cos(foeYaw))
+        let c = CGFloat(abs(cos(a))), s = CGFloat(abs(sin(a)))
+        let fit = w > 0 && h > 0 ? Swift.min(w / (w * c + h * s), h / (w * s + h * c)) : 1
+        // + is clockwise on the screen: the reflection mirrors it back, so a foe to the left turns the display left as seen
+        content.scaleEffect(fit).rotationEffect(.radians(a)).animation(.linear(duration: 0.08), value: a)
+    }
+}
+
 /// The HP screen (match mode), on black and at full brightness. The display fills the top half,
 /// mirrored vertically to match Android. Both HP bars are flat with parallel slanted ends.
 /// The opponent's avatar and bar at full size however far it is (no perspective; Android the same). A long press calibrates, mid-match too.
@@ -221,6 +235,7 @@ struct HpScreen: View {
                 }
                 .frame(width: w, height: h, alignment: .topLeading)
                 .scaleEffect(x: 1, y: -1) // mirror the HP display vertically, as Android's HpBar does
+                .modifier(TurnHp(foeYaw: info.foeYaw, screenUp: model.screenUp, w: w, h: h))
                 if model.matchPhase != "countdown" && model.matchPhase != "fight" {
                     VStack {
                         Spacer()

@@ -30,6 +30,8 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     /// The HP screen (ContentView HpScreen): open, and what it shows (this player's HP, the opponent's, their distance). It opens by the HP button or when a match starts.
     @Published var hpOpen = false
     @Published var hp = HpInfo()
+    /// how much the screen faces up (its normal · gravity's up, from ARKit): 1 flat face up, 0 upright; strapped 45° up-forward ≈ .71. Main thread
+    @Published private(set) var screenUp = 0.71
     @Published private(set) var matchPhase = "setup"
     private var brightnessBefore: CGFloat?
     private var hitRedUntil = Date.distantPast
@@ -92,7 +94,11 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         link.onCharge = { [weak self] el, tier, level in self?.chargeSound.charge(element: el, tier: tier, level: level) }
         link.onSound = { [weak self] voices in self?.gameSound.play(voices) }
         link.onChargeFail = { [weak self] in self?.chargeSound.fail() }
-        link.onHp = { [weak self] info in DispatchQueue.main.async { self?.hp = info } }
+        link.onHp = { [weak self] info in
+            guard let self = self else { return }
+            self.lock.lock(); let pose = self.camPose; self.lock.unlock()
+            DispatchQueue.main.async { if let pose = pose { self.screenUp = Double(abs(pose.columns.2.y)) }; self.hp = info } // +z: out of the screen
+        }
         link.onPhase = { [weak self] p in DispatchQueue.main.async {
             guard let self = self else { return }
             self.matchPhase = p
