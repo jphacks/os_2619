@@ -8,9 +8,12 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Shader
+import android.graphics.Typeface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
@@ -177,8 +180,11 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         link.onSound = { gameSound.play(it) }
         link.onChargeFail = { chargeSound.fail() }
         hitSound; chargeSound; gameSound // load the sounds now, so the first hit / charge is not silent
-        link.onHp = { info -> pcFoeYaw = info.foeYaw; runOnUiThread { hpBar.info = info } }
-        link.onPhase = { p -> runOnUiThread { syncHpClose(); if (p == "countdown" || p == "fight") openHp() else if (p == "setup") closeHp() } } // a match starts / is over
+        link.onHp = { info -> pcFoeYaw = info.foeYaw; runOnUiThread {
+            if (HpBar.warns(info) > HpBar.warns(hpBar.info)) gameSound.play(JSONArray("[{\"file\":\"warning\"}]")) // a bar just got the warning sign: beep-beep-beep-beep
+            hpBar.info = info
+        } }
+        link.onPhase = { p -> runOnUiThread { hpBar.phase = p; syncHpClose(); if (p == "countdown" || p == "fight") openHp() else if (p == "setup") closeHp() } } // a match starts / is over
         link.onFlash = { ms ->
             // at least TORCH_MIN_MS: switching the torch reconfigures ARCore's camera, which takes a moment, so a 小's 120 ms was often
             // switched off again before it ever lit (iOS the same minimum)
@@ -564,7 +570,9 @@ class Overlay(private val a: MainActivity) : View(a) {
 /**
  * Match mode HP display, mirrored vertically by MainActivity: two pill-shaped bars (ends fully rounded), no pictures.
  * The opponent's is 80% of the own one both ways. Turned by [turn] and as big as fits this view (the top 70% of the screen):
- * the bars' outermost points touch its edges (iOS the same).
+ * the bars' outermost points touch its edges (iOS the same). Each bar: a white outline, a little gap, the HP left filled from the left
+ * with a light running across it; green, yellow at half, blinking red at a quarter, and a big warning sign (yellow triangle, black !)
+ * at a tenth. Instead, as big as fits: 3, 2, 1 in the countdown, FULLSTICK! as the fight starts, YOU WIN / YOU LOSE when it is over.
  */
 class HpBar(a: Activity) : View(a) {
     var info = HpInfo(100.0, 100.0, null, "wizard", 100.0, 100.0, 0.0)
@@ -572,26 +580,39 @@ class HpBar(a: Activity) : View(a) {
     /** rad, + = clockwise as drawn here (MainActivity flips this view vertically, so anticlockwise on the screen) */
     var turn = 0f
         set(v) { if (Math.abs(v - field) > 1e-3f) { field = v; invalidate() } }
+    /** the dashboard's game phase, and when it began here (uptime ms): the countdown is counted from that */
+    var phase = "setup"
+        set(v) { if (v != field) { field = v; phaseAt = SystemClock.uptimeMillis(); invalidate() } }
+    private var phaseAt = 0L
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pill = Path()
     private val box = RectF()
     // in units of the own bar's length, centred on 0: the opponent's (80% of the own one, both ways) above, a gap, the own one
     private val foeR = RectF(-.4f, -.174f, .4f, -.046f)
     private val mineR = RectF(-.5f, .014f, .5f, .174f)
+    private val bold = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
 
     override fun onDraw(c: Canvas) {
         c.drawColor(Color.BLACK)
-        val w = width.toFloat(); val h = height.toFloat()
+        val w = width.toFloat(); val h = height.toFloat(); val t = SystemClock.uptimeMillis() / 1000f
+        postInvalidateOnAnimation() // the light, the blinking and the countdown keep moving
+        val res = info.result; val since = (SystemClock.uptimeMillis() - phaseAt) / 1000f
+        when {
+            res == "win" || res == "lose" -> { drawWords(c, w, h, listOf("YOU", if (res == "win") "WIN" else "LOSE")); return }
+            phase == "countdown" -> { drawWords(c, w, h, listOf("${maxOf(1, 3 - since.toInt())}")); return } // the dashboard's countdown is 3 s
+            phase == "fight" && since < GO_S -> { drawWords(c, w, h, listOf("FULLSTICK!")); return }
+        }
         val slot = info.foeSlot // null: a PC too old to say who the opponent is
         val bars = if (slot != null) listOf(foeR, mineR) else listOf(mineR)
-        // the turned bars' exact extent: each pill is its two end circles' centres turned, plus the radius all round
+        // the turned bars' exact extent: each pill is its two end circles' centres turned, plus the radius all round; and the warning
+        // sign's circle round the bar's middle (always: the bars keep their size when it shows)
         val cs = Math.cos(turn.toDouble()).toFloat(); val sn = Math.sin(turn.toDouble()).toFloat()
         var x0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
         for (r in bars) {
             val rad = r.height() / 2
-            for (x in floatArrayOf(r.left + rad, r.right - rad)) {
+            for ((x, rr) in listOf(r.left + rad to rad, r.right - rad to rad, r.centerX() to SIGN_R * r.height())) {
                 val y = r.centerY(); val rx = x * cs - y * sn; val ry = x * sn + y * cs
-                x0 = minOf(x0, rx - rad); x1 = maxOf(x1, rx + rad); y0 = minOf(y0, ry - rad); y1 = maxOf(y1, ry + rad)
+                x0 = minOf(x0, rx - rr); x1 = maxOf(x1, rx + rr); y0 = minOf(y0, ry - rr); y1 = maxOf(y1, ry + rr)
             }
         }
         val scale = minOf(w / (x1 - x0), h / (y1 - y0))
@@ -599,32 +620,68 @@ class HpBar(a: Activity) : View(a) {
         c.translate(w / 2 - scale * (x0 + x1) / 2, h / 2 - scale * (y0 + y1) / 2)
         c.scale(scale, scale)
         c.rotate(Math.toDegrees(turn.toDouble()).toFloat())
-        if (slot != null) drawBar(c, foeR, share(info.foeHp, info.foeMax),
-            if (slot == "A") 0xFFFF8000.toInt() else 0xFF00BFFF.toInt()) // the players' colours (field3d.js TEAM), pure: vivid in the reflection (iOS the same)
-        val remaining = share(info.hp, info.max)
-        drawBar(c, mineR, remaining, when {
-            remaining > .5f -> 0xFF00FF00.toInt() // pure colours: bright and readable when reflected in a clear file (iOS the same)
-            remaining > .25f -> 0xFFFFFF00.toInt()
-            else -> 0xFFFF8000.toInt() // orange: apart from the red of the HP lost
-        })
+        if (slot != null) drawBar(c, foeR, share(info.foeHp, info.foeMax), t)
+        drawBar(c, mineR, share(info.hp, info.max), t)
         c.restore()
     }
 
     private fun share(hp: Double, max: Double) = (hp / maxOf(1.0, max)).coerceIn(0.0, 1.0).toFloat()
-    /** the red pill (the HP lost), and the HP left filled in from the left inside the same pill (iOS the same) */
-    private fun drawBar(c: Canvas, r: RectF, remaining: Float, color: Int) {
+    /** the white outline, the HP left inside it from the left (nothing where it was lost), the light, the warning sign (iOS the same) */
+    private fun drawBar(c: Canvas, r: RectF, s: Float, t: Float) {
+        val bh = r.height(); val lw = LINE * bh; val pad = PAD * bh
+        p.style = Paint.Style.STROKE; p.strokeWidth = lw; p.color = Color.WHITE; p.shader = null
+        box.set(r); box.inset(lw / 2, lw / 2); c.drawRoundRect(box, box.height() / 2, box.height() / 2, p)
         p.style = Paint.Style.FILL
-        val rad = r.height() / 2
-        p.color = 0xFFFF0000.toInt()
-        c.drawRoundRect(r, rad, rad, p)
-        if (remaining > 0f) {
-            pill.reset(); pill.addRoundRect(r, rad, rad, Path.Direction.CW)
+        box.set(r); box.inset(lw + pad, lw + pad)
+        val color = when {
+            s > .5f -> 0xFF00FF00.toInt() // pure colours: bright and readable when reflected in a clear file (iOS the same)
+            s > .25f -> 0xFFFFFF00.toInt()
+            (t * 2) % 1f < .5f -> 0xFFFF0000.toInt() // a pinch: red, blinking twice a second
+            else -> 0x40FF0000
+        }
+        if (s > 0f) {
+            pill.reset(); pill.addRoundRect(box, box.height() / 2, box.height() / 2, Path.Direction.CW)
             c.save(); c.clipPath(pill)
-            box.set(r.left, r.top, r.left + r.width() * remaining, r.bottom)
-            p.color = color
-            c.drawRect(box, p)
+            val inner = box.width()
+            box.right = box.left + inner * s
+            p.color = color; c.drawRect(box, p)
+            // the light: a soft white band crossing the inner pill's length every SHINE s, left to right, only over the HP left
+            val x = box.left - SHINE_W * inner + (t / SHINE % 1f) * (1 + SHINE_W) * inner
+            p.shader = LinearGradient(x, 0f, x + SHINE_W * inner, 0f, intArrayOf(0x00FFFFFF, 0x99FFFFFF.toInt(), 0x00FFFFFF), null, Shader.TileMode.CLAMP)
+            c.drawRect(box, p); p.shader = null
             c.restore()
         }
+        if (s <= .1f) drawSign(c, r.centerX(), r.centerY(), SIGN_H * bh)
     }
 
+    /** a warning sign of height hh centred on (x, y): a yellow triangle with rounded corners, a black ! (iOS the same) */
+    private fun drawSign(c: Canvas, x: Float, y: Float, hh: Float) {
+        val hw = hh / Math.sqrt(3.0).toFloat()
+        pill.reset(); pill.moveTo(x, y - hh / 2); pill.lineTo(x + hw, y + hh / 2); pill.lineTo(x - hw, y + hh / 2); pill.close()
+        p.color = 0xFFFFFF00.toInt(); p.style = Paint.Style.FILL_AND_STROKE; p.strokeWidth = .12f * hh; p.strokeJoin = Paint.Join.ROUND
+        c.drawPath(pill, p)
+        p.style = Paint.Style.FILL; p.color = Color.BLACK
+        val bw = .07f * hh
+        box.set(x - bw, y - .2f * hh, x + bw, y + .22f * hh); c.drawRoundRect(box, bw, bw, p)
+        c.drawCircle(x, y + .36f * hh, bw * 1.1f, p)
+    }
+
+    /** [lines] in white bold, as big as fit the view, centred */
+    private fun drawWords(c: Canvas, w: Float, h: Float, lines: List<String>) {
+        p.shader = null; p.style = Paint.Style.FILL; p.color = Color.WHITE; p.typeface = bold; p.textAlign = Paint.Align.CENTER; p.textSize = 100f
+        val fm = p.fontMetrics
+        p.textSize = 100f * minOf(w / lines.maxOf { p.measureText(it) }, h / (lines.size * (fm.descent - fm.ascent)))
+        val f = p.fontMetrics; val lh = f.descent - f.ascent; val top = (h - lines.size * lh) / 2
+        lines.forEachIndexed { i, l -> c.drawText(l, w / 2, top + i * lh - f.ascent, p) }
+    }
+
+    companion object {
+        const val GO_S = 1.2f // FULLSTICK! shows this long as the fight starts, s
+        /** how many bars show the warning sign (a tenth of the HP or less) */
+        fun warns(i: HpInfo) = listOfNotNull(i.hp / maxOf(1.0, i.max), if (i.foeSlot != null) i.foeHp / maxOf(1.0, i.foeMax) else null).count { it <= .1 }
+        const val LINE = .07f; const val PAD = .09f // the outline's width and the gap inside it, x the bar's height
+        const val SHINE = 1.4f; const val SHINE_W = .25f // the light: seconds per crossing, its width x the inner pill's length
+        // the warning sign: its height x the bar's height, and the circle round it (the fit keeps room for it)
+        const val SIGN_H = 1.5f; val SIGN_R = SIGN_H / Math.sqrt(3.0).toFloat() + .1f
+    }
 }

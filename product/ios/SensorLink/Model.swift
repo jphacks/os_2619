@@ -37,6 +37,8 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var foeTurn = 0.0
     private var yawNow: Double?, yaw0: Double? // the chest's heading (ARKit, rad, + = counter-clockwise from above); under lock
     @Published private(set) var matchPhase = "setup"
+    /// when matchPhase last changed here: the HP screen counts the countdown (3, 2, 1) from it
+    private(set) var phaseAt = Date()
     private var brightnessBefore: CGFloat?
     private var hitRedUntil = Date.distantPast
     private var hitTimer: Timer?
@@ -98,10 +100,14 @@ final class Model: NSObject, ObservableObject, ARSessionDelegate {
         link.onCharge = { [weak self] el, tier, level in self?.chargeSound.charge(element: el, tier: tier, level: level) }
         link.onSound = { [weak self] voices in self?.gameSound.play(voices) }
         link.onChargeFail = { [weak self] in self?.chargeSound.fail() }
-        link.onHp = { [weak self] info in DispatchQueue.main.async { self?.hp = info } }
+        link.onHp = { [weak self] info in DispatchQueue.main.async {
+            guard let self = self else { return }
+            if HpScreen.warns(info) > HpScreen.warns(self.hp) { self.gameSound.play([["file": "warning"]]) } // a bar just got the warning sign: beep-beep-beep-beep
+            self.hp = info
+        } }
         link.onPhase = { [weak self] p in DispatchQueue.main.async {
             guard let self = self else { return }
-            self.matchPhase = p
+            self.phaseAt = Date(); self.matchPhase = p
             if p == "countdown" || p == "fight" { self.openHp() }
             else if p == "setup" { self.closeHp() }
         } }

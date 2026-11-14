@@ -204,12 +204,24 @@ struct LanSheet: View {
 /// top 70%, mirrored vertically to match Android. The opponent's is 80% of the own one both ways. The player looks at the
 /// opponent (in the acrylic's reflection), the chest and its phone are turned foeYaw off that (Model.foeTurn): the bars turn
 /// by that turn as seen on the tilted screen (a turn about the vertical shows on it times how much the screen faces up) and
-/// are as big as fits: their outermost points touch the area's edges (Android's HpBar the same). A long press calibrates, mid-match too.
+/// are as big as fits: their outermost points touch the area's edges (Android's HpBar the same). Each bar: a white outline, a little
+/// gap, the HP left filled from the left with a light running across it; green, yellow at half, blinking red at a quarter, and a big
+/// warning sign (yellow triangle, black !) at a tenth. Instead, as big as fits: 3, 2, 1 in the countdown, FULLSTICK! as the fight
+/// starts, YOU WIN / YOU LOSE when it is over. A long press calibrates, mid-match too.
 struct HpScreen: View {
     @EnvironmentObject var model: Model
     // in units of the own bar's length, centred on 0: the opponent's (80% of the own one, both ways) above, a gap, the own one
     private static let foeR = CGRect(x: -0.4, y: -0.174, width: 0.8, height: 0.128)
     private static let mineR = CGRect(x: -0.5, y: 0.014, width: 1, height: 0.16)
+    private static let line: CGFloat = 0.07, pad: CGFloat = 0.09 // the outline's width and the gap inside it, x the bar's height
+    private static let shine = 1.4, shineW: CGFloat = 0.25 // the light: seconds per crossing, its width x the inner pill's length
+    private static let signH: CGFloat = 1.5, signR = HpScreen.signH / sqrt(3) + 0.1 // the warning sign's height, and a circle round it (the fit keeps room for it), x the bar's height
+    private static let goS = 1.2 // FULLSTICK! shows this long as the fight starts, s
+
+    /// how many bars show the warning sign (a tenth of the HP or less)
+    static func warns(_ i: HpInfo) -> Int {
+        [i.hp / Swift.max(1, i.max), i.foeSlot != nil ? i.foeHp / Swift.max(1, i.foeMax) : nil].compactMap { $0 }.filter { $0 <= 0.1 }.count
+    }
 
     var body: some View {
         GeometryReader { g in
@@ -218,9 +230,17 @@ struct HpScreen: View {
             let turn = atan2(sin(model.foeTurn) * model.screenUp, cos(model.foeTurn))
             ZStack(alignment: .topLeading) {
                 Color.black
-                Canvas { ctx, size in draw(ctx, size, info, turn) }
+                TimelineView(.animation) { tl in
+                    let t = tl.date.timeIntervalSinceReferenceDate, since = tl.date.timeIntervalSince(model.phaseAt)
+                    Group {
+                        if info.result == "win" || info.result == "lose" { words("YOU\n" + (info.result == "win" ? "WIN" : "LOSE")) }
+                        else if model.matchPhase == "countdown" { words("\(Swift.max(1, 3 - Int(since)))") } // the dashboard's countdown is 3 s
+                        else if model.matchPhase == "fight" && since < HpScreen.goS { words("FULLSTICK!") }
+                        else { Canvas { ctx, size in draw(ctx, size, info, turn, t) } }
+                    }
                     .frame(width: w, height: h)
                     .scaleEffect(x: 1, y: -1) // mirror the HP display vertically, as Android's HpBar does
+                }
                 if model.matchPhase != "countdown" && model.matchPhase != "fight" {
                     VStack {
                         Spacer()
@@ -237,19 +257,26 @@ struct HpScreen: View {
         .ignoresSafeArea()
     }
 
+    /// white bold lines, as big as fit the area, centred
+    private func words(_ s: String) -> some View {
+        Text(s).font(.system(size: 1000, weight: .black)).foregroundColor(.white).multilineTextAlignment(.center)
+            .lineLimit(2).minimumScaleFactor(0.01).frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private func share(_ v: Double, _ m: Double) -> CGFloat { CGFloat(Swift.max(0, Swift.min(1, v / Swift.max(1, m)))) }
 
-    private func draw(_ ctx: GraphicsContext, _ size: CGSize, _ info: HpInfo, _ turn: Double) {
+    private func draw(_ ctx: GraphicsContext, _ size: CGSize, _ info: HpInfo, _ turn: Double, _ t: Double) {
         let bars = info.foeSlot != nil ? [HpScreen.foeR, HpScreen.mineR] : [HpScreen.mineR] // nil: a PC too old to say who the opponent is
-        // the turned bars' exact extent: each pill is its two end circles' centres turned, plus the radius all round
+        // the turned bars' exact extent: each pill is its two end circles' centres turned, plus the radius all round; and the warning
+        // sign's circle round the bar's middle (always: the bars keep their size when it shows)
         let cs = CGFloat(cos(turn)), sn = CGFloat(sin(turn))
         let big = CGFloat.greatestFiniteMagnitude
         var x0 = big, x1 = -big, y0 = big, y1 = -big
         for r in bars {
             let rad = r.height / 2, y = r.midY
-            for x in [r.minX + rad, r.maxX - rad] {
+            for (x, rr) in [(r.minX + rad, rad), (r.maxX - rad, rad), (r.midX, HpScreen.signR * r.height)] {
                 let rx = x * cs - y * sn, ry = x * sn + y * cs
-                x0 = Swift.min(x0, rx - rad); x1 = Swift.max(x1, rx + rad); y0 = Swift.min(y0, ry - rad); y1 = Swift.max(y1, ry + rad)
+                x0 = Swift.min(x0, rx - rr); x1 = Swift.max(x1, rx + rr); y0 = Swift.min(y0, ry - rr); y1 = Swift.max(y1, ry + rr)
             }
         }
         let scale = Swift.min(size.width / (x1 - x0), size.height / (y1 - y0))
@@ -257,25 +284,43 @@ struct HpScreen: View {
         c.translateBy(x: size.width / 2 - scale * (x0 + x1) / 2, y: size.height / 2 - scale * (y0 + y1) / 2)
         c.scaleBy(x: scale, y: scale)
         c.rotate(by: .radians(turn))
-        if let slot = info.foeSlot {
-            bar(c, HpScreen.foeR, share(info.foeHp, info.foeMax),
-                slot == "A" ? Color(red: 1, green: 0.502, blue: 0) : Color(red: 0, green: 0.749, blue: 1)) // the players' colours (field3d.js TEAM), pure #FF8000 / #00BFFF (Android the same)
-        }
-        let remaining = share(info.hp, info.max)
-        bar(c, HpScreen.mineR, remaining,
-            remaining > 0.5 ? Color(red: 0, green: 1, blue: 0) // pure colours: bright and readable when reflected in a clear file (Android the same)
-            : remaining > 0.25 ? Color(red: 1, green: 1, blue: 0)
-            : Color(red: 1, green: 0.502, blue: 0)) // orange #FF8000: apart from the red of the HP lost
+        if info.foeSlot != nil { bar(c, HpScreen.foeR, share(info.foeHp, info.foeMax), t) }
+        bar(c, HpScreen.mineR, share(info.hp, info.max), t)
     }
 
-    /// the red pill (the HP lost), and the HP left filled in from the left inside the same pill (Android the same)
-    private func bar(_ c: GraphicsContext, _ r: CGRect, _ remaining: CGFloat, _ color: Color) {
-        let pill = Path(roundedRect: r, cornerRadius: r.height / 2)
-        c.fill(pill, with: .color(Color(red: 1, green: 0, blue: 0)))
-        if remaining > 0 {
+    /// the white outline, the HP left inside it from the left (nothing where it was lost), the light, the warning sign (Android the same)
+    private func bar(_ c: GraphicsContext, _ r: CGRect, _ s: CGFloat, _ t: Double) {
+        let bh = r.height, lw = HpScreen.line * bh, pad = HpScreen.pad * bh
+        let o = r.insetBy(dx: lw / 2, dy: lw / 2)
+        c.stroke(Path(roundedRect: o, cornerRadius: o.height / 2), with: .color(.white), lineWidth: lw)
+        let inner = r.insetBy(dx: lw + pad, dy: lw + pad)
+        let color = s > 0.5 ? Color(red: 0, green: 1, blue: 0) // pure colours: bright and readable when reflected in a clear file (Android the same)
+            : s > 0.25 ? Color(red: 1, green: 1, blue: 0)
+            : (t * 2).truncatingRemainder(dividingBy: 1) < 0.5 ? Color(red: 1, green: 0, blue: 0) // a pinch: red, blinking twice a second
+            : Color(red: 1, green: 0, blue: 0).opacity(0.25)
+        if s > 0 {
             var inside = c
-            inside.clip(to: pill)
-            inside.fill(Path(CGRect(x: r.minX, y: r.minY, width: r.width * remaining, height: r.height)), with: .color(color))
+            inside.clip(to: Path(roundedRect: inner, cornerRadius: inner.height / 2))
+            let fill = Path(CGRect(x: inner.minX, y: inner.minY, width: inner.width * s, height: inner.height))
+            inside.fill(fill, with: .color(color))
+            // the light: a soft white band crossing the inner pill's length every `shine` s, left to right, only over the HP left
+            let x = inner.minX - HpScreen.shineW * inner.width + CGFloat((t / HpScreen.shine).truncatingRemainder(dividingBy: 1)) * (1 + HpScreen.shineW) * inner.width
+            inside.fill(fill, with: .linearGradient(Gradient(colors: [.white.opacity(0), .white.opacity(0.6), .white.opacity(0)]),
+                                                    startPoint: CGPoint(x: x, y: 0), endPoint: CGPoint(x: x + HpScreen.shineW * inner.width, y: 0)))
         }
+        if s <= 0.1 { sign(c, CGPoint(x: r.midX, y: r.midY), HpScreen.signH * bh) }
+    }
+
+    /// a warning sign of height hh centred on p: a yellow triangle with rounded corners, a black ! (Android the same)
+    private func sign(_ c: GraphicsContext, _ p: CGPoint, _ hh: CGFloat) {
+        let hw = hh / sqrt(3)
+        var tri = Path()
+        tri.move(to: CGPoint(x: p.x, y: p.y - hh / 2)); tri.addLine(to: CGPoint(x: p.x + hw, y: p.y + hh / 2)); tri.addLine(to: CGPoint(x: p.x - hw, y: p.y + hh / 2)); tri.closeSubpath()
+        let yellow = Color(red: 1, green: 1, blue: 0)
+        c.fill(tri, with: .color(yellow))
+        c.stroke(tri, with: .color(yellow), style: StrokeStyle(lineWidth: 0.12 * hh, lineJoin: .round))
+        let bw = 0.07 * hh
+        c.fill(Path(roundedRect: CGRect(x: p.x - bw, y: p.y - 0.2 * hh, width: 2 * bw, height: 0.42 * hh), cornerRadius: bw), with: .color(.black))
+        c.fill(Path(ellipseIn: CGRect(x: p.x - 1.1 * bw, y: p.y + 0.36 * hh - 1.1 * bw, width: 2.2 * bw, height: 2.2 * bw)), with: .color(.black))
     }
 }

@@ -211,11 +211,12 @@ wss.on('connection', (ws, req) => {
       if (m.kind || m.voices.length) for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, m);
       return;
     }
-    if (k.type === 'hp') { // { type: 'hp', slot, hp, max, foeSlot, foeHp, foeMax, foeChara, dist, foeYaw } from a dashboard: that slot's HP screen (its HP, the opponent's, their distance in m)
+    if (k.type === 'hp') { // { type: 'hp', slot, hp, max, foeSlot, foeHp, foeMax, foeChara, dist, foeYaw, result } from a dashboard: that slot's HP screen (its HP, the opponent's, their distance in m)
       if (role !== 'dashboard' || !SLOTS.includes(k.slot)) return;
       const m = { type: 'hp', hp: Math.max(0, +k.hp || 0), max: Math.max(1, +k.max || 100),
         foeSlot: SLOTS.includes(k.foeSlot) ? k.foeSlot : null, foeHp: Math.max(0, +k.foeHp || 0), foeMax: Math.max(1, +k.foeMax || 100),
-        foeChara: FOE_CHARAS.has(k.foeChara) ? k.foeChara : 'wizard', dist: Math.min(100, Math.max(0, +k.dist || 0)), foeYaw: k.foeYaw == null || !Number.isFinite(+k.foeYaw) ? null : Math.min(Math.PI, Math.max(-Math.PI, +k.foeYaw)) }; lastHp[k.slot] = m;
+        foeChara: FOE_CHARAS.has(k.foeChara) ? k.foeChara : 'wizard', dist: Math.min(100, Math.max(0, +k.dist || 0)), foeYaw: k.foeYaw == null || !Number.isFinite(+k.foeYaw) ? null : Math.min(Math.PI, Math.max(-Math.PI, +k.foeYaw)),
+        result: ['win', 'lose', 'draw'].includes(k.result) ? k.result : null }; lastHp[k.slot] = m;
       for (const q of phones.values()) if (q.slot === k.slot) send(q.ws, m);
       return;
     }

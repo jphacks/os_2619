@@ -5,7 +5,7 @@
 // Method: every picture's camera from the sheets' tags (extrinsics.js solveCamera); per picture a mask of the stick: where the printed
 // design (public/mahoujin-design.bin.gz, matched to the real, slightly distorted print) has no ink, whatever is not paper (designMask);
 // without the design, what is neither the white paper nor the black print (stickMask); a voxel hull above the floor carved from the masks (coarse,
-// then fine near the survivors); its largest blob seen from above turned into a tree (skeleton): the longest path is the stick, the
+// then fine near the survivors); its largest blob seen from above turned into a tree (skeleton): the longest path from the end nearest T0 (the grip) is the stick, the
 // parts reaching off it are branches, so a Y-shaped branch stays a Y. Thickness is two numbers: at the grip and at the tip.
 // Plain JS, no deps: the page and node tests (test-stickscan.mjs) share it.
 import * as W from './world.js';
@@ -293,10 +293,10 @@ const median = a => { const s = [...a].sort((x, y) => x - y); return s[s.length 
 
 /**
  * The blob as a tree lying on the floor. Its footprint (seen from above) gives the shape: the longest path through it is the stick
- * (grip -> tip, the grip the end nearer tag T0), then each part reaching farther than SCAN.branchMin off what is found so far is a branch.
+ * (grip -> tip: the longest path from the cell nearest tag T0), then each part reaching farther than SCAN.branchMin off what is found so far is a branch.
  * Thickness is two numbers, at the grip and at the tip: the footprint's half width there, or half the height if that is smaller.
  */
-function skeleton(P) {
+export function skeleton(P) {
   const { fine, branchMin, maxBranches, nodeStep } = SCAN;
   let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
   for (const p of P) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[2]); z1 = Math.max(z1, p[2]); }
@@ -348,10 +348,11 @@ function skeleton(P) {
     return best;
   };
   const trace = (from, c) => { const path = [c]; while (from[c] >= 0) path.push(c = from[c]); return path; }; // c back to its source
-  const start = top.findIndex(v => v > 0);
-  const ends = bfs([start]), main = bfs([ends.far]), path = trace(main.from, main.far); // the longest path, end to end
+  // the grip: the footprint's cell nearest tag T0 (the stick is laid grip toward it); the stick: the longest path from there, grip first.
+  // Not the longest path overall: in a Y with a short handle that runs arm to arm and makes an arm the grip.
   const t0 = W.runeTagPos(0), toT0 = c => { const [x, z] = xz(c); return Math.hypot(x - t0[0], z - t0[2]); };
-  if (toT0(path[0]) > toT0(path[path.length - 1])) path.reverse(); // grip first: the stick is laid with its grip end toward tag T0
+  let grip = -1; for (let c = 0; c < top.length; c++) if (top[c] && (grip < 0 || toT0(c) < toT0(grip))) grip = c;
+  const main = bfs([grip]), path = trace(main.from, main.far).reverse();
   // the frame: along the grip -> tip line, side across it
   const G = xz(path[0]), T = xz(path[path.length - 1]), gl = Math.hypot(T[0] - G[0], T[1] - G[1]) || 1;
   const ax = (T[0] - G[0]) / gl, az = (T[1] - G[1]) / gl, sx = -az, sz = ax;
