@@ -131,7 +131,7 @@ export function createKoShow(hud, { colorOf, nameOf, onBurst = () => {}, sound =
         if (s.fight && !el.classList.contains('fight')) sound('fight');
         if (s.count && s.count !== intro.count) { // each number slams in afresh, with its beep
           intro.count = s.count; $('.mi-call .num').textContent = s.count;
-          el.classList.remove('count'); void el.offsetWidth; el.classList.add('count'); sound('count');
+          el.classList.remove('count'); void el.offsetWidth; el.classList.add('count'); sound('count', s.count);
         }
         setFlags({ cardA: s.cardA, cardB: s.cardB, vs: s.vs, count: s.count > 0, fight: s.fight });
         if (s.done) { intro = null; el.className = 'ko'; return null; }
