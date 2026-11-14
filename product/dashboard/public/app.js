@@ -649,12 +649,13 @@ function frame(ts) {
     const foe = game.players[p.slot === 'A' ? 'B' : 'A'], h = sentHp[p.slot];
     const m = { type: 'hp', slot: p.slot, hp: Math.max(0, Math.round(p.hp)), max: Math.max(1, Math.round(p.hpMax || 100)),
       foeSlot: foe.slot, foeHp: Math.max(0, Math.round(foe.hp)), foeMax: Math.max(1, Math.round(foe.hpMax || 100)), foeChara: cfg.chara[foe.slot] ?? 'wizard',
-      dist: +Math.hypot(foe.chest.x - p.chest.x, foe.chest.z - p.chest.z).toFixed(2) }; // m, along the floor
+      dist: +Math.hypot(foe.chest.x - p.chest.x, foe.chest.z - p.chest.z).toFixed(2), // m, along the floor
+      result: game.match.phase !== 'result' ? null : !game.winner ? 'draw' : game.winner.slot === p.slot ? 'win' : 'lose' }; // the phone's YOU WIN / YOU LOSE
     // foeYaw: where the opponent is from the chest's facing, rad, + = to the left (counter-clockwise from above). The phone turns its HP display by it.
     // null while this player's place is not from its phone (not aligned to the magic circle yet): the phone then uses its own turn since Calibrate
     const f = W.app3(p.body.R, [1, 0, 0]), dx = foe.chest.x - p.chest.x, dz = foe.chest.z - p.chest.z;
     m.foeYaw = p.src === 'phones' ? +Math.atan2(f[2] * dx - f[0] * dz, f[0] * dx + f[2] * dz).toFixed(3) : null;
-    const key = `${m.hp}|${m.max}|${m.foeHp}|${m.foeMax}|${m.foeChara}`;
+    const key = `${m.hp}|${m.max}|${m.foeHp}|${m.foeMax}|${m.foeChara}|${m.result}`;
     // HP or character: at once; the distance / bearing: at most 20 times a second, when it moved 5 cm or 2°; and once a second anyway
     if (key !== h.key || t - h.at > 1 || (t - h.at > .05 && (Math.abs(m.dist - h.dist) >= .05 || Math.abs((m.foeYaw ?? 9) - (h.yaw ?? 9)) >= .035))) { h.key = key; h.dist = m.dist; h.yaw = m.foeYaw; h.at = t; hub.send?.(m); }
   }
