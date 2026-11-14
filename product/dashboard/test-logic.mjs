@@ -72,7 +72,7 @@ import { STICK } from './public/world.js';
   console.log('charge on the move ok: a shake counts while turning, footsteps do not');
 
   { // a sidestep from standing: accelerating at a m/s² for 0.4 s, then stopping as fast (a × 0.16 m in 0.8 s). 0.96 m (6 m/s²) is one
-    // dodge to that side; 0.48 m (3 m/s², a dodge before 11/14) is none
+    // dodge to that side; 0.48 m (3 m/s²) is none (11/15: 67 cm within 1 s)
     const sidestep = a => {
       const D = createActions(), out = []; let tt = 900, xx = 0, v = 0;
       for (let i = 0; i < 250; i++, tt += .01) {
@@ -86,14 +86,16 @@ import { STICK } from './public/world.js';
     assert.equal(sidestep(3).length, 0, '0.48 m sidestep dodged');
     console.log(`dodge ok: a 0.96 m sidestep dodges ${d[0].dir} (${d[0].dist.toFixed(2)} m), 0.48 m does not`);
   }
-  { // one player's recorded moves (11/13, the chest phone's ARCore pose). Their 9 dodges were 0.35-0.5 m steps, so under the 11/14 rule
-    // (0.8 m in 1 s) only 3 still count; of the moves that are not (side-walking back and forth, turning, stepping on), bad-2 walks 0.8 m
-    // sideways 3 times, which now counts
-    const take = n => gunzipSync(readFileSync(new URL(`./test-data/dodge-${n}.jsonl.gz`, import.meta.url))).toString().trim().split('\n').map(x => ({ type: 'ar', slot: 'A', ...JSON.parse(x) }));
+  { // one player's recorded moves (11/13, the chest phone's ARCore pose). Under the 11/15 rule (0.67 m in 1 s) the good take gives 7
+    // (most of its 9 dodges were 0.35-0.5 m steps), and the moves that are not dodges (side-walking back and forth, turning,
+    // stepping on) give none in bad-1 and 6 in bad-2: recorded here so a later change of the threshold shows up. walk-1115: 20 s of
+    // another player walking at 0.37 m/s (up to 50 cm sideways in 1 s) gives none, and so does walk-1115b (forward, back and sideways)
+    const take = n => gunzipSync(readFileSync(new URL(`./test-data/${n.startsWith('walk') ? n : `dodge-${n}`}.jsonl.gz`, import.meta.url))).toString().trim().split('\n').map(x => ({ type: 'ar', slot: 'A', ...JSON.parse(x) }));
     const dodges = n => { const D = createActions(); return take(n).flatMap(k => D.ingest(k)).filter(e => e.name === 'Dodge'); };
     const seq = n => dodges(n).map(e => e.dir[0].toUpperCase()).join('');
-    assert.equal(seq('good'), 'LRL', 'good take'); assert.equal(seq('bad-1'), '', 'bad-1'); assert.equal(seq('bad-2'), 'LRR', 'bad-2');
-    console.log('dodge recordings ok: 3 of the 9 old dodges reach 0.8 m, 3 side-walks in bad-2 do');
+    assert.equal(seq('good'), 'RLRLLRL', 'good take'); assert.equal(seq('bad-1'), '', 'bad-1'); assert.equal(seq('bad-2'), 'RLRLRR', 'bad-2');
+    assert.equal(seq('walk-1115'), '', 'walking (11/15)'); assert.equal(seq('walk-1115b'), '', 'walking in all directions (11/15)'); // b: up to 57 cm sideways in 1 s
+    console.log('dodge recordings ok (67 cm in 1 s): good 7, bad-1 0, bad-2 6, walking 0 + 0');
   }
 
   // walking does not raise the bar: a smaller shake keeps the charge through a step and a long walk; and a running charge survives the stick dipping to 40°

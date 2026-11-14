@@ -18,7 +18,7 @@ export const ACTION_JA = { Charge: '溜め', Swing: '振り', Dodge: '回避', G
 const HOW_JA = {
   Charge: '棒を真上から 45° 以内に立てて先を 2 秒以内に 1 周回すか、直近 1 秒の揺れが 120°/秒以上で 4 回以上向きを変える。続けるのは 90°/秒以上で 3 回でよい',
   Swing: '棒が 300°/秒より速く回って止まる。向きと始め・終わりの位置',
-  Dodge: '胸のスマホが、ほぼ止まった状態から 0.3 秒以内に横へ 0.35 m 以上動く（向きを変えず、前後より横が大きい素早い横跳び）。左・右',
+  Dodge: '胸のスマホが、ほぼ止まった状態から 1 秒以内に横へ 0.67 m 以上動く（向きを変えず、前後より横が大きい横跳び）。左・右',
   Guard: '棒を水平から 45° 以内で 1 秒静止（60°/秒未満）',
 };
 const DIR_JA = { up: '上', down: '下', left: '左', right: '右', forward: '前', back: '後ろ' };
@@ -115,7 +115,7 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
       <div class="row" style="flex-wrap:wrap;gap:6px"><button data-rec="walk">回さずに歩く</button><button data-rec="walk-circle">回しながら歩く</button><button data-rec="still-circle">止まって回す</button><button data-rec="dodge-good">回避（良い例）</button><button data-rec="dodge-bad">回避じゃない（悪い例）</button></div>
       <p class="kv" style="font-size:12px;margin:10px 0 4px">判定の見本：「正しい」は 3 秒ほど間をあけて何回か。「間違った」は判定されてしまう／されそうな、でも違う動き</p>
       <div class="row" style="flex-wrap:wrap;gap:6px"><button data-rec="charge-good">正しいチャージ</button><button data-rec="charge-bad">間違ったチャージ</button><button data-rec="guard-good">正しいガード</button><button data-rec="guard-bad">間違ったガード</button><button data-rec="shot-good">正しい発射</button><button data-rec="shot-bad">間違った発射</button></div>
-      <p class="kv rec-msg" style="font-size:12px;margin:8px 0 0">棒を立てた状態で行う。押して 5 秒後に音が鳴ったら開始、20 秒後の音で終了。</p>
+      <p class="kv rec-msg" style="font-size:12px;margin:8px 0 0">棒を立てた状態で行う。押して 5 秒後に音が鳴ったら開始、20 秒後（回さずに歩くは 10 秒後）の音で終了。</p>
     </section>
     <section class="card"><header><h2>動作の判定</h2><span class="sub">棒の IMU と胸のスマホから</span></header>
       <ul class="actions"></ul>
@@ -138,7 +138,7 @@ export function createConnect({ cards, side, hub, vsrc, cfg, onStick, onVideoSrc
   for (const b of recBtns) b.onclick = () => {
     if (recAudio === null) { try { recAudio = new AudioContext(); } catch {} } // made in the click: browsers only let a page play sound after one
     for (const q of recBtns) q.disabled = true;
-    countdown(REC_LEAD, `「${b.textContent}」の準備`, () => hub.send({ type: 'record', label: b.dataset.rec, sec: REC_SEC }));
+    countdown(REC_LEAD, `「${b.textContent}」の準備`, () => hub.send({ type: 'record', label: b.dataset.rec, sec: b.dataset.rec === 'walk' ? 10 : REC_SEC })); // 11/15: walking takes 10 s
   };
   hub.onRecording = k => {
     beep();
