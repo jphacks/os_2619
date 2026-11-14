@@ -225,7 +225,7 @@ gameCtrl.innerHTML = `
   <h3>試合の進行</h3>
   <div class="phase">
     <button data-phase="setup">準備中<kbd>1</kbd></button>
-    <button data-phase="demo" class="go bigstart" title="自動照準の試合。魔法は撃った瞬間に相手の方向へ真っすぐ飛び、撃ったあとに素早く動けば避けられる">試合開始<kbd>2</kbd></button><button class="go bigstart" id="chaobenStart" title="画面を真っ黒にして待つ。M でチャオベンの BGM、P で試合開始（B はチャオベン・炎・HP が 0 にならない、A は雷、自動照準、BGM はそのまま流れる）。Esc でやめる">チャオベン開始</button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
+    <button data-phase="demo" class="go bigstart" title="自動照準の試合。魔法は撃った瞬間に相手の方向へ真っすぐ飛び、撃ったあとに素早く動けば避けられる">試合開始<kbd>2</kbd></button><button class="go bigstart" id="chaobenStart" title="9 キーでも押せる。画面を真っ黒にして待つ。M でチャオベンの BGM、P で試合開始（B はチャオベン・炎・HP が 0 にならない、A は雷、自動照準、BGM はそのまま流れる）。Esc でやめる">チャオベン開始<kbd>9</kbd></button><button data-cmd="pause">一時停止<kbd>4</kbd></button>
   </div>
   <div class="row" style="margin-top:6px"><button data-cmd="reset">やり直し<kbd>R</kbd></button><label class="kv">試合時間 <input id="secIn" type="number" min="10" max="600" step="10" style="width:64px"> 秒</label></div>
   <p class="why" id="why"></p>
@@ -456,7 +456,7 @@ drawer.innerHTML = `
   <section><h3>キー操作</h3><table class="keys">
     <tr><td>Alt+1〜4</td><td>画面の切り替え</td></tr><tr><td>1 2 3 4</td><td>準備中・試合開始（自動照準）・試合開始（自由照準）・一時停止</td></tr><tr><td>R</td><td>やり直し</td></tr>
     <tr><td>Space / Enter</td><td>A / B が小の攻撃（溜めなし）</td></tr><tr><td>Q / P 長押し</td><td>A / B が溜める（離した時の溜め時間で小・中・大）</td></tr>
-    <tr><td>K</td><td>タグでスキャン</td></tr><tr><td>M</td><td>試合 BGM を流す / 止める</td></tr>
+    <tr><td>K</td><td>タグでスキャン</td></tr><tr><td>M</td><td>試合 BGM を流す / 止める</td></tr><tr><td>9</td><td>チャオベン開始（真っ黒の画面 → M で BGM、P で試合開始、Esc でやめる）</td></tr>
     <tr><td>A のキーボード操作</td><td>WASD で移動、F 長押しで溜め・離して撃つ、止まって G 長押しでガード</td></tr><tr><td>B のキーボード操作</td><td>十字キーで移動、. 長押しで溜め・離して撃つ、止まって / 長押しでガード</td></tr></table></section>`;
 $('#openSettings').onclick = () => drawer.classList.toggle('open');
 $('#closeSettings').onclick = () => drawer.classList.remove('open');
@@ -502,7 +502,8 @@ addEventListener('keydown', e => {
   }
   if (held[k] && screen !== 'final') return holdCharge(held[k], true);
   if (KEYS[k]) { if (KEYS[k].cmd === 'phase') plainStart(KEYS[k].phase); game.command(KEYS[k]); if (KEYS[k].cmd === 'phase') matchFullscreen(KEYS[k].phase); return; }
-  if (k === 'k') scan();
+  if (k === '9') $('#chaobenStart').click(); // チャオベン開始 (the black screen; then M / P)
+  else if (k === 'k') scan();
   else if (k === 'c') document.querySelector('[data-tog="crt"]').click(); // ブラウン管風 on / off
   else if (k === 'm') $('#bgmPreview').click(); // 試合 BGM を流す / 止める (also while the slides are open: tutorial.js lets M through); the minimap is its button only
   else if (k === 'Escape') drawer.classList.remove('open');
